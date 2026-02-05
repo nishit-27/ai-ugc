@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { lateApiRequest } from '@/lib/lateApi';
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -14,6 +17,7 @@ export async function GET(
     const data = await lateApiRequest<{ profile?: unknown }>(`/profiles/${id}`);
     return NextResponse.json({ profile: (data as { profile?: unknown }).profile ?? data });
   } catch (error) {
+    console.error('Late API get profile error:', error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
@@ -39,6 +43,7 @@ export async function PATCH(
     });
     return NextResponse.json({ profile: (data as { profile?: unknown }).profile ?? data });
   } catch (error) {
+    console.error('Late API update profile error:', error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
@@ -55,6 +60,7 @@ export async function DELETE(
     await lateApiRequest(`/profiles/${id}`, { method: 'DELETE' });
     return NextResponse.json({ success: true });
   } catch (error) {
+    console.error('Late API delete profile error:', error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }

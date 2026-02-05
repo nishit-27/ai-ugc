@@ -130,6 +130,8 @@ export async function POST(request: NextRequest) {
     for (const url of validUrls) {
       const job = await createJob({
         tiktokUrl: url.trim(),
+        videoUrl: null,
+        videoSource: 'tiktok',
         imageUrl: finalImageUrl,
         customPrompt,
         maxSeconds: parsedMaxSeconds,

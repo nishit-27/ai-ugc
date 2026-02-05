@@ -7,6 +7,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const {
     tiktokUrl,
+    videoUrl,
     imageUrl,
     imageName,
     image_url: imageUrlSnake,
@@ -14,6 +15,7 @@ export async function POST(request: NextRequest) {
     maxSeconds,
   } = body as {
     tiktokUrl?: string;
+    videoUrl?: string;
     imageUrl?: string;
     imageName?: string;
     image_url?: string;
@@ -21,9 +23,13 @@ export async function POST(request: NextRequest) {
     maxSeconds?: number;
   };
 
-  if (!tiktokUrl) {
-    return NextResponse.json({ error: 'TikTok URL is required' }, { status: 400 });
+  // Either tiktokUrl OR videoUrl is required
+  if (!tiktokUrl && !videoUrl) {
+    return NextResponse.json({ error: 'Either TikTok URL or uploaded video is required' }, { status: 400 });
   }
+
+  // Determine video source
+  const videoSource = videoUrl ? 'upload' : 'tiktok';
 
   // Support imageUrl, imageName, and image_url (same as batch-motion-control link flow)
   const finalImageUrl = imageUrl || imageName || imageUrlSnake;
@@ -34,14 +40,17 @@ export async function POST(request: NextRequest) {
   if (!config.FAL_KEY) {
     return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
   }
-  if (!config.RAPIDAPI_KEY) {
+  // RapidAPI key only required for TikTok downloads
+  if (videoSource === 'tiktok' && !config.RAPIDAPI_KEY) {
     return NextResponse.json({ error: 'RapidAPI key not configured' }, { status: 500 });
   }
 
   try {
     // Create job in database
     const job = await createJob({
-      tiktokUrl,
+      tiktokUrl: tiktokUrl || null,
+      videoUrl: videoUrl || null,
+      videoSource,
       imageUrl: finalImageUrl,
       customPrompt,
       maxSeconds: typeof maxSeconds === 'number' ? maxSeconds : config.defaultMaxSeconds,
@@ -53,7 +62,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Start processing in background
-    processJob(job.id, config.prompt, config.FAL_KEY, config.RAPIDAPI_KEY).catch((err) => {
+    // Note: RAPIDAPI_KEY is only needed for TikTok downloads, pass empty string if not available
+    processJob(job.id, config.prompt, config.FAL_KEY, config.RAPIDAPI_KEY || '').catch((err) => {
       console.error('processJob error:', err);
     });
 

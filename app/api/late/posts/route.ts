@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { lateApiRequest } from '@/lib/lateApi';
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
+
 export async function GET(request: NextRequest) {
   if (!config.LATE_API_KEY) {
     return NextResponse.json({ error: 'LATE_API_KEY not configured' }, { status: 500 });
@@ -19,6 +22,7 @@ export async function GET(request: NextRequest) {
     }
     return NextResponse.json({ posts });
   } catch (error) {
+    console.error('Late API posts error:', error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }

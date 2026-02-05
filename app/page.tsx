@@ -4,12 +4,15 @@ import { useState, useEffect, useCallback } from 'react';
 
 type Job = {
   id: string;
-  tiktokUrl: string;
+  tiktokUrl?: string;
+  videoUrl?: string;
+  videoSource?: 'tiktok' | 'upload';
   imageUrl: string;
   imageName?: string; // Backwards compatibility
   status: string;
   step: string;
   outputUrl?: string;
+  signedUrl?: string; // Signed URL for viewing video
   createdAt: string;
 };
 
@@ -82,6 +85,10 @@ export default function Home() {
   const [uploadedImagePath, setUploadedImagePath] = useState<string | null>(null);
   const [uploadedVideoPath, setUploadedVideoPath] = useState<string | null>(null);
   const [tiktokUrl, setTiktokUrl] = useState('');
+  const [videoSource, setVideoSource] = useState<'tiktok' | 'upload'>('tiktok');
+  const [uploadedSourceVideo, setUploadedSourceVideo] = useState<string | null>(null);
+  const [uploadedSourceVideoName, setUploadedSourceVideoName] = useState<string | null>(null);
+  const [isUploadingSourceVideo, setIsUploadingSourceVideo] = useState(false);
   const [maxSeconds, setMaxSeconds] = useState(10);
   const [generateDisabled, setGenerateDisabled] = useState(true);
   const [pollingInterval, setPollingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
@@ -93,6 +100,9 @@ export default function Home() {
   const [publishMode, setPublishMode] = useState<'now' | 'schedule'>('now');
   const [videos, setVideos] = useState<{ name: string; path: string; url?: string }[]>([]);
   const [postForm, setPostForm] = useState({ caption: '', videoUrl: '', accountId: '', date: '', time: '' });
+  const [isPosting, setIsPosting] = useState(false);
+  const [isUploadingVideo, setIsUploadingVideo] = useState(false);
+  const [uploadedVideoName, setUploadedVideoName] = useState<string | null>(null);
   const [newProfileForm, setNewProfileForm] = useState({ name: '', description: '', color: '#fcd34d' });
   const [editProfileForm, setEditProfileForm] = useState({ name: '', description: '', color: '#fcd34d' });
   const [preselectedVideoPath, setPreselectedVideoPath] = useState<string | null>(null);
@@ -111,6 +121,7 @@ export default function Home() {
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
   const [batchDetailModal, setBatchDetailModal] = useState(false);
   const [batchPollingInterval, setBatchPollingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [postsPollingInterval, setPostsPollingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
 
   // Bulk generate state
   const [bulkMode, setBulkMode] = useState(false);
@@ -120,6 +131,28 @@ export default function Home() {
   const [imageSelectionMode, setImageSelectionMode] = useState<'all' | 'specific'>('all');
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
   const [batchName, setBatchName] = useState('');
+
+  // Loading states for better UX
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isBulkGenerating, setIsBulkGenerating] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isParsingCsv, setIsParsingCsv] = useState(false);
+  const [isLoadingModal, setIsLoadingModal] = useState(false);
+  const [isRetrying, setIsRetrying] = useState<string | null>(null);
+  const [isDeletingPost, setIsDeletingPost] = useState<string | null>(null);
+  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isDeletingProfile, setIsDeletingProfile] = useState(false);
+  const [isCreatingModel, setIsCreatingModel] = useState(false);
+  const [isDeletingModel, setIsDeletingModel] = useState(false);
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false);
+  const [isRefreshingBatch, setIsRefreshingBatch] = useState(false);
+  const [isConnecting, setIsConnecting] = useState<string | null>(null);
+  const [isDisconnecting, setIsDisconnecting] = useState<string | null>(null);
+  const [isLoadingPage, setIsLoadingPage] = useState(false);
+  const [isSettingPrimary, setIsSettingPrimary] = useState<string | null>(null);
+  const [isDeletingImage, setIsDeletingImage] = useState<string | null>(null);
+  const [videoPreviewModal, setVideoPreviewModal] = useState<{ url: string; caption: string } | null>(null);
 
   const showToast = useCallback((message: string, type = '') => {
     setToast({ message, type });
@@ -136,7 +169,8 @@ export default function Home() {
     }
   }, []);
 
-  const loadPosts = useCallback(async () => {
+  const loadPosts = useCallback(async (showLoader = false) => {
+    if (showLoader) setIsLoadingPage(true);
     try {
       let endpoint = '/api/late/posts?limit=50';
       if (postsFilter !== 'all') endpoint += `&status=${postsFilter}`;
@@ -145,10 +179,13 @@ export default function Home() {
       setPosts(data.posts || []);
     } catch (e) {
       console.error('Failed to load posts:', e);
+    } finally {
+      if (showLoader) setIsLoadingPage(false);
     }
   }, [postsFilter]);
 
-  const loadConnections = useCallback(async () => {
+  const loadConnections = useCallback(async (showLoader = false) => {
+    if (showLoader) setIsLoadingPage(true);
     try {
       const [profilesRes, accountsRes] = await Promise.all([
         fetch('/api/late/profiles'),
@@ -163,16 +200,21 @@ export default function Home() {
       }
     } catch (e) {
       console.error('Failed to load connections:', e);
+    } finally {
+      if (showLoader) setIsLoadingPage(false);
     }
   }, [currentProfile]);
 
-  const loadModels = useCallback(async () => {
+  const loadModels = useCallback(async (showLoader = false) => {
+    if (showLoader) setIsLoadingPage(true);
     try {
       const res = await fetch('/api/models');
       const data = await res.json();
       setModels(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('Failed to load models:', e);
+    } finally {
+      if (showLoader) setIsLoadingPage(false);
     }
   }, []);
 
@@ -186,13 +228,16 @@ export default function Home() {
     }
   }, []);
 
-  const loadBatches = useCallback(async () => {
+  const loadBatches = useCallback(async (showLoader = false) => {
+    if (showLoader) setIsLoadingPage(true);
     try {
       const res = await fetch('/api/batches');
       const data = await res.json();
       setBatches(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('Failed to load batches:', e);
+    } finally {
+      if (showLoader) setIsLoadingPage(false);
     }
   }, []);
 
@@ -225,23 +270,42 @@ export default function Home() {
   }, [jobs, loadJobs, pollingInterval]);
 
   useEffect(() => {
-    setGenerateDisabled(!tiktokUrl.trim() || !uploadedImagePath);
-  }, [tiktokUrl, uploadedImagePath]);
+    const hasVideo = videoSource === 'tiktok' ? !!tiktokUrl.trim() : !!uploadedSourceVideo;
+    setGenerateDisabled(!hasVideo || !uploadedImagePath);
+  }, [tiktokUrl, uploadedImagePath, videoSource, uploadedSourceVideo]);
 
   useEffect(() => {
-    if (page === 'posts') loadPosts();
+    if (page === 'posts') loadPosts(true);
   }, [page, postsFilter, loadPosts]);
 
+  // Poll posts for status updates (publishing -> published)
   useEffect(() => {
-    if (page === 'connections') loadConnections();
+    const hasPublishing = posts.some((p) => {
+      const status = p.platforms?.[0]?.status || '';
+      return status === 'publishing' || status === 'processing' || status === 'in_progress' || status === 'pending' || status === 'scheduled';
+    });
+    if (hasPublishing && page === 'posts' && !postsPollingInterval) {
+      const id = setInterval(loadPosts, 5000);
+      setPostsPollingInterval(id);
+    } else if ((!hasPublishing || page !== 'posts') && postsPollingInterval) {
+      clearInterval(postsPollingInterval);
+      setPostsPollingInterval(null);
+    }
+    return () => {
+      if (postsPollingInterval) clearInterval(postsPollingInterval);
+    };
+  }, [posts, page, postsPollingInterval, loadPosts]);
+
+  useEffect(() => {
+    if (page === 'connections') loadConnections(true);
   }, [page, loadConnections]);
 
   useEffect(() => {
-    if (page === 'models') loadModels();
+    if (page === 'models') loadModels(true);
   }, [page, loadModels]);
 
   useEffect(() => {
-    if (page === 'batches') loadBatches();
+    if (page === 'batches') loadBatches(true);
   }, [page, loadBatches]);
 
   useEffect(() => {
@@ -289,6 +353,7 @@ export default function Home() {
   const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setIsParsingCsv(true);
     const formData = new FormData();
     formData.append('csv', file);
     try {
@@ -301,6 +366,8 @@ export default function Home() {
       showToast(`Loaded ${data.urls.length} URLs from CSV`, 'success');
     } catch (e) {
       showToast('Failed to parse CSV', 'error');
+    } finally {
+      setIsParsingCsv(false);
     }
   };
 
@@ -315,6 +382,7 @@ export default function Home() {
       return;
     }
 
+    setIsBulkGenerating(true);
     try {
       const body: Record<string, unknown> = {
         name: batchName || `Batch ${new Date().toLocaleString()}`,
@@ -351,12 +419,15 @@ export default function Home() {
       }
     } catch (e) {
       showToast('Error: ' + (e as Error).message, 'error');
+    } finally {
+      setIsBulkGenerating(false);
     }
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setIsUploadingImage(true);
     const formData = new FormData();
     formData.append('image', file);
     try {
@@ -369,23 +440,59 @@ export default function Home() {
       }
     } catch (err) {
       showToast('Upload failed', 'error');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleSourceVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingSourceVideo(true);
+    const formData = new FormData();
+    formData.append('video', file);
+    try {
+      const res = await fetch('/api/upload-video', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok && data.gcsUrl) {
+        setUploadedSourceVideo(data.gcsUrl);
+        setUploadedSourceVideoName(file.name);
+        showToast('Video uploaded!', 'success');
+      } else {
+        showToast(data.error || 'Upload failed', 'error');
+      }
+    } catch (err) {
+      showToast('Upload error', 'error');
+    } finally {
+      setIsUploadingSourceVideo(false);
+      e.target.value = '';
     }
   };
 
   const handleGenerate = async () => {
+    setIsGenerating(true);
     try {
+      const payload: Record<string, unknown> = {
+        imageUrl: uploadedImagePath,
+        maxSeconds: maxSeconds,
+      };
+
+      if (videoSource === 'upload' && uploadedSourceVideo) {
+        payload.videoUrl = uploadedSourceVideo;
+      } else {
+        payload.tiktokUrl = tiktokUrl.trim();
+      }
+
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tiktokUrl: tiktokUrl.trim(),
-          imageUrl: uploadedImagePath, // Now sending the full GCS URL
-          maxSeconds: maxSeconds,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (res.ok) {
         setTiktokUrl('');
+        setUploadedSourceVideo(null);
+        setUploadedSourceVideoName(null);
         loadJobs();
         showToast('Generation started!', 'success');
       } else {
@@ -393,16 +500,28 @@ export default function Home() {
       }
     } catch (err) {
       showToast('Error: ' + (err as Error).message, 'error');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
   const openCreatePostModal = async (withVideoUrl?: string) => {
+    setIsLoadingModal(true);
+    setCreatePostModal(true);
     try {
-      const res = await fetch('/api/videos');
-      const data = await res.json();
-      setVideos(data.videos || []);
+      // Load both videos and accounts in parallel
+      const [videosRes, accountsRes] = await Promise.all([
+        fetch('/api/videos'),
+        fetch('/api/late/accounts'),
+      ]);
+      const videosData = await videosRes.json();
+      const accountsData = await accountsRes.json();
+      setVideos(videosData.videos || []);
+      setAccounts(accountsData.accounts || []);
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsLoadingModal(false);
     }
     setPostForm((prev) => ({
       ...prev,
@@ -414,8 +533,8 @@ export default function Home() {
     }));
     setUploadedVideoPath(null);
     setPreselectedVideoPath(null);
+    setUploadedVideoName(null);
     setPublishMode('now');
-    setCreatePostModal(true);
   };
 
   const submitPost = async () => {
@@ -428,50 +547,91 @@ export default function Home() {
       showToast('Please select a TikTok account', 'error');
       return;
     }
+    if (publishMode === 'schedule' && (!postForm.date || !postForm.time)) {
+      showToast('Please select both date and time for scheduling', 'error');
+      return;
+    }
+
+    setIsPosting(true);
+
     try {
       const body: Record<string, unknown> = {
-        videoUrl, // Now using GCS URL
+        videoUrl,
         caption: postForm.caption,
         accountId: postForm.accountId,
         publishNow: publishMode === 'now',
       };
-      if (publishMode === 'schedule' && postForm.date && postForm.time) {
+      if (publishMode === 'schedule') {
         body.scheduledFor = `${postForm.date}T${postForm.time}:00`;
         body.timezone = 'Asia/Kolkata';
         body.publishNow = false;
       }
+
+      // Close modal immediately and show loading toast
+      setCreatePostModal(false);
+      showToast(publishMode === 'now' ? 'Publishing to TikTok...' : 'Scheduling post...', 'success');
+
       const res = await fetch('/api/tiktok/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const data = await res.json();
+
       if (res.ok && data.success) {
-        setCreatePostModal(false);
-        showToast(data.message || 'Posted!', 'success');
+        const status = data.post?.status;
+        if (status === 'published') {
+          showToast(data.post?.platformPostUrl ? 'Published to TikTok!' : 'Video published!', 'success');
+        } else if (status === 'scheduled') {
+          showToast(data.message || 'Post scheduled successfully!', 'success');
+        } else if (status === 'publishing') {
+          showToast('Video is being published... Check posts page for status.', 'success');
+        } else {
+          showToast(data.message || 'Post submitted!', 'success');
+        }
         loadPosts();
+        setPage('posts');
       } else {
-        showToast(data.error || 'Failed to post', 'error');
+        const errorMsg = data.error || 'Failed to post';
+        const details = data.details;
+        showToast(details?.error || errorMsg, 'error');
+        console.error('[Submit Post] Error:', data);
       }
     } catch (err) {
       showToast('Error: ' + (err as Error).message, 'error');
+      console.error('[Submit Post] Exception:', err);
+    } finally {
+      setIsPosting(false);
     }
   };
 
   const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    setIsUploadingVideo(true);
+    setUploadedVideoName(file.name);
+
     const formData = new FormData();
     formData.append('video', file);
     try {
       const res = await fetch('/api/upload-video', { method: 'POST', body: formData });
       const data = await res.json();
       if (data.success) {
-        setUploadedVideoPath(data.url || data.path); // Use GCS URL
-        showToast('Video uploaded', 'success');
+        const videoUrl = data.url || data.path;
+        setUploadedVideoPath(videoUrl);
+        // Clear dropdown selection since we're using uploaded video
+        setPostForm((p) => ({ ...p, videoUrl: '' }));
+        showToast('Video uploaded successfully!', 'success');
+      } else {
+        setUploadedVideoName(null);
+        showToast(data.error || 'Upload failed', 'error');
       }
     } catch (err) {
+      setUploadedVideoName(null);
       showToast('Upload failed', 'error');
+    } finally {
+      setIsUploadingVideo(false);
     }
   };
 
@@ -562,26 +722,117 @@ export default function Home() {
               <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
                   <h3 className="mb-4 text-lg font-semibold">Create Video</h3>
+
+                  {/* Video Source Toggle */}
                   <div className="mb-4">
-                    <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">TikTok URL</label>
-                    <input
-                      type="text"
-                      value={tiktokUrl}
-                      onChange={(e) => setTiktokUrl(e.target.value)}
-                      placeholder="https://www.tiktok.com/@user/video/..."
-                      className="w-full rounded-lg border border-[var(--border)] px-4 py-3 text-sm focus:border-[var(--primary)] focus:outline-none"
-                    />
+                    <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Video Source</label>
+                    <div className="flex rounded-lg border border-[var(--border)] p-1">
+                      <button
+                        onClick={() => setVideoSource('tiktok')}
+                        className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                          videoSource === 'tiktok'
+                            ? 'bg-[var(--primary)] text-white'
+                            : 'text-[var(--text-muted)] hover:bg-[var(--background)]'
+                        }`}
+                      >
+                        TikTok URL
+                      </button>
+                      <button
+                        onClick={() => setVideoSource('upload')}
+                        className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                          videoSource === 'upload'
+                            ? 'bg-[var(--primary)] text-white'
+                            : 'text-[var(--text-muted)] hover:bg-[var(--background)]'
+                        }`}
+                      >
+                        Upload Video
+                      </button>
+                    </div>
                   </div>
+
+                  {/* TikTok URL Input */}
+                  {videoSource === 'tiktok' ? (
+                    <div className="mb-4">
+                      <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">TikTok URL</label>
+                      <input
+                        type="text"
+                        value={tiktokUrl}
+                        onChange={(e) => setTiktokUrl(e.target.value)}
+                        placeholder="https://www.tiktok.com/@user/video/..."
+                        className="w-full rounded-lg border border-[var(--border)] px-4 py-3 text-sm focus:border-[var(--primary)] focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    /* Video Upload */
+                    <div className="mb-4">
+                      <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Upload Video</label>
+                      <label className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-transparent py-8 transition-colors ${
+                        isUploadingSourceVideo
+                          ? 'cursor-wait border-[var(--primary)] bg-[var(--primary)]/5'
+                          : 'cursor-pointer border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
+                      }`}>
+                        {isUploadingSourceVideo ? (
+                          <>
+                            <svg className="h-10 w-10 animate-spin text-[var(--primary)]" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            <span className="mt-2 text-sm font-medium text-[var(--primary)]">Uploading...</span>
+                          </>
+                        ) : uploadedSourceVideo ? (
+                          <div className="flex flex-col items-center">
+                            <svg className="h-10 w-10 text-[var(--success)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span className="mt-2 text-sm font-medium text-[var(--text)]">{uploadedSourceVideoName}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setUploadedSourceVideo(null);
+                                setUploadedSourceVideoName(null);
+                              }}
+                              className="mt-2 text-xs text-[var(--error)] hover:underline"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <svg className="h-10 w-10 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                            </svg>
+                            <span className="mt-2 text-sm text-[var(--text-muted)]">Click or drag video here</span>
+                            <span className="mt-1 text-xs text-[var(--text-muted)]">MP4, MOV, WebM</span>
+                          </>
+                        )}
+                        <input type="file" accept="video/mp4,video/mov,video/webm,.mp4,.mov,.webm" className="hidden" onChange={handleSourceVideoUpload} disabled={isUploadingSourceVideo} />
+                      </label>
+                    </div>
+                  )}
                   <div className="mb-4">
                     <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Model Image</label>
-                    <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-transparent py-8 transition-colors hover:border-[var(--primary)] hover:bg-[var(--background)]">
-                      {uploadedImagePath ? (
+                    <label className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-transparent py-8 transition-colors ${
+                      isUploadingImage
+                        ? 'cursor-wait border-[var(--primary)] bg-[var(--primary)]/5'
+                        : 'cursor-pointer border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
+                    }`}>
+                      {isUploadingImage ? (
+                        <>
+                          <svg className="h-10 w-10 animate-spin text-[var(--primary)]" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          <span className="mt-2 text-sm font-medium text-[var(--primary)]">Uploading...</span>
+                        </>
+                      ) : uploadedImagePath ? (
                         <img src={uploadedImagePath} alt="Uploaded" className="max-h-36 max-w-full rounded-lg object-contain" />
                       ) : (
                         <span className="text-3xl">+</span>
                       )}
-                      <span className="mt-2 text-sm text-[var(--text-muted)]">Click or drag image here</span>
-                      <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                      {!isUploadingImage && <span className="mt-2 text-sm text-[var(--text-muted)]">Click or drag image here</span>}
+                      <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={isUploadingImage} />
                     </label>
                   </div>
                   <div className="mb-4">
@@ -599,10 +850,20 @@ export default function Home() {
                   </div>
                   <button
                     onClick={handleGenerate}
-                    disabled={generateDisabled}
-                    className="w-full rounded-lg bg-[var(--primary)] px-4 py-3 font-medium text-white transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={generateDisabled || isGenerating}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-3 font-medium text-white transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Generate Video
+                    {isGenerating ? (
+                      <>
+                        <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Starting Generation...
+                      </>
+                    ) : (
+                      'Generate Video'
+                    )}
                   </button>
                 </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
@@ -614,7 +875,11 @@ export default function Home() {
                     {jobs.slice(0, 10).map((job) => (
                       <div key={job.id} className="rounded-lg bg-[var(--background)] p-3">
                         <div className="mb-1 flex items-center justify-between text-xs text-[var(--text-muted)]">
-                          <span className="truncate">{job.tiktokUrl?.slice(0, 40)}...</span>
+                          <span className="truncate">
+                            {job.videoSource === 'upload'
+                              ? '📁 Uploaded video'
+                              : job.tiktokUrl?.slice(0, 40) + '...'}
+                          </span>
                           <span
                             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                               job.status === 'completed' ? 'bg-[var(--success-bg)] text-[var(--success)]' :
@@ -626,10 +891,10 @@ export default function Home() {
                           </span>
                         </div>
                         <div className="text-xs text-[var(--text-muted)]">{job.step}</div>
-                        {job.status === 'completed' && job.outputUrl && (
+                        {job.status === 'completed' && (job.signedUrl || job.outputUrl) && (
                           <div className="mt-2 flex gap-2">
                             <a
-                              href={job.outputUrl}
+                              href={job.signedUrl || job.outputUrl}
                               download
                               className="rounded border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--background)]"
                             >
@@ -637,6 +902,7 @@ export default function Home() {
                             </a>
                             <button
                               onClick={() => {
+                                // Use outputUrl (GCS path) for backend upload, not signed URL
                                 setPreselectedVideoPath(job.outputUrl!);
                                 setPage('posts');
                                 setTimeout(() => openCreatePostModal(job.outputUrl!), 100);
@@ -673,9 +939,21 @@ export default function Home() {
                       />
                     </div>
                     <div className="flex items-center justify-between">
-                      <label className="cursor-pointer rounded-lg border border-[var(--border)] px-4 py-2 text-sm hover:bg-[var(--background)]">
-                        Upload CSV
-                        <input type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
+                      <label className={`inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm ${
+                        isParsingCsv ? 'cursor-wait opacity-60' : 'cursor-pointer hover:bg-[var(--background)]'
+                      }`}>
+                        {isParsingCsv ? (
+                          <>
+                            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            Parsing...
+                          </>
+                        ) : (
+                          'Upload CSV'
+                        )}
+                        <input type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} disabled={isParsingCsv} />
                       </label>
                       <span className="text-sm text-[var(--text-muted)]">
                         {parsedUrls.length > 0 ? `${parsedUrls.length} URLs ready` : 'No URLs parsed'}
@@ -808,10 +1086,20 @@ export default function Home() {
 
                     <button
                       onClick={handleBulkGenerate}
-                      disabled={parsedUrls.length === 0 || (!selectedModelForGenerate && !uploadedImagePath)}
-                      className="w-full rounded-lg bg-[var(--primary)] px-4 py-3 font-medium text-white transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={parsedUrls.length === 0 || (!selectedModelForGenerate && !uploadedImagePath) || isBulkGenerating}
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-3 font-medium text-white transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Generate {parsedUrls.length} Videos
+                      {isBulkGenerating ? (
+                        <>
+                          <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          Starting Batch...
+                        </>
+                      ) : (
+                        `Generate ${parsedUrls.length} Videos`
+                      )}
                     </button>
                   </div>
 
@@ -867,7 +1155,22 @@ export default function Home() {
               </button>
             </div>
 
-            {models.length === 0 ? (
+            {isLoadingPage ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                    <div className="mb-3 flex items-center gap-3">
+                      <div className="h-12 w-12 rounded-full bg-[var(--background)]" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 w-24 rounded bg-[var(--background)]" />
+                        <div className="h-3 w-16 rounded bg-[var(--background)]" />
+                      </div>
+                    </div>
+                    <div className="h-3 w-full rounded bg-[var(--background)]" />
+                  </div>
+                ))}
+              </div>
+            ) : models.length === 0 ? (
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-12 text-center">
                 <h3 className="mb-2 font-semibold">No models yet</h3>
                 <p className="mb-4 text-[var(--text-muted)]">Create a model to upload reference images</p>
@@ -919,7 +1222,31 @@ export default function Home() {
               <p className="text-[var(--text-muted)]">Track bulk video generation progress</p>
             </div>
 
-            {batches.length === 0 ? (
+            {isLoadingPage ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-full bg-[var(--background)]" />
+                        <div className="space-y-2">
+                          <div className="h-4 w-32 rounded bg-[var(--background)]" />
+                          <div className="h-3 w-24 rounded bg-[var(--background)]" />
+                        </div>
+                      </div>
+                      <div className="h-6 w-20 rounded-full bg-[var(--background)]" />
+                    </div>
+                    <div className="mt-3">
+                      <div className="mb-1 flex justify-between">
+                        <div className="h-3 w-32 rounded bg-[var(--background)]" />
+                        <div className="h-3 w-8 rounded bg-[var(--background)]" />
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-[var(--background)]" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : batches.length === 0 ? (
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-12 text-center">
                 <h3 className="mb-2 font-semibold">No batches yet</h3>
                 <p className="mb-4 text-[var(--text-muted)]">Start a bulk generation to create a batch</p>
@@ -996,7 +1323,7 @@ export default function Home() {
               </button>
             </div>
             <div className="mb-4 flex gap-2">
-              {['all', 'published', 'scheduled', 'failed'].map((f) => (
+              {['all', 'published', 'scheduled', 'draft', 'failed'].map((f) => (
                 <button
                   key={f}
                   onClick={() => setPostsFilter(f)}
@@ -1010,7 +1337,20 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            {posts.length === 0 ? (
+            {isLoadingPage ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="flex animate-pulse items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+                    <div className="h-48 w-36 shrink-0 rounded-xl bg-[var(--background)]" />
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="h-5 w-3/4 rounded bg-[var(--background)]" />
+                      <div className="h-4 w-1/2 rounded bg-[var(--background)]" />
+                      <div className="h-4 w-1/3 rounded bg-[var(--background)]" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : posts.length === 0 ? (
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-12 text-center text-[var(--text-muted)]">
                 <h3 className="mb-2 font-semibold text-[var(--text)]">No posts yet</h3>
                 <p className="mb-4">Create your first post to get started</p>
@@ -1024,75 +1364,229 @@ export default function Home() {
                   const platform = post.platforms?.[0];
                   const status = platform?.status || (post as { status?: string }).status || 'draft';
                   const thumbnail = post.mediaItems?.[0]?.url || post.mediaItems?.[0]?.thumbnailUrl;
+                  const isVideo = thumbnail?.includes('.mp4') || thumbnail?.includes('video') || post.mediaItems?.[0]?.thumbnailUrl;
                   return (
-                    <div key={post._id} className="flex gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-                      {thumbnail ? (
-                        <img src={thumbnail} alt="" className="h-44 w-36 shrink-0 rounded-lg object-cover" />
-                      ) : (
-                        <div className="h-44 w-36 shrink-0 rounded-lg bg-[var(--background)]" />
-                      )}
+                    <div key={post._id} className="flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+                      {/* Checkbox */}
+                      <input type="checkbox" className="mt-2 h-4 w-4 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]" />
+
+                      {/* Thumbnail */}
+                      <div
+                        className={`relative h-48 w-36 shrink-0 overflow-hidden rounded-xl bg-[var(--background)] ${thumbnail ? 'cursor-pointer group' : ''}`}
+                        onClick={() => {
+                          if (thumbnail) {
+                            setVideoPreviewModal({ url: thumbnail, caption: post.content || '(No caption)' });
+                          }
+                        }}
+                      >
+                        {thumbnail ? (
+                          <>
+                            <video
+                              src={thumbnail}
+                              className="h-full w-full object-cover"
+                              muted
+                              playsInline
+                              preload="metadata"
+                              onLoadedMetadata={(e) => {
+                                // Seek to first frame to show thumbnail
+                                const video = e.currentTarget;
+                                video.currentTime = 0.1;
+                              }}
+                            />
+                            {/* Play button overlay */}
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
+                              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg">
+                                <svg className="h-6 w-6 text-[var(--primary)] ml-1" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M8 5v14l11-7z" />
+                                </svg>
+                              </div>
+                            </div>
+                            {/* Video indicator */}
+                            <div className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60">
+                              <svg className="h-3 w-3 text-white" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[var(--text-muted)]">
+                            <svg className="h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Content */}
                       <div className="min-w-0 flex-1">
-                        <div className="mb-1 flex items-start justify-between gap-2">
-                          <div className="font-medium">{post.content || '(No caption)'}</div>
+                        <div className="mb-2 flex items-start justify-between gap-4">
+                          <h3 className="text-lg font-semibold text-[var(--text)]">{post.content || '(No caption)'}</h3>
                           <span
-                            className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium ${
                               status === 'published' ? 'bg-[var(--success-bg)] text-[var(--success)]' :
                               status === 'failed' ? 'bg-[var(--error-bg)] text-[var(--error)]' :
-                              status === 'scheduled' ? 'bg-[var(--warning-bg)] text-[var(--warning)]' :
+                              status === 'partial' ? 'bg-orange-100 text-orange-600 border border-orange-200' :
+                              status === 'scheduled' ? 'bg-blue-100 text-blue-600 border border-blue-200' :
+                              (status === 'publishing' || status === 'processing' || status === 'in_progress' || status === 'pending') ? 'bg-amber-100 text-amber-600' :
                               'bg-[var(--background)] text-[var(--text-muted)]'
                             }`}
                           >
-                            {status}
+                            {status === 'published' && <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>}
+                            {(status === 'publishing' || status === 'processing' || status === 'in_progress' || status === 'pending') && <span className="text-base">🚀</span>}
+                            {status === 'scheduled' && <span className="text-base">⏰</span>}
+                            {status === 'partial' && <span className="text-base">⚠️</span>}
+                            {(status === 'publishing' || status === 'processing' || status === 'in_progress' || status === 'pending') ? 'Publishing' : status === 'partial' ? 'Partial' : status.charAt(0).toUpperCase() + status.slice(1)}
                           </span>
                         </div>
-                        <div className="mb-2 text-xs text-[var(--text-muted)]">
-                          {post.scheduledFor && <span>scheduled: {new Date(post.scheduledFor).toLocaleString()}</span>}
-                          {post.createdAt && <span className="ml-2">created: {new Date(post.createdAt).toLocaleDateString()}</span>}
+
+                        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--text-muted)]">
+                          {post.scheduledFor && (
+                            <span>scheduled: {new Date(post.scheduledFor).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, {new Date(post.scheduledFor).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}</span>
+                          )}
+                          {post.createdAt && <span>created: {new Date(post.createdAt).toLocaleDateString()}</span>}
+                          <span>• by: Internal •</span>
                         </div>
-                        <div className="mb-2 flex flex-wrap gap-1 text-xs">
-                          {post.platforms?.map((p) => (
-                            <span
-                              key={p.platform}
-                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
-                                p.status === 'published' ? 'bg-[var(--success-bg)] text-[var(--success)]' :
-                                p.status === 'failed' ? 'bg-[var(--error-bg)] text-[var(--error)]' :
-                                'bg-[var(--warning-bg)] text-[var(--warning)]'
-                              }`}
-                            >
-                              {p.platform}
-                              {p.platformPostUrl && (
-                                <a href={p.platformPostUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">↗</a>
-                              )}
-                            </span>
-                          ))}
+
+                        {/* Post ID */}
+                        <div className="mb-3 flex items-center gap-2 text-sm">
+                          <span className="text-[var(--text-muted)]">id:</span>
+                          <span className="font-mono text-[var(--text)]">{post._id.slice(0, 9)}...</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(post._id);
+                              showToast('ID copied!', 'success');
+                            }}
+                            className="rounded p-1 hover:bg-[var(--background)]"
+                            title="Copy ID"
+                          >
+                            <svg className="h-4 w-4 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                          </button>
                         </div>
-                        <div className="flex gap-2">
-                          {status === 'failed' && (
-                            <button
-                              onClick={async () => {
+
+                        {/* Platforms */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-[var(--text-muted)]">platforms:</span>
+                          <div className="flex flex-wrap gap-2">
+                            {post.platforms?.map((p) => {
+                              const pStatus = p.status || 'pending';
+                              const isPublishing = pStatus === 'publishing' || pStatus === 'processing' || pStatus === 'in_progress' || pStatus === 'pending';
+                              const isScheduled = pStatus === 'scheduled';
+                              const isPartial = pStatus === 'partial';
+                              return (
+                                <span
+                                  key={p.platform}
+                                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium ${
+                                    pStatus === 'published' ? 'border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]' :
+                                    pStatus === 'failed' ? 'border-[var(--error)] bg-[var(--error-bg)] text-[var(--error)]' :
+                                    isScheduled ? 'border-amber-300 bg-amber-50 text-amber-700' :
+                                    isPublishing ? 'border-amber-300 bg-amber-50 text-amber-600' :
+                                    'border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]'
+                                  }`}
+                                >
+                                  {p.platform === 'tiktok' && <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005 20.1a6.34 6.34 0 0010.86-4.43v-7a8.16 8.16 0 004.77 1.52v-3.4a4.85 4.85 0 01-1-.1z"/></svg>}
+                                  {p.platform === 'instagram' && <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>}
+                                  {p.platform === 'youtube' && <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>}
+                                  {p.platform === 'twitter' && <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>}
+                                  {p.platform}
+                                  {pStatus === 'published' && <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>}
+                                  {isScheduled && (
+                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                  )}
+                                  {isPublishing && !isScheduled && (
+                                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                    </svg>
+                                  )}
+                                  {pStatus === 'published' && p.platformPostUrl && (
+                                    <a href={p.platformPostUrl} target="_blank" rel="noopener noreferrer" className="hover:opacity-80">
+                                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                      </svg>
+                                    </a>
+                                  )}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex shrink-0 flex-col gap-2 self-end">
+                        {(status === 'failed' || status === 'partial') && (
+                          <button
+                            onClick={async () => {
+                              setIsRetrying(post._id);
+                              try {
                                 await fetch(`/api/late/posts/${post._id}/retry`, { method: 'POST' });
-                                showToast('Retrying...', 'success');
+                                showToast('Retrying publish...', 'success');
                                 loadPosts();
-                              }}
-                              className="rounded border border-[var(--success)] bg-[var(--success-bg)] px-2 py-1 text-xs text-[var(--success)]"
-                            >
-                              Retry
-                            </button>
+                              } finally {
+                                setIsRetrying(null);
+                              }
+                            }}
+                            disabled={isRetrying === post._id}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--success)] bg-[var(--success-bg)] px-3 py-2 text-sm font-medium text-[var(--success)] hover:opacity-80 disabled:opacity-50"
+                          >
+                            {isRetrying === post._id ? (
+                              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                            ) : (
+                              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                            )}
+                            {isRetrying === post._id ? 'retrying...' : 'retry'}
+                          </button>
+                        )}
+                        {status === 'scheduled' && (
+                          <button
+                            onClick={() => {
+                              // TODO: Open edit modal for scheduled post
+                              showToast('Edit feature coming soon', 'success');
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 hover:opacity-80"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            edit
+                          </button>
+                        )}
+                        <button
+                          onClick={async () => {
+                            if (!confirm('Delete this post?')) return;
+                            setIsDeletingPost(post._id);
+                            try {
+                              await fetch(`/api/late/posts/${post._id}`, { method: 'DELETE' });
+                              showToast('Post deleted', 'success');
+                              loadPosts();
+                            } finally {
+                              setIsDeletingPost(null);
+                            }
+                          }}
+                          disabled={isDeletingPost === post._id}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--error)] bg-[var(--error-bg)] px-3 py-2 text-sm font-medium text-[var(--error)] hover:opacity-80 disabled:opacity-50"
+                        >
+                          {isDeletingPost === post._id ? (
+                            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                          ) : (
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
                           )}
-                          {status !== 'published' && (
-                            <button
-                              onClick={async () => {
-                                if (!confirm('Delete this post?')) return;
-                                await fetch(`/api/late/posts/${post._id}`, { method: 'DELETE' });
-                                showToast('Post deleted', 'success');
-                                loadPosts();
-                              }}
-                              className="rounded border border-[var(--error)] bg-[var(--error-bg)] px-2 py-1 text-xs text-[var(--error)]"
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </div>
+                          {isDeletingPost === post._id ? 'deleting...' : 'delete'}
+                        </button>
                       </div>
                     </div>
                   );
@@ -1215,12 +1709,27 @@ export default function Home() {
                     </div>
                     {account ? (
                       <>
-                        <div className="mb-2 rounded-lg bg-[var(--background)] p-2">
-                          <div className="font-medium">@{account.username || account.displayName}</div>
-                          {account.createdAt && (
-                            <div className="text-xs text-[var(--text-muted)]">{new Date(account.createdAt).toLocaleDateString()}</div>
-                          )}
-                          <div className="mt-1 flex items-center gap-1 text-xs text-[var(--text-muted)]">
+                        <div className="mb-2 rounded-lg bg-[var(--background)] p-3">
+                          <div className="flex items-center gap-3">
+                            {account.profilePicture ? (
+                              <img
+                                src={account.profilePicture}
+                                alt={account.username || account.displayName || 'Profile'}
+                                className="h-12 w-12 shrink-0 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[var(--border)] text-lg font-semibold text-[var(--text-muted)]">
+                                {(account.username || account.displayName || '?')[0].toUpperCase()}
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium">@{account.username || account.displayName}</div>
+                              {account.createdAt && (
+                                <div className="text-xs text-[var(--text-muted)]">Connected {new Date(account.createdAt).toLocaleDateString()}</div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="mt-2 flex items-center gap-1 text-xs text-[var(--text-muted)]">
                             id: {account._id.slice(0, 8)}...
                             <button onClick={() => copyToClipboard(account._id)} className="rounded border px-1 hover:bg-white">copy</button>
                           </div>
@@ -1229,13 +1738,29 @@ export default function Home() {
                           <button
                             onClick={async () => {
                               if (!confirm('Disconnect this account?')) return;
-                              await fetch(`/api/late/accounts/${account._id}`, { method: 'DELETE' });
-                              showToast('Disconnected', 'success');
-                              loadConnections();
+                              setIsDisconnecting(account._id);
+                              try {
+                                await fetch(`/api/late/accounts/${account._id}`, { method: 'DELETE' });
+                                showToast('Disconnected', 'success');
+                                loadConnections();
+                              } finally {
+                                setIsDisconnecting(null);
+                              }
                             }}
-                            className="w-full rounded-lg border border-[var(--border)] py-2 text-sm hover:bg-[var(--background)]"
+                            disabled={isDisconnecting === account._id}
+                            className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--border)] py-2 text-sm hover:bg-[var(--background)] disabled:opacity-50"
                           >
-                            Disconnect
+                            {isDisconnecting === account._id ? (
+                              <>
+                                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                                Disconnecting...
+                              </>
+                            ) : (
+                              'Disconnect'
+                            )}
                           </button>
                           <button
                             onClick={async () => {
@@ -1256,16 +1781,32 @@ export default function Home() {
                       <div className="flex flex-col gap-2">
                         <button
                           onClick={async () => {
-                            const res = await fetch(`/api/late/connect/${platform}?profileId=${currentProfile!._id}`);
-                            const data = await res.json();
-                            if (data.connectUrl) {
-                              window.open(data.connectUrl, '_blank');
-                              showToast('Complete authorization in the new window, then refresh', 'success');
+                            setIsConnecting(platform);
+                            try {
+                              const res = await fetch(`/api/late/connect/${platform}?profileId=${currentProfile!._id}`);
+                              const data = await res.json();
+                              if (data.connectUrl) {
+                                window.open(data.connectUrl, '_blank');
+                                showToast('Complete authorization in the new window, then refresh', 'success');
+                              }
+                            } finally {
+                              setIsConnecting(null);
                             }
                           }}
-                          className="w-full rounded-lg border border-[var(--accent-border)] bg-[var(--accent)] py-2 text-sm hover:bg-[#fde68a]"
+                          disabled={isConnecting === platform}
+                          className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent-border)] bg-[var(--accent)] py-2 text-sm hover:bg-[#fde68a] disabled:opacity-50"
                         >
-                          + Connect
+                          {isConnecting === platform ? (
+                            <>
+                              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                              Connecting...
+                            </>
+                          ) : (
+                            '+ Connect'
+                          )}
                         </button>
                         <button
                           onClick={async () => {
@@ -1298,25 +1839,126 @@ export default function Home() {
               <h3 className="text-lg font-semibold">Create Post</h3>
               <button onClick={() => setCreatePostModal(false)} className="text-2xl text-[var(--text-muted)]">&times;</button>
             </div>
+            {isLoadingModal ? (
+              <div className="space-y-4 p-4">
+                <div className="animate-pulse space-y-4">
+                  <div>
+                    <div className="mb-2 h-4 w-24 rounded bg-[var(--background)]" />
+                    <div className="h-10 w-full rounded-lg bg-[var(--background)]" />
+                  </div>
+                  <div>
+                    <div className="mb-2 h-4 w-16 rounded bg-[var(--background)]" />
+                    <div className="h-24 w-full rounded-lg bg-[var(--background)]" />
+                  </div>
+                  <div>
+                    <div className="mb-2 h-4 w-32 rounded bg-[var(--background)]" />
+                    <div className="h-10 w-full rounded-lg bg-[var(--background)]" />
+                  </div>
+                  <div className="h-12 w-full rounded-lg bg-[var(--background)]" />
+                </div>
+              </div>
+            ) : (
             <div className="space-y-4 p-4">
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Select Video</label>
-                <select
-                  value={postForm.videoUrl}
-                  onChange={(e) => setPostForm((p) => ({ ...p, videoUrl: e.target.value }))}
-                  className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
-                >
-                  <option value="">Select a generated video...</option>
-                  {videos.map((v) => (
-                    <option key={v.url || v.path} value={v.url || v.path}>{v.name}</option>
-                  ))}
-                </select>
-                <p className="mt-2 text-center text-sm text-[var(--text-muted)]">or</p>
-                <label className="mt-2 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] py-4 hover:bg-[var(--background)]">
-                  <span className="text-2xl">🎬</span>
-                  <span className="text-sm text-[var(--text-muted)]">Upload video from computer</span>
-                  <input type="file" accept="video/*" className="hidden" onChange={handleVideoUpload} />
-                </label>
+
+                {/* Uploaded Video Preview */}
+                {uploadedVideoPath && (
+                  <div className="mb-3 overflow-hidden rounded-xl border-2 border-[var(--success)] bg-[var(--success-bg)]">
+                    <div className="flex items-center justify-between border-b border-[var(--success)]/20 bg-[var(--success-bg)] px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <svg className="h-5 w-5 text-[var(--success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-sm font-medium text-[var(--success)]">Uploaded: {uploadedVideoName || 'video.mp4'}</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setUploadedVideoPath(null);
+                          setUploadedVideoName(null);
+                        }}
+                        className="rounded p-1 text-[var(--text-muted)] hover:bg-[var(--background)] hover:text-[var(--error)]"
+                        title="Remove video"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="bg-black">
+                      <video
+                        src={uploadedVideoPath}
+                        controls
+                        className="mx-auto max-h-48 w-full object-contain"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Dropdown for generated videos (only show if no uploaded video) */}
+                {!uploadedVideoPath && (
+                  <>
+                    <select
+                      value={postForm.videoUrl}
+                      onChange={(e) => setPostForm((p) => ({ ...p, videoUrl: e.target.value }))}
+                      className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
+                      disabled={isUploadingVideo}
+                    >
+                      <option value="">Select a generated video...</option>
+                      {videos.map((v) => (
+                        <option key={v.path} value={v.path}>{v.name}</option>
+                      ))}
+                    </select>
+
+                    {/* Video Preview from dropdown */}
+                    {postForm.videoUrl && (
+                      <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-black">
+                        <video
+                          src={videos.find((v) => v.path === postForm.videoUrl)?.url || postForm.videoUrl}
+                          controls
+                          className="mx-auto max-h-48 w-full object-contain"
+                        />
+                      </div>
+                    )}
+
+                    <p className="mt-3 text-center text-sm text-[var(--text-muted)]">or</p>
+                  </>
+                )}
+
+                {/* Upload area */}
+                {!uploadedVideoPath && (
+                  <label className={`mt-2 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed py-6 transition-colors ${
+                    isUploadingVideo
+                      ? 'border-[var(--primary)] bg-[var(--primary)]/5 cursor-wait'
+                      : 'border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
+                  }`}>
+                    {isUploadingVideo ? (
+                      <>
+                        <svg className="h-8 w-8 animate-spin text-[var(--primary)]" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        <span className="mt-2 text-sm font-medium text-[var(--primary)]">Uploading {uploadedVideoName}...</span>
+                        <span className="text-xs text-[var(--text-muted)]">Please wait</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="h-8 w-8 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                        <span className="mt-2 text-sm font-medium text-[var(--text)]">Upload video from computer</span>
+                        <span className="text-xs text-[var(--text-muted)]">MP4, MOV, WebM supported</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={handleVideoUpload}
+                      disabled={isUploadingVideo}
+                    />
+                  </label>
+                )}
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Caption</label>
@@ -1381,11 +2023,23 @@ export default function Home() {
               </div>
               <button
                 onClick={submitPost}
-                className="w-full rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)]"
+                disabled={isPosting}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Upload to TikTok
+                {isPosting ? (
+                  <>
+                    <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    {publishMode === 'now' ? 'Publishing...' : 'Scheduling...'}
+                  </>
+                ) : (
+                  publishMode === 'now' ? 'Upload to TikTok' : 'Schedule Post'
+                )}
               </button>
             </div>
+            )}
           </div>
         </div>
       )}
@@ -1434,24 +2088,40 @@ export default function Home() {
                     showToast('Profile name is required', 'error');
                     return;
                   }
-                  const res = await fetch('/api/late/profiles', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(newProfileForm),
-                  });
-                  const data = await res.json();
-                  if (res.ok) {
-                    setNewProfileModal(false);
-                    setNewProfileForm({ name: '', description: '', color: '#fcd34d' });
-                    showToast('Profile created!', 'success');
-                    loadConnections();
-                  } else {
-                    showToast(data.error || 'Failed', 'error');
+                  setIsCreatingProfile(true);
+                  try {
+                    const res = await fetch('/api/late/profiles', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(newProfileForm),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                      setNewProfileModal(false);
+                      setNewProfileForm({ name: '', description: '', color: '#fcd34d' });
+                      showToast('Profile created!', 'success');
+                      loadConnections();
+                    } else {
+                      showToast(data.error || 'Failed', 'error');
+                    }
+                  } finally {
+                    setIsCreatingProfile(false);
                   }
                 }}
-                className="w-full rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)]"
+                disabled={isCreatingProfile}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
               >
-                Create Profile
+                {isCreatingProfile ? (
+                  <>
+                    <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Creating...
+                  </>
+                ) : (
+                  'Create Profile'
+                )}
               </button>
             </div>
           </div>
@@ -1500,25 +2170,41 @@ export default function Home() {
                     showToast('Profile name is required', 'error');
                     return;
                   }
-                  const res = await fetch(`/api/late/profiles/${currentProfile._id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(editProfileForm),
-                  });
-                  const data = await res.json();
-                  if (res.ok) {
-                    setEditProfileModal(false);
-                    showToast('Profile updated!', 'success');
-                    loadConnections();
-                    const updated = (data.profile || data) as Profile;
-                    if (updated._id === currentProfile._id) setCurrentProfile(updated);
-                  } else {
-                    showToast(data.error || 'Failed', 'error');
+                  setIsSavingProfile(true);
+                  try {
+                    const res = await fetch(`/api/late/profiles/${currentProfile._id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(editProfileForm),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                      setEditProfileModal(false);
+                      showToast('Profile updated!', 'success');
+                      loadConnections();
+                      const updated = (data.profile || data) as Profile;
+                      if (updated._id === currentProfile._id) setCurrentProfile(updated);
+                    } else {
+                      showToast(data.error || 'Failed', 'error');
+                    }
+                  } finally {
+                    setIsSavingProfile(false);
                   }
                 }}
-                className="w-full rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)]"
+                disabled={isSavingProfile}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
               >
-                Save Changes
+                {isSavingProfile ? (
+                  <>
+                    <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
               </button>
             </div>
           </div>
@@ -1560,6 +2246,7 @@ export default function Home() {
                     showToast('Model name is required', 'error');
                     return;
                   }
+                  setIsCreatingModel(true);
                   try {
                     const res = await fetch('/api/models', {
                       method: 'POST',
@@ -1577,11 +2264,24 @@ export default function Home() {
                     }
                   } catch (e) {
                     showToast('Error creating model', 'error');
+                  } finally {
+                    setIsCreatingModel(false);
                   }
                 }}
-                className="w-full rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)]"
+                disabled={isCreatingModel}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
               >
-                Create Model
+                {isCreatingModel ? (
+                  <>
+                    <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Creating...
+                  </>
+                ) : (
+                  'Create Model'
+                )}
               </button>
             </div>
           </div>
@@ -1726,31 +2426,43 @@ export default function Home() {
                         {!img.isPrimary && (
                           <button
                             onClick={async () => {
-                              await fetch(`/api/models/${selectedModel.id}/images/${img.id}`, {
-                                method: 'PATCH',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ isPrimary: true }),
-                              });
-                              loadModelImages(selectedModel.id);
-                              loadModels();
-                              showToast('Set as primary', 'success');
+                              setIsSettingPrimary(img.id);
+                              try {
+                                await fetch(`/api/models/${selectedModel.id}/images/${img.id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ isPrimary: true }),
+                                });
+                                loadModelImages(selectedModel.id);
+                                loadModels();
+                                showToast('Set as primary', 'success');
+                              } finally {
+                                setIsSettingPrimary(null);
+                              }
                             }}
-                            className="rounded bg-[var(--primary)] px-1 text-xs text-white"
+                            disabled={isSettingPrimary === img.id}
+                            className="rounded bg-[var(--primary)] px-1 text-xs text-white disabled:opacity-50"
                           >
-                            ★
+                            {isSettingPrimary === img.id ? '...' : '★'}
                           </button>
                         )}
                         <button
                           onClick={async () => {
                             if (!confirm('Delete this image?')) return;
-                            await fetch(`/api/models/${selectedModel.id}/images/${img.id}`, { method: 'DELETE' });
-                            loadModelImages(selectedModel.id);
-                            loadModels();
-                            showToast('Image deleted', 'success');
+                            setIsDeletingImage(img.id);
+                            try {
+                              await fetch(`/api/models/${selectedModel.id}/images/${img.id}`, { method: 'DELETE' });
+                              loadModelImages(selectedModel.id);
+                              loadModels();
+                              showToast('Image deleted', 'success');
+                            } finally {
+                              setIsDeletingImage(null);
+                            }
                           }}
-                          className="rounded bg-[var(--error)] px-1 text-xs text-white"
+                          disabled={isDeletingImage === img.id}
+                          className="rounded bg-[var(--error)] px-1 text-xs text-white disabled:opacity-50"
                         >
-                          ×
+                          {isDeletingImage === img.id ? '...' : '×'}
                         </button>
                       </div>
                     </div>
@@ -1813,14 +2525,30 @@ export default function Home() {
                 <button
                   onClick={async () => {
                     if (!confirm(`Delete model "${selectedModel.name}" and all its images?`)) return;
-                    await fetch(`/api/models/${selectedModel.id}`, { method: 'DELETE' });
-                    setModelDetailModal(false);
-                    loadModels();
-                    showToast('Model deleted', 'success');
+                    setIsDeletingModel(true);
+                    try {
+                      await fetch(`/api/models/${selectedModel.id}`, { method: 'DELETE' });
+                      setModelDetailModal(false);
+                      loadModels();
+                      showToast('Model deleted', 'success');
+                    } finally {
+                      setIsDeletingModel(false);
+                    }
                   }}
-                  className="rounded-lg border border-[var(--error)] bg-[var(--error-bg)] px-4 py-2 text-sm text-[var(--error)]"
+                  disabled={isDeletingModel}
+                  className="flex items-center gap-2 rounded-lg border border-[var(--error)] bg-[var(--error-bg)] px-4 py-2 text-sm text-[var(--error)] disabled:opacity-50"
                 >
-                  Delete Model
+                  {isDeletingModel ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete Model'
+                  )}
                 </button>
               </div>
             </div>
@@ -1871,13 +2599,40 @@ export default function Home() {
                 <div className="space-y-2">
                   {selectedBatch.jobs?.map((job) => (
                     <div key={job.id} className="flex items-center gap-4 rounded-lg bg-[var(--background)] p-3">
-                      {job.outputUrl ? (
-                        <video src={job.outputUrl} className="h-16 w-28 rounded-lg object-cover" />
+                      {(job.signedUrl || job.outputUrl) ? (
+                        <div
+                          className="group relative h-16 w-28 shrink-0 cursor-pointer overflow-hidden rounded-lg"
+                          onClick={() => setVideoPreviewModal({
+                            url: job.signedUrl || job.outputUrl || '',
+                            caption: job.videoSource === 'upload' ? 'Uploaded video' : (job.tiktokUrl || '')
+                          })}
+                        >
+                          <video
+                            src={job.signedUrl || job.outputUrl}
+                            className="h-full w-full object-cover"
+                            muted
+                            playsInline
+                            preload="metadata"
+                            onLoadedMetadata={(e) => {
+                              e.currentTarget.currentTime = 0.1;
+                            }}
+                          />
+                          {/* Play button overlay */}
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 shadow">
+                              <svg className="h-4 w-4 text-[var(--primary)] ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                            </div>
+                          </div>
+                        </div>
                       ) : (
                         <div className="flex h-16 w-28 items-center justify-center rounded-lg bg-[var(--surface)] text-2xl">🎬</div>
                       )}
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">{job.tiktokUrl}</div>
+                        <div className="truncate text-sm">
+                          {job.videoSource === 'upload' ? '📁 Uploaded video' : job.tiktokUrl}
+                        </div>
                         <div className="text-xs text-[var(--text-muted)]">{job.step}</div>
                       </div>
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -1887,10 +2642,10 @@ export default function Home() {
                       }`}>
                         {job.status}
                       </span>
-                      {job.status === 'completed' && job.outputUrl && (
+                      {job.status === 'completed' && (job.signedUrl || job.outputUrl) && (
                         <div className="flex gap-2">
                           <a
-                            href={job.outputUrl}
+                            href={job.signedUrl || job.outputUrl}
                             download
                             className="rounded border border-[var(--border)] px-2 py-1 text-xs hover:bg-[var(--surface)]"
                           >
@@ -1899,6 +2654,7 @@ export default function Home() {
                           <button
                             onClick={() => {
                               setBatchDetailModal(false);
+                              // Use outputUrl (GCS path) for backend upload, not signed URL
                               setPreselectedVideoPath(job.outputUrl!);
                               setPage('posts');
                               setTimeout(() => openCreatePostModal(job.outputUrl!), 100);
@@ -1916,27 +2672,93 @@ export default function Home() {
 
               <div className="mt-4 flex justify-end gap-2">
                 <button
-                  onClick={() => {
-                    loadBatchDetail(selectedBatch.id);
+                  onClick={async () => {
+                    setIsRefreshingBatch(true);
+                    try {
+                      await loadBatchDetail(selectedBatch.id);
+                    } finally {
+                      setIsRefreshingBatch(false);
+                    }
                   }}
-                  className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm"
+                  disabled={isRefreshingBatch}
+                  className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50"
                 >
-                  Refresh
+                  {isRefreshingBatch ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Refreshing...
+                    </>
+                  ) : (
+                    'Refresh'
+                  )}
                 </button>
                 <button
                   onClick={async () => {
                     if (!confirm('Delete this batch? Completed videos will be preserved.')) return;
-                    await fetch(`/api/batches/${selectedBatch.id}`, { method: 'DELETE' });
-                    setBatchDetailModal(false);
-                    loadBatches();
-                    showToast('Batch deleted', 'success');
+                    setIsDeletingBatch(true);
+                    try {
+                      await fetch(`/api/batches/${selectedBatch.id}`, { method: 'DELETE' });
+                      setBatchDetailModal(false);
+                      loadBatches();
+                      showToast('Batch deleted', 'success');
+                    } finally {
+                      setIsDeletingBatch(false);
+                    }
                   }}
-                  className="rounded-lg border border-[var(--error)] bg-[var(--error-bg)] px-4 py-2 text-sm text-[var(--error)]"
+                  disabled={isDeletingBatch}
+                  className="flex items-center gap-2 rounded-lg border border-[var(--error)] bg-[var(--error-bg)] px-4 py-2 text-sm text-[var(--error)] disabled:opacity-50"
                 >
-                  Delete Batch
+                  {isDeletingBatch ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete Batch'
+                  )}
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video Preview Modal */}
+      {videoPreviewModal && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80"
+          onClick={() => setVideoPreviewModal(null)}
+        >
+          <div
+            className="relative max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-black shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent p-4">
+              <h3 className="truncate text-lg font-medium text-white">{videoPreviewModal.caption}</h3>
+              <button
+                onClick={() => setVideoPreviewModal(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white transition-colors hover:bg-white/30"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {/* Video Player */}
+            <video
+              src={videoPreviewModal.url}
+              controls
+              autoPlay
+              className="h-auto max-h-[90vh] w-full"
+              style={{ aspectRatio: '9/16', maxWidth: '100%', margin: '0 auto' }}
+            />
           </div>
         </div>
       )}

@@ -116,8 +116,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     // Sign all URLs before returning for immediate frontend display
+    const validImages = uploadedImages.filter((img): img is NonNullable<typeof img> => img !== null);
     const imagesWithSignedUrls = await Promise.all(
-      uploadedImages.map(async (img) => {
+      validImages.map(async (img) => {
         try {
           const signedUrl = await getSignedUrlFromPublicUrl(img.gcsUrl);
           return { ...img, signedUrl };

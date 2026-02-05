@@ -3,6 +3,9 @@ import path from 'path';
 import { uploadVideo, getSignedUrlFromPublicUrl } from '@/lib/storage';
 import { createMediaFile } from '@/lib/db';
 
+export const maxDuration = 120;
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -19,32 +22,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Read file into buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Upload to GCS
-    const { filename, url, contentType } = await uploadVideo(buffer, file.name);
+    // Upload directly to GCS
+    const result = await uploadVideo(buffer, file.name);
+
+    // Get signed URL for frontend preview
+    const signedUrl = await getSignedUrlFromPublicUrl(result.url);
 
     // Store in database
     await createMediaFile({
-      filename,
+      filename: result.filename,
       originalName: file.name,
       fileType: 'video',
-      gcsUrl: url,
+      gcsUrl: result.url,
       fileSize: buffer.length,
-      mimeType: contentType,
+      mimeType: result.contentType,
       jobId: null,
     });
 
-    // Generate signed URL for immediate frontend preview
-    const signedUrl = await getSignedUrlFromPublicUrl(url);
-
     return NextResponse.json({
       success: true,
-      filename,
-      url: signedUrl,      // Signed URL for frontend display
-      gcsUrl: url,         // Public URL reference
-      path: signedUrl,     // For backwards compatibility
+      filename: result.filename,
+      url: signedUrl,
+      gcsUrl: result.url,
+      path: signedUrl,
       size: buffer.length,
     });
   } catch (err) {
