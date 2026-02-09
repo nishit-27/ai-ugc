@@ -100,9 +100,14 @@ export default function Home() {
   const [newProfileModal, setNewProfileModal] = useState(false);
   const [editProfileModal, setEditProfileModal] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
-  const [publishMode, setPublishMode] = useState<'now' | 'schedule'>('now');
+  const [publishMode, setPublishMode] = useState<'now' | 'schedule' | 'queue' | 'draft'>('now');
   const [videos, setVideos] = useState<{ name: string; path: string; url?: string }[]>([]);
-  const [postForm, setPostForm] = useState({ caption: '', videoUrl: '', accountId: '', date: '', time: '' });
+  const [postForm, setPostForm] = useState({ caption: '', videoUrl: '', date: '', time: '' });
+  const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [profileSearchQuery, setProfileSearchQuery] = useState('');
+  const [profileMultiDropdownOpen, setProfileMultiDropdownOpen] = useState(false);
+  const [postTimezone, setPostTimezone] = useState('Asia/Kolkata');
   const [isPosting, setIsPosting] = useState(false);
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
   const [postVideoUploadProgress, setPostVideoUploadProgress] = useState<number>(0);
@@ -162,6 +167,25 @@ export default function Home() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  const downloadVideo = useCallback(async (url: string, filename?: string) => {
+    try {
+      showToast('Starting download...', 'success');
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename || 'video.mp4';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      showToast('Download failed, opening in new tab', 'error');
+      window.open(url, '_blank');
+    }
+  }, [showToast]);
 
   const getCreatedDateDisplay = useCallback((createdAt?: string) => {
     if (!createdAt) return '-';
@@ -472,9 +496,7 @@ export default function Home() {
     }
   };
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const uploadImageFile = async (file: File) => {
     setIsUploadingImage(true);
     const formData = new FormData();
     formData.append('image', file);
@@ -493,9 +515,13 @@ export default function Home() {
     }
   };
 
-  const handleSourceVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    await uploadImageFile(file);
+  };
+
+  const uploadSourceVideoFile = async (file: File) => {
     setIsUploadingSourceVideo(true);
     setSourceVideoUploadProgress(0);
     try {
@@ -517,8 +543,14 @@ export default function Home() {
     } finally {
       setIsUploadingSourceVideo(false);
       setSourceVideoUploadProgress(0);
-      e.target.value = '';
     }
+  };
+
+  const handleSourceVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await uploadSourceVideoFile(file);
+    e.target.value = '';
   };
 
   const handleGenerate = async () => {
@@ -561,33 +593,39 @@ export default function Home() {
     setIsLoadingModal(true);
     setCreatePostModal(true);
     try {
-      // Load both videos and accounts in parallel
-      const [videosRes, accountsRes] = await Promise.all([
+      // Load videos, accounts, and profiles in parallel
+      const [videosRes, accountsRes, profilesRes] = await Promise.all([
         fetch('/api/videos'),
         fetch('/api/late/accounts'),
+        fetch('/api/late/profiles'),
       ]);
       const videosData = await videosRes.json();
       const accountsData = await accountsRes.json();
+      const profilesData = await profilesRes.json();
       setVideos(videosData.videos || []);
       setAccounts(accountsData.accounts || []);
+      setProfiles(profilesData.profiles || []);
     } catch (e) {
       console.error(e);
     } finally {
       setIsLoadingModal(false);
     }
-    setPostForm((prev) => ({
-      ...prev,
+    setPostForm({
       caption: '',
       videoUrl: withVideoUrl ?? preselectedVideoPath ?? '',
-      accountId: prev.accountId || '',
-      date: prev.date || '',
-      time: prev.time || '',
-    }));
+      date: '',
+      time: '',
+    });
     setUploadedVideoPath(null);
     setUploadedVideoPreviewUrl(null);
     setPreselectedVideoPath(null);
     setUploadedVideoName(null);
     setPublishMode('now');
+    setSelectedProfiles([]);
+    setSelectedAccountIds([]);
+    setProfileSearchQuery('');
+    setProfileMultiDropdownOpen(false);
+    setPostTimezone('Asia/Kolkata');
   };
 
   const submitPost = async () => {
@@ -596,8 +634,8 @@ export default function Home() {
       showToast('Please select or upload a video', 'error');
       return;
     }
-    if (!postForm.accountId) {
-      showToast('Please select a TikTok account', 'error');
+    if (selectedAccountIds.length === 0) {
+      showToast('Please select at least one account', 'error');
       return;
     }
     if (publishMode === 'schedule' && (!postForm.date || !postForm.time)) {
@@ -608,23 +646,35 @@ export default function Home() {
     setIsPosting(true);
 
     try {
+      // Build platforms array from selected account IDs
+      const platformTargets = selectedAccountIds.map((accId) => {
+        const acc = postableAccounts.find((a) => a._id === accId);
+        return { platform: acc?.platform || 'tiktok', accountId: accId };
+      });
+
       const body: Record<string, unknown> = {
         videoUrl,
         caption: postForm.caption,
-        accountId: postForm.accountId,
-        publishNow: publishMode === 'now',
+        platforms: platformTargets,
+        publishMode,
       };
       if (publishMode === 'schedule') {
         body.scheduledFor = `${postForm.date}T${postForm.time}:00`;
-        body.timezone = 'Asia/Kolkata';
-        body.publishNow = false;
+        body.timezone = postTimezone;
       }
 
       // Close modal immediately and show loading toast
       setCreatePostModal(false);
-      showToast(publishMode === 'now' ? 'Publishing to TikTok...' : 'Scheduling post...', 'success');
+      const toastMsg = publishMode === 'now'
+        ? `Publishing to ${platformTargets.length} account${platformTargets.length > 1 ? 's' : ''}...`
+        : publishMode === 'schedule'
+          ? 'Scheduling post...'
+          : publishMode === 'draft'
+            ? 'Saving draft...'
+            : 'Adding to queue...';
+      showToast(toastMsg, 'success');
 
-      const res = await fetch('/api/tiktok/upload', {
+      const res = await fetch('/api/posts/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -632,16 +682,7 @@ export default function Home() {
       const data = await res.json();
 
       if (res.ok && data.success) {
-        const status = data.post?.status;
-        if (status === 'published') {
-          showToast(data.post?.platformPostUrl ? 'Published to TikTok!' : 'Video published!', 'success');
-        } else if (status === 'scheduled') {
-          showToast(data.message || 'Post scheduled successfully!', 'success');
-        } else if (status === 'publishing') {
-          showToast('Video is being published... Check posts page for status.', 'success');
-        } else {
-          showToast(data.message || 'Post submitted!', 'success');
-        }
+        showToast(data.message || 'Post submitted!', 'success');
         loadPosts();
         setPage('posts');
       } else {
@@ -658,10 +699,7 @@ export default function Home() {
     }
   };
 
-  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const uploadPostVideoFile = async (file: File) => {
     setIsUploadingVideo(true);
     setUploadedVideoName(file.name);
     setPostVideoUploadProgress(0);
@@ -675,7 +713,6 @@ export default function Home() {
       if (data.success) {
         setUploadedVideoPath(data.gcsUrl);
         setUploadedVideoPreviewUrl(data.url || data.gcsUrl);
-        // Clear dropdown selection since we're using uploaded video
         setPostForm((p) => ({ ...p, videoUrl: '' }));
         showToast('Video uploaded successfully!', 'success');
       } else {
@@ -688,8 +725,14 @@ export default function Home() {
     } finally {
       setIsUploadingVideo(false);
       setPostVideoUploadProgress(0);
-      e.target.value = '';
     }
+  };
+
+  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await uploadPostVideoFile(file);
+    e.target.value = '';
   };
 
   const profileAccounts = accounts.filter((a) => {
@@ -698,6 +741,15 @@ export default function Home() {
   });
 
   const tiktokAccounts = accounts.filter((a) => a.platform === 'tiktok');
+
+  // Derived: accounts from selected profiles (for post modal)
+  const selectedProfileAccounts = accounts.filter((a) => {
+    const pId = typeof a.profileId === 'object' ? (a.profileId as { _id: string })?._id : a.profileId;
+    return pId && selectedProfiles.includes(pId);
+  });
+  const postableAccounts = selectedProfileAccounts.filter(
+    (a) => a.platform === 'tiktok' || a.platform === 'instagram' || a.platform === 'youtube'
+  );
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -823,11 +875,33 @@ export default function Home() {
                     /* Video Upload */
                     <div className="mb-4">
                       <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Upload Video</label>
-                      <label className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-transparent py-8 transition-colors ${
-                        isUploadingSourceVideo
-                          ? 'cursor-wait border-[var(--primary)] bg-[var(--primary)]/5'
-                          : 'cursor-pointer border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
-                      }`}>
+                      <label
+                        className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-transparent py-8 transition-colors ${
+                          isUploadingSourceVideo
+                            ? 'cursor-wait border-[var(--primary)] bg-[var(--primary)]/5'
+                            : 'cursor-pointer border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
+                        }`}
+                        onDragOver={(e) => {
+                          if (isUploadingSourceVideo) return;
+                          e.preventDefault();
+                          e.currentTarget.classList.add('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                        }}
+                        onDragLeave={(e) => {
+                          e.preventDefault();
+                          e.currentTarget.classList.remove('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.currentTarget.classList.remove('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                          if (isUploadingSourceVideo) return;
+                          const file = e.dataTransfer.files?.[0];
+                          if (file && file.type.startsWith('video/')) {
+                            uploadSourceVideoFile(file);
+                          } else {
+                            showToast('Please drop a video file (MP4, MOV, WebM)', 'error');
+                          }
+                        }}
+                      >
                         {isUploadingSourceVideo ? (
                           <>
                             <svg className="h-10 w-10 animate-spin text-[var(--primary)]" viewBox="0 0 24 24" fill="none">
@@ -872,11 +946,33 @@ export default function Home() {
                   )}
                   <div className="mb-4">
                     <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Model Image</label>
-                    <label className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-transparent py-8 transition-colors ${
-                      isUploadingImage
-                        ? 'cursor-wait border-[var(--primary)] bg-[var(--primary)]/5'
-                        : 'cursor-pointer border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
-                    }`}>
+                    <label
+                      className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-transparent py-8 transition-colors ${
+                        isUploadingImage
+                          ? 'cursor-wait border-[var(--primary)] bg-[var(--primary)]/5'
+                          : 'cursor-pointer border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
+                      }`}
+                      onDragOver={(e) => {
+                        if (isUploadingImage) return;
+                        e.preventDefault();
+                        e.currentTarget.classList.add('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.remove('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.remove('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                        if (isUploadingImage) return;
+                        const file = e.dataTransfer.files?.[0];
+                        if (file && file.type.startsWith('image/')) {
+                          uploadImageFile(file);
+                        } else {
+                          showToast('Please drop an image file', 'error');
+                        }
+                      }}
+                    >
                       {isUploadingImage ? (
                         <>
                           <svg className="h-10 w-10 animate-spin text-[var(--primary)]" viewBox="0 0 24 24" fill="none">
@@ -952,13 +1048,12 @@ export default function Home() {
                         <div className="text-xs text-[var(--text-muted)]">{job.step}</div>
                         {job.status === 'completed' && (job.signedUrl || job.outputUrl) && (
                           <div className="mt-2 flex gap-2">
-                            <a
-                              href={job.signedUrl || job.outputUrl}
-                              download
+                            <button
+                              onClick={() => downloadVideo(job.signedUrl || job.outputUrl!, `video-${job.id}.mp4`)}
                               className="rounded border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--background)]"
                             >
                               Download
-                            </a>
+                            </button>
                             <button
                               onClick={() => {
                                 // Use outputUrl (GCS path) for backend upload, not signed URL
@@ -968,7 +1063,7 @@ export default function Home() {
                               }}
                               className="rounded border border-[var(--accent-border)] bg-[var(--accent)] px-3 py-1.5 text-xs font-medium hover:bg-[#fde68a]"
                             >
-                              Post to TikTok
+                              Create Post
                             </button>
                           </div>
                         )}
@@ -1951,6 +2046,7 @@ export default function Home() {
               </div>
             ) : (
             <div className="space-y-4 p-4">
+              {/* Video Selection */}
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Select Video</label>
 
@@ -2020,11 +2116,33 @@ export default function Home() {
 
                 {/* Upload area */}
                 {!uploadedVideoPath && (
-                  <label className={`mt-2 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed py-6 transition-colors ${
-                    isUploadingVideo
-                      ? 'border-[var(--primary)] bg-[var(--primary)]/5 cursor-wait'
-                      : 'border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
-                  }`}>
+                  <label
+                    className={`mt-2 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed py-6 transition-colors ${
+                      isUploadingVideo
+                        ? 'border-[var(--primary)] bg-[var(--primary)]/5 cursor-wait'
+                        : 'border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--background)]'
+                    }`}
+                    onDragOver={(e) => {
+                      if (isUploadingVideo) return;
+                      e.preventDefault();
+                      e.currentTarget.classList.add('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                    }}
+                    onDragLeave={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.classList.remove('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.classList.remove('border-[var(--primary)]', 'bg-[var(--surface)]', 'scale-[1.01]');
+                      if (isUploadingVideo) return;
+                      const file = e.dataTransfer.files?.[0];
+                      if (file && file.type.startsWith('video/')) {
+                        uploadPostVideoFile(file);
+                      } else {
+                        showToast('Please drop a video file', 'error');
+                      }
+                    }}
+                  >
                     {isUploadingVideo ? (
                       <>
                         <svg className="h-8 w-8 animate-spin text-[var(--primary)]" viewBox="0 0 24 24" fill="none">
@@ -2055,6 +2173,8 @@ export default function Home() {
                   </label>
                 )}
               </div>
+
+              {/* Caption */}
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Caption</label>
                 <textarea
@@ -2064,61 +2184,244 @@ export default function Home() {
                   className="min-h-[100px] w-full resize-y rounded-lg border border-[var(--border)] px-4 py-2"
                 />
               </div>
+
+              {/* Multi-Profile Selector */}
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">TikTok Account</label>
-                <select
-                  value={postForm.accountId}
-                  onChange={(e) => setPostForm((p) => ({ ...p, accountId: e.target.value }))}
-                  className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
-                >
-                  <option value="">No TikTok accounts connected</option>
-                  {tiktokAccounts.map((a) => (
-                    <option key={a._id} value={a._id}>@{a.username || a.displayName}</option>
-                  ))}
-                </select>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Select Profiles</label>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setProfileMultiDropdownOpen((o) => !o)}
+                    className="flex w-full items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--background)] px-4 py-2.5"
+                  >
+                    <div className="flex items-center gap-2">
+                      {selectedProfiles.length > 0 ? (
+                        <>
+                          <div className="flex -space-x-1">
+                            {profiles.filter((p) => selectedProfiles.includes(p._id)).slice(0, 4).map((p) => (
+                              <div
+                                key={p._id}
+                                className="h-4 w-4 rounded-full border-2 border-[var(--background)]"
+                                style={{ backgroundColor: p.color || '#fcd34d' }}
+                              />
+                            ))}
+                          </div>
+                          <span className="text-sm">{selectedProfiles.length} profile{selectedProfiles.length !== 1 ? 's' : ''} selected</span>
+                        </>
+                      ) : (
+                        <span className="text-sm text-[var(--text-muted)]">Select profiles...</span>
+                      )}
+                    </div>
+                    <svg className={`h-4 w-4 text-[var(--text-muted)] transition-transform ${profileMultiDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+
+                  {profileMultiDropdownOpen && (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-lg">
+                      {/* Search */}
+                      <div className="border-b border-[var(--border)] p-2">
+                        <input
+                          type="text"
+                          value={profileSearchQuery}
+                          onChange={(e) => setProfileSearchQuery(e.target.value)}
+                          placeholder="Search profiles..."
+                          className="w-full rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+                          autoFocus
+                        />
+                      </div>
+                      {/* Select All / Clear */}
+                      <div className="flex gap-2 border-b border-[var(--border)] px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProfiles(profiles.map((p) => p._id))}
+                          className="text-xs text-[var(--primary)] hover:underline"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedProfiles([]); setSelectedAccountIds([]); }}
+                          className="text-xs text-[var(--text-muted)] hover:underline"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      {/* Profile list */}
+                      {profiles
+                        .filter((p) => !profileSearchQuery || p.name.toLowerCase().includes(profileSearchQuery.toLowerCase()))
+                        .map((p) => (
+                          <label
+                            key={p._id}
+                            className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-[var(--background)]"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedProfiles.includes(p._id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  const newProfiles = [...selectedProfiles, p._id];
+                                  setSelectedProfiles(newProfiles);
+                                  // Auto-select all postable accounts from newly added profile
+                                  const newAccounts = accounts.filter((a) => {
+                                    const aProfileId = typeof a.profileId === 'object' ? (a.profileId as { _id: string })?._id : a.profileId;
+                                    return aProfileId === p._id && (a.platform === 'tiktok' || a.platform === 'instagram' || a.platform === 'youtube');
+                                  });
+                                  setSelectedAccountIds((prev) => [...new Set([...prev, ...newAccounts.map((a) => a._id)])]);
+                                } else {
+                                  setSelectedProfiles((prev) => prev.filter((id) => id !== p._id));
+                                  // Remove accounts from deselected profile
+                                  const profileAccountIds = accounts
+                                    .filter((a) => {
+                                      const aProfileId = typeof a.profileId === 'object' ? (a.profileId as { _id: string })?._id : a.profileId;
+                                      return aProfileId === p._id;
+                                    })
+                                    .map((a) => a._id);
+                                  setSelectedAccountIds((prev) => prev.filter((id) => !profileAccountIds.includes(id)));
+                                }
+                              }}
+                              className="h-4 w-4 rounded accent-[var(--primary)]"
+                            />
+                            <div className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: p.color || '#fcd34d' }} />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-medium">{p.name}</div>
+                              {p.description && <div className="truncate text-xs text-[var(--text-muted)]">{p.description}</div>}
+                            </div>
+                          </label>
+                        ))}
+                      {/* Footer */}
+                      {selectedProfiles.length > 0 && (
+                        <div className="border-t border-[var(--border)] px-3 py-2 text-xs text-[var(--text-muted)]">
+                          Selected: {profiles.filter((p) => selectedProfiles.includes(p._id)).map((p) => p.name).join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* Platform Account Cards */}
+              {postableAccounts.length > 0 && (
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">
+                    Accounts ({selectedAccountIds.length}/{postableAccounts.length} selected)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {postableAccounts.map((a) => {
+                      const isSelected = selectedAccountIds.includes(a._id);
+                      return (
+                        <label
+                          key={a._id}
+                          className={`flex cursor-pointer items-center gap-2.5 rounded-xl border-2 p-3 transition-colors ${
+                            isSelected
+                              ? 'border-[var(--primary)] bg-[var(--primary)]/5'
+                              : 'border-[var(--border)] hover:border-[var(--primary)]/50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedAccountIds((prev) => [...prev, a._id]);
+                              } else {
+                                setSelectedAccountIds((prev) => prev.filter((id) => id !== a._id));
+                              }
+                            }}
+                            className="h-4 w-4 shrink-0 rounded accent-[var(--primary)]"
+                          />
+                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                            {/* Platform icon */}
+                            {a.platform === 'tiktok' ? (
+                              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005 20.1a6.34 6.34 0 0010.86-4.43v-7a8.16 8.16 0 004.77 1.52v-3.4a4.85 4.85 0 01-1-.1z"/></svg>
+                            ) : a.platform === 'youtube' ? (
+                              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                            ) : (
+                              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                            )}
+                            {/* Profile picture */}
+                            {a.profilePicture ? (
+                              <img src={a.profilePicture} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
+                            ) : (
+                              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--border)] text-xs font-medium">
+                                {(a.username || a.displayName || '?')[0].toUpperCase()}
+                              </div>
+                            )}
+                            <span className="truncate text-sm">@{a.username || a.displayName}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Publishing Options - 4 modes */}
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">When to Post</label>
-                <div className="mb-2 flex gap-2">
-                  <button
-                    onClick={() => setPublishMode('now')}
-                    className={`rounded-lg px-4 py-2 ${publishMode === 'now' ? 'bg-[var(--primary)] text-white' : 'border border-[var(--border)]'}`}
-                  >
-                    Publish Now
-                  </button>
-                  <button
-                    onClick={() => setPublishMode('schedule')}
-                    className={`rounded-lg px-4 py-2 ${publishMode === 'schedule' ? 'bg-[var(--primary)] text-white' : 'border border-[var(--border)]'}`}
-                  >
-                    Schedule
-                  </button>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Publishing</label>
+                <div className="mb-2 grid grid-cols-4 gap-1 rounded-lg border border-[var(--border)] p-1">
+                  {(['now', 'schedule', 'queue', 'draft'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setPublishMode(mode)}
+                      className={`rounded-md px-2 py-2 text-sm font-medium capitalize transition-colors ${
+                        publishMode === mode
+                          ? 'bg-[var(--primary)] text-white'
+                          : 'text-[var(--text-muted)] hover:bg-[var(--background)]'
+                      }`}
+                    >
+                      {mode === 'now' ? 'Now' : mode === 'schedule' ? 'Schedule' : mode === 'queue' ? 'Queue' : 'Draft'}
+                    </button>
+                  ))}
                 </div>
                 {publishMode === 'schedule' && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-xs text-[var(--text-muted)]">Date</label>
-                      <input
-                        type="date"
-                        value={postForm.date}
-                        onChange={(e) => setPostForm((p) => ({ ...p, date: e.target.value }))}
-                        className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
-                      />
+                  <div className="mt-2 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs text-[var(--text-muted)]">Date</label>
+                        <input
+                          type="date"
+                          value={postForm.date}
+                          onChange={(e) => setPostForm((p) => ({ ...p, date: e.target.value }))}
+                          className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-[var(--text-muted)]">Time</label>
+                        <input
+                          type="time"
+                          value={postForm.time}
+                          onChange={(e) => setPostForm((p) => ({ ...p, time: e.target.value }))}
+                          className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
+                        />
+                      </div>
                     </div>
                     <div>
-                      <label className="block text-xs text-[var(--text-muted)]">Time</label>
-                      <input
-                        type="time"
-                        value={postForm.time}
-                        onChange={(e) => setPostForm((p) => ({ ...p, time: e.target.value }))}
-                        className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
-                      />
+                      <label className="block text-xs text-[var(--text-muted)]">Timezone</label>
+                      <select
+                        value={postTimezone}
+                        onChange={(e) => setPostTimezone(e.target.value)}
+                        className="w-full rounded-lg border border-[var(--border)] px-4 py-2 text-sm"
+                      >
+                        <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+                        <option value="America/New_York">America/New_York (EST)</option>
+                        <option value="America/Los_Angeles">America/Los_Angeles (PST)</option>
+                        <option value="Europe/London">Europe/London (GMT)</option>
+                        <option value="Europe/Berlin">Europe/Berlin (CET)</option>
+                        <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+                        <option value="Australia/Sydney">Australia/Sydney (AEST)</option>
+                        <option value="UTC">UTC</option>
+                      </select>
                     </div>
                   </div>
                 )}
               </div>
+
+              {/* Submit Button - dynamic label */}
               <button
                 onClick={submitPost}
-                disabled={isPosting}
+                disabled={isPosting || selectedAccountIds.length === 0}
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--primary)] py-3 font-medium text-white hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isPosting ? (
@@ -2127,10 +2430,22 @@ export default function Home() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
-                    {publishMode === 'now' ? 'Publishing...' : 'Scheduling...'}
+                    {publishMode === 'now' ? 'Publishing...' : publishMode === 'schedule' ? 'Scheduling...' : publishMode === 'draft' ? 'Saving...' : 'Queuing...'}
                   </>
                 ) : (
-                  publishMode === 'now' ? 'Upload to TikTok' : 'Schedule Post'
+                  (() => {
+                    const selectedPlatforms = selectedAccountIds.map((id) => postableAccounts.find((a) => a._id === id)?.platform).filter(Boolean);
+                    const uniquePlatforms = [...new Set(selectedPlatforms)];
+                    if (publishMode === 'draft') return 'Save Draft';
+                    if (publishMode === 'schedule') return 'Schedule Post';
+                    if (publishMode === 'queue') return 'Add to Queue';
+                    if (selectedAccountIds.length === 0) return 'Select accounts to publish';
+                    if (selectedAccountIds.length === 1 && uniquePlatforms.length === 1) {
+                      const name = uniquePlatforms[0] === 'tiktok' ? 'TikTok' : uniquePlatforms[0] === 'youtube' ? 'YouTube' : 'Instagram';
+                      return `Publish to ${name}`;
+                    }
+                    return `Publish to ${selectedAccountIds.length} accounts`;
+                  })()
                 )}
               </button>
             </div>
@@ -2739,13 +3054,12 @@ export default function Home() {
                       </span>
                       {job.status === 'completed' && (job.signedUrl || job.outputUrl) && (
                         <div className="flex gap-2">
-                          <a
-                            href={job.signedUrl || job.outputUrl}
-                            download
+                          <button
+                            onClick={() => downloadVideo(job.signedUrl || job.outputUrl!, `video-${job.id}.mp4`)}
                             className="rounded border border-[var(--border)] px-2 py-1 text-xs hover:bg-[var(--surface)]"
                           >
                             Download
-                          </a>
+                          </button>
                           <button
                             onClick={() => {
                               setBatchDetailModal(false);
