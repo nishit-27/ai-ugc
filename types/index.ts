@@ -94,6 +94,7 @@ export type VideoGenConfig = {
 export type TextOverlayConfig = {
   text: string;
   position: 'top' | 'center' | 'bottom' | 'custom';
+  textAlign?: 'left' | 'center' | 'right';
   customX?: number;       // 0-100 percentage
   customY?: number;       // 0-100 percentage
   fontSize: number;

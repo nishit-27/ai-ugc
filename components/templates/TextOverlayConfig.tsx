@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useCallback, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 import type { TextOverlayConfig as TOC } from '@/types';
 import { TEXT_STYLES, FONTS } from './textStyles';
 
@@ -90,6 +90,31 @@ export default function TextOverlayConfig({
           />
           <div className="mt-0.5 flex justify-between text-[10px] text-[var(--text-muted)]">
             <span>No limit</span><span>15</span>
+          </div>
+        </div>
+
+        {/* Text Alignment */}
+        <div className="mt-3">
+          <label className="mb-1.5 block text-[11px] font-medium text-[var(--text)]">Text Alignment</label>
+          <div className="flex gap-1.5">
+            {([
+              { value: 'left' as const, icon: AlignLeft, label: 'Left' },
+              { value: 'center' as const, icon: AlignCenter, label: 'Center' },
+              { value: 'right' as const, icon: AlignRight, label: 'Right' },
+            ]).map(({ value, icon: Icon, label }) => (
+              <button
+                key={value}
+                onClick={() => onChange({ ...config, textAlign: value })}
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-medium transition-all duration-150 ${
+                  (config.textAlign || 'center') === value
+                    ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                    : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </div>

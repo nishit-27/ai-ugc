@@ -20,7 +20,7 @@ const miniApps: {
 function createDefaultConfig(type: MiniAppType): VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig {
   switch (type) {
     case 'video-generation': return { mode: 'motion-control' } as VideoGenConfig;
-    case 'text-overlay':     return { text: '', position: 'bottom', fontSize: 48, fontColor: '#FFFFFF', entireVideo: true } as TextOverlayConfig;
+    case 'text-overlay':     return { text: '', position: 'bottom', textAlign: 'center', fontSize: 48, fontColor: '#FFFFFF', entireVideo: true } as TextOverlayConfig;
     case 'bg-music':         return { volume: 30 } as BgMusicConfig;
     case 'attach-video':     return { videoUrl: '', position: 'after' } as AttachVideoConfig;
   }

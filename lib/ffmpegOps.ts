@@ -49,7 +49,8 @@ function wrapByWordCount(text: string, wordsPerLine: number): string {
 }
 
 /**
- * Burn text onto a video using ffmpeg drawtext filter.
+ * Burn text onto a video using ffmpeg drawtext filters.
+ * Each line is a separate drawtext filter to support left/center/right alignment.
  */
 export function addTextOverlay(
   inputPath: string,
@@ -57,25 +58,21 @@ export function addTextOverlay(
   config: TextOverlayConfig
 ): void {
   const {
-    text, position, fontSize = 48, fontColor = '#FFFFFF', bgColor,
+    text, position, textAlign = 'center', fontSize = 48, fontColor = '#FFFFFF', bgColor,
     paddingLeft = 0, paddingRight = 0,
+    customX, customY,
     wordsPerLine,
     startTime, duration,
   } = config;
 
-  // Word-wrap text. ffmpeg drawtext has no auto-wrap, so we insert newlines manually.
+  // ── Word-wrap (mutually exclusive modes) ──
   let wrappedText = text;
-
-  // First: wrap by word count if set
-  if (wordsPerLine && wordsPerLine > 0) {
-    wrappedText = wrapByWordCount(wrappedText, wordsPerLine);
-  }
-
-  // Then: further wrap by character width based on margins
-  // Default ~90px each side (matches 75% maxWidth in preview for 720px video)
   const effectiveLeft = paddingLeft > 0 ? paddingLeft : 90;
   const effectiveRight = paddingRight > 0 ? paddingRight : 90;
-  {
+
+  if (wordsPerLine && wordsPerLine > 0) {
+    wrappedText = wrapByWordCount(wrappedText, wordsPerLine);
+  } else {
     const videoWidth = 720;
     const availableWidth = videoWidth - effectiveLeft - effectiveRight;
     const charWidth = fontSize * 0.55;
@@ -83,50 +80,70 @@ export function addTextOverlay(
     wrappedText = wrapText(wrappedText, maxCharsPerLine);
   }
 
-  // Horizontal offset if left/right margins differ
+  const lines = wrappedText.split('\n');
+  const lineHeight = Math.round(fontSize * 1.3);
+  const totalHeight = lines.length * lineHeight;
+
+  // ── X expression per alignment ──
   const hOffset = (paddingLeft - paddingRight) / 2;
-  const xExpr = hOffset === 0
-    ? '(w-text_w)/2'
-    : `(w-text_w)/2+${hOffset}`;
-
-  // Vertical position
-  let yExpr: string;
-  switch (position) {
-    case 'top':
-      yExpr = '50';
-      break;
-    case 'center':
-      yExpr = '(h-text_h)/2';
-      break;
-    case 'bottom':
-    default:
-      yExpr = 'h-text_h-50';
-      break;
+  function getXExpr(): string {
+    if (position === 'custom' && customX !== undefined) {
+      switch (textAlign) {
+        case 'left':  return `w*${customX}/100`;
+        case 'right': return `w*${customX}/100-text_w`;
+        default:      return `w*${customX}/100-text_w/2`;
+      }
+    }
+    switch (textAlign) {
+      case 'left':  return `${effectiveLeft}`;
+      case 'right': return `w-text_w-${effectiveRight}`;
+      default:      return hOffset === 0 ? '(w-text_w)/2' : `(w-text_w)/2+${hOffset}`;
+    }
   }
 
-  // Escape text for ffmpeg drawtext (escape single quotes and backslashes)
-  const escapedText = wrappedText.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
-
-  let filter = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=${fontColor}:x=${xExpr}:y=${yExpr}`;
-
-  if (bgColor) {
-    filter += `:box=1:boxcolor=${bgColor}@0.7:boxborderw=10`;
+  // ── Base Y expression (top of text block) ──
+  function getBaseY(): string {
+    if (position === 'custom' && customY !== undefined) {
+      return `h*${customY}/100-${Math.round(totalHeight / 2)}`;
+    }
+    switch (position) {
+      case 'top':    return '50';
+      case 'center': return `(h-${totalHeight})/2`;
+      case 'bottom': return `h-${totalHeight}-50`;
+      default:       return `h-${totalHeight}-50`;
+    }
   }
 
-  // Time-based enable
+  const xExpr = getXExpr();
+  const baseYExpr = getBaseY();
+
+  // ── Enable expression for timing ──
+  let enableExpr = '';
   if (startTime !== undefined || duration !== undefined) {
     const start = startTime || 0;
     if (duration !== undefined) {
-      filter += `:enable='between(t,${start},${start + duration})'`;
+      enableExpr = `:enable='between(t,${start},${start + duration})'`;
     } else {
-      filter += `:enable='gte(t,${start})'`;
+      enableExpr = `:enable='gte(t,${start})'`;
     }
   }
+
+  // ── One drawtext filter per line ──
+  const filters = lines.map((line, i) => {
+    const escaped = line.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
+    const yExpr = i === 0 ? baseYExpr : `${baseYExpr}+${i * lineHeight}`;
+    let f = `drawtext=text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:x=${xExpr}:y=${yExpr}`;
+    if (bgColor) {
+      f += `:box=1:boxcolor=${bgColor}@0.7:boxborderw=10`;
+    }
+    f += enableExpr;
+    return f;
+  });
 
   execFileSync('ffmpeg', [
     '-y',
     '-i', inputPath,
-    '-vf', filter,
+    '-vf', filters.join(','),
     '-c:a', 'copy',
     outputPath,
   ]);
