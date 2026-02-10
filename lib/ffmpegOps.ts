@@ -33,6 +33,22 @@ function wrapText(text: string, maxChars: number): string {
 }
 
 /**
+ * Wrap text so each line has at most `wordsPerLine` words.
+ * Respects existing newlines in the input.
+ */
+function wrapByWordCount(text: string, wordsPerLine: number): string {
+  return text.split('\n').map((paragraph) => {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    if (words.length <= wordsPerLine) return paragraph;
+    const lines: string[] = [];
+    for (let i = 0; i < words.length; i += wordsPerLine) {
+      lines.push(words.slice(i, i + wordsPerLine).join(' '));
+    }
+    return lines.join('\n');
+  }).join('\n');
+}
+
+/**
  * Burn text onto a video using ffmpeg drawtext filter.
  */
 export function addTextOverlay(
@@ -43,19 +59,28 @@ export function addTextOverlay(
   const {
     text, position, fontSize = 48, fontColor = '#FFFFFF', bgColor,
     paddingLeft = 0, paddingRight = 0,
+    wordsPerLine,
     startTime, duration,
   } = config;
 
-  // Word-wrap text if left/right margins are set.
-  // ffmpeg drawtext has no auto-wrap, so we insert newlines manually.
-  // Assume 720px video width; average char width ≈ fontSize * 0.55
+  // Word-wrap text. ffmpeg drawtext has no auto-wrap, so we insert newlines manually.
   let wrappedText = text;
-  if (paddingLeft > 0 || paddingRight > 0) {
+
+  // First: wrap by word count if set
+  if (wordsPerLine && wordsPerLine > 0) {
+    wrappedText = wrapByWordCount(wrappedText, wordsPerLine);
+  }
+
+  // Then: further wrap by character width based on margins
+  // Default ~90px each side (matches 75% maxWidth in preview for 720px video)
+  const effectiveLeft = paddingLeft > 0 ? paddingLeft : 90;
+  const effectiveRight = paddingRight > 0 ? paddingRight : 90;
+  {
     const videoWidth = 720;
-    const availableWidth = videoWidth - paddingLeft - paddingRight;
+    const availableWidth = videoWidth - effectiveLeft - effectiveRight;
     const charWidth = fontSize * 0.55;
     const maxCharsPerLine = Math.max(5, Math.floor(availableWidth / charWidth));
-    wrappedText = wrapText(text, maxCharsPerLine);
+    wrappedText = wrapText(wrappedText, maxCharsPerLine);
   }
 
   // Horizontal offset if left/right margins differ

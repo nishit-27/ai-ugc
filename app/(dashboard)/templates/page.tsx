@@ -24,6 +24,7 @@ type PipelineDraft = {
   videoUrl: string;
   uploadedFilename: string;
   sourceDuration?: number;
+  previewUrl?: string;
 };
 
 function loadDraft(): PipelineDraft | null {
@@ -52,13 +53,14 @@ export default function TemplatesPage() {
   const [videoUrl, setVideoUrl] = useState(() => draft.current?.videoUrl ?? '');
   const [uploadedFilename, setUploadedFilename] = useState(() => draft.current?.uploadedFilename ?? '');
   const [sourceDuration, setSourceDuration] = useState<number | undefined>(() => draft.current?.sourceDuration);
+  const [previewUrl, setPreviewUrl] = useState(() => draft.current?.previewUrl ?? '');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Auto-save draft to sessionStorage on changes
   useEffect(() => {
-    const d: PipelineDraft = { steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration };
+    const d: PipelineDraft = { steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl };
     try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {}
-  }, [steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration]);
+  }, [steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl]);
 
   // UI state
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -123,6 +125,7 @@ export default function TemplatesPage() {
       const result = await uploadVideo(file);
       if (result) {
         setVideoUrl(result.gcsUrl);
+        setPreviewUrl(result.url || result.gcsUrl);
         setUploadedFilename(file.name);
       }
     } catch {
@@ -334,16 +337,17 @@ export default function TemplatesPage() {
                   videoSource,
                   tiktokUrl,
                   videoUrl,
+                  previewUrl,
                   uploadedFilename,
                   isUploading,
                   uploadProgress: progress,
                   onVideoSourceChange: setVideoSource,
                   onTiktokUrlChange: setTiktokUrl,
                   onVideoUpload: (e) => handleVideoUpload(e),
-                  onVideoRemove: () => { setVideoUrl(''); setUploadedFilename(''); setSourceDuration(undefined); },
+                  onVideoRemove: () => { setVideoUrl(''); setPreviewUrl(''); setUploadedFilename(''); setSourceDuration(undefined); },
                   onFileDrop: handleVideoFile,
                 }}
-                videoUrl={videoSource === 'upload' ? videoUrl : undefined}
+                videoUrl={previewUrl || undefined}
                 sourceDuration={sourceDuration}
               />
             </div>

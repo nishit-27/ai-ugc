@@ -73,6 +73,25 @@ export default function TextOverlayConfig({
             <span className="absolute bottom-2 right-2 text-[10px] tabular-nums text-[var(--text-muted)]">{config.text.length}</span>
           )}
         </div>
+
+        {/* Words per line */}
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <label className="text-[11px] font-medium text-[var(--text)]">Words Per Line</label>
+            <span className="rounded bg-[var(--accent)] px-1.5 py-0.5 text-[11px] tabular-nums font-medium text-[var(--text)]">
+              {config.wordsPerLine ? config.wordsPerLine : 'No limit'}
+            </span>
+          </div>
+          <input
+            type="range" min={0} max={15}
+            value={config.wordsPerLine ?? 0}
+            onChange={(e) => onChange({ ...config, wordsPerLine: parseInt(e.target.value) || 0 })}
+            className="w-full" style={{ accentColor: 'var(--primary)' }}
+          />
+          <div className="mt-0.5 flex justify-between text-[10px] text-[var(--text-muted)]">
+            <span>No limit</span><span>15</span>
+          </div>
+        </div>
       </div>
 
       {/* Style */}

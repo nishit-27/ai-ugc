@@ -20,6 +20,7 @@ type SourceConfig = {
   videoSource: 'tiktok' | 'upload';
   tiktokUrl: string;
   videoUrl: string;
+  previewUrl?: string;
   uploadedFilename: string;
   isUploading: boolean;
   uploadProgress: number;
@@ -94,7 +95,7 @@ export default function NodeConfigPanel({
               <input ref={fileRef} type="file" accept="video/*" onChange={sourceConfig.onVideoUpload} className="hidden" />
               {sourceConfig.videoUrl ? (
                 <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] p-2.5">
-                  <video src={sourceConfig.videoUrl} className="h-16 w-12 shrink-0 rounded-lg object-cover bg-black" muted playsInline preload="metadata" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }} />
+                  <video src={sourceConfig.previewUrl || sourceConfig.videoUrl} className="h-16 w-12 shrink-0 rounded-lg object-cover bg-black" muted playsInline preload="metadata" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }} />
                   <div className="flex-1 min-w-0">
                     <p className="truncate text-xs font-medium text-[var(--text)]">{sourceConfig.uploadedFilename}</p>
                     <button onClick={sourceConfig.onVideoRemove} className="mt-0.5 flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-red-500 transition-colors">

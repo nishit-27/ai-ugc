@@ -47,20 +47,73 @@ export default function TextOverlayPreview({
   const pL = (config.paddingLeft ?? 0) * 0.27;
   const pR = (config.paddingRight ?? 0) * 0.27;
 
+  // Compute wrapped text using the SAME algorithm as ffmpeg so preview matches the video output
+  const formattedText = useMemo(() => {
+    const raw = config.text || '';
+    let wrapped = raw;
+
+    // Step 1: wrap by word count (mirrors ffmpeg wrapByWordCount)
+    const wpl = config.wordsPerLine;
+    if (wpl && wpl > 0) {
+      wrapped = wrapped.split('\n').map((paragraph) => {
+        const words = paragraph.split(/\s+/).filter(Boolean);
+        if (words.length <= wpl) return paragraph;
+        const lines: string[] = [];
+        for (let i = 0; i < words.length; i += wpl) {
+          lines.push(words.slice(i, i + wpl).join(' '));
+        }
+        return lines.join('\n');
+      }).join('\n');
+    }
+
+    // Step 2: wrap by character width (mirrors ffmpeg wrapText with same defaults)
+    const padL = config.paddingLeft ?? 0;
+    const padR = config.paddingRight ?? 0;
+    const effectiveLeft = padL > 0 ? padL : 90;
+    const effectiveRight = padR > 0 ? padR : 90;
+    const videoWidth = 720;
+    const availableWidth = videoWidth - effectiveLeft - effectiveRight;
+    const charWidth = config.fontSize * 0.55;
+    const maxChars = Math.max(5, Math.floor(availableWidth / charWidth));
+
+    wrapped = wrapped.split('\n').map((line) => {
+      if (line.length <= maxChars) return line;
+      const words = line.split(/\s+/);
+      const subLines: string[] = [];
+      let current = '';
+      for (const word of words) {
+        if (current.length === 0) {
+          current = word;
+        } else if (current.length + 1 + word.length <= maxChars) {
+          current += ' ' + word;
+        } else {
+          subLines.push(current);
+          current = word;
+        }
+      }
+      if (current) subLines.push(current);
+      return subLines.join('\n');
+    }).join('\n');
+
+    return wrapped;
+  }, [config.text, config.wordsPerLine, config.paddingLeft, config.paddingRight, config.fontSize]);
+
   const getTextStyle = (): React.CSSProperties => {
+    const baseFontSize = Math.max(10, config.fontSize * 0.3);
+
     const base: React.CSSProperties = {
-      fontSize: `${Math.max(10, config.fontSize * 0.3)}px`,
+      fontSize: `${baseFontSize}px`,
       color: config.fontColor,
       textShadow: !config.bgColor && !activeStyle?.css?.textShadow ? '1px 1px 3px rgba(0,0,0,0.9)' : undefined,
       pointerEvents: 'auto' as const,
       userSelect: 'none' as const,
       cursor: config.position === 'custom' ? 'move' : 'grab',
-      maxWidth: pL + pR > 0 ? `calc(100% - ${pL + pR}px)` : '90%',
+      maxWidth: '90%',
       textAlign: 'center' as const,
       lineHeight: 1.3,
       fontFamily: config.fontFamily || 'sans-serif',
       whiteSpace: 'pre-wrap' as const,
-      wordBreak: 'break-word' as const,
+      overflowWrap: 'break-word' as const,
     };
 
     // Apply style preset
@@ -69,7 +122,7 @@ export default function TextOverlayPreview({
       if (activeStyle.css.padding) {
         base.padding = activeStyle.css.padding;
       }
-      base.fontSize = `${Math.max(10, config.fontSize * 0.3)}px`;
+      base.fontSize = `${baseFontSize}px`;
       if (config.fontFamily && !activeStyle.css.fontFamily) {
         base.fontFamily = config.fontFamily;
       }
@@ -256,7 +309,7 @@ export default function TextOverlayPreview({
             style={getTextStyle()}
             onPointerDown={handlePointerDown}
           >
-            {config.text}
+            {formattedText}
           </div>
         )}
 

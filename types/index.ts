@@ -103,6 +103,7 @@ export type TextOverlayConfig = {
   bgColor?: string;
   paddingLeft?: number;   // pixels from left edge (controls text width / line wrapping)
   paddingRight?: number;  // pixels from right edge
+  wordsPerLine?: number;  // 0 = no limit (single line)
   entireVideo?: boolean;
   startTime?: number;
   duration?: number;
