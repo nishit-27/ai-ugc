@@ -52,7 +52,7 @@ function Dropdown({
         <ChevronDown className="h-3 w-3 text-[var(--text-muted)]" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 min-w-[120px] max-h-48 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--popover)] py-1 shadow-lg backdrop-blur-xl">
+        <div className="absolute left-0 bottom-full z-50 mb-1 min-w-[120px] max-h-48 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--background)] py-1 shadow-lg">
           {options.map((opt) => (
             <button
               key={opt.value}
@@ -79,7 +79,7 @@ export default function BatchVideoGenConfig({
   onChange: (c: BVGC) => void;
   sourceDuration?: number;
 }) {
-  const { models, modelImages, loadModelImages } = useModels();
+  const { models, modelImages, imagesLoading, loadModelImages } = useModels();
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageSource, setImageSource] = useState<ImageSource>(
@@ -219,6 +219,13 @@ export default function BatchVideoGenConfig({
               ))}
             </select>
           </div>
+
+          {config.modelId && imagesLoading && modelImages.length === 0 && (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-8">
+              <div className="h-5 w-5 rounded-full border-2 border-[var(--border)] border-t-[var(--primary)] animate-spin" />
+              <span className="text-xs text-[var(--text-muted)]">Loading images...</span>
+            </div>
+          )}
 
           {config.modelId && modelImages.length > 0 && (
             <div>

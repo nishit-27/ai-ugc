@@ -363,7 +363,7 @@ export default function TemplatesPage() {
               className={`relative shrink-0 ${
                 isMobile
                   ? 'fixed right-0 top-0 z-40 h-full w-[85vw] max-w-[420px] shadow-2xl'
-                  : 'my-3 mr-3 overflow-hidden overflow-y-auto rounded-2xl bg-[var(--surface)] shadow-lg backdrop-blur-xl'
+                  : 'my-3 mr-3 overflow-hidden overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-lg'
               }`}
               style={isMobile ? undefined : { width: panelWidth }}
             >

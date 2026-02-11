@@ -17,21 +17,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     const images = await getModelImages(id);
 
-    // Generate signed URLs in parallel
-    const imagesWithSignedUrls = await Promise.all(
-      images.map(async (img: { gcsUrl: string; [key: string]: unknown }) => {
-        try {
-          const signedUrl = await getSignedUrlFromPublicUrl(img.gcsUrl);
-          return { ...img, signedUrl };
-        } catch {
-          return { ...img, signedUrl: img.gcsUrl };
-        }
-      })
-    );
-
-    // Cache for 5 minutes — signed URLs are valid for 7 days
-    return NextResponse.json(imagesWithSignedUrls, {
-      headers: { 'Cache-Control': 'private, max-age=300' },
+    // Return images immediately — signed URLs are resolved lazily on the client
+    return NextResponse.json(images, {
+      headers: { 'Cache-Control': 'no-store, max-age=0' },
     });
   } catch (err) {
     console.error('Get model images error:', err);
