@@ -6,9 +6,26 @@ import type { PipelineBatch } from '@/types';
 const ACTIVE_POLL_INTERVAL = 3_000;   // 3s when batches are active
 const IDLE_POLL_INTERVAL   = 30_000;  // 30s baseline
 const FETCH_TIMEOUT        = 15_000;  // 15s max per request
+const CACHE_KEY = 'ai-ugc-pipeline-batches';
+
+function getCachedBatches(): PipelineBatch[] {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function setCachedBatches(batches: PipelineBatch[]) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(batches)); } catch {}
+}
 
 export function usePipelineBatches() {
-  const [batches, setBatches] = useState<PipelineBatch[]>([]);
+  const [batches, setBatches] = useState<PipelineBatch[]>(getCachedBatches);
+  const [loading, setLoading] = useState(() => getCachedBatches().length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const lastSnapshotRef = useRef('');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -37,9 +54,12 @@ export function usePipelineBatches() {
       if (snapshot !== lastSnapshotRef.current) {
         lastSnapshotRef.current = snapshot;
         setBatches(arr);
+        setCachedBatches(arr);
       }
     } catch {
       clearTimeout(timeout);
+    } finally {
+      if (mountedRef.current) setLoading(false);
     }
   }, []);
 
@@ -82,5 +102,5 @@ export function usePipelineBatches() {
     scheduleNext();
   }, [loadBatches, scheduleNext]);
 
-  return { batches, refresh, refreshing };
+  return { batches, loading, refresh, refreshing };
 }

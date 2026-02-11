@@ -4,10 +4,10 @@ import https from 'https'
 import http from 'http'
 import path from 'path'
 import ffmpegPath from 'ffmpeg-static'
-import { path as ffprobePath } from 'ffprobe-static'
+import ffprobePath from '@ffprobe-installer/ffprobe'
 
 const FFMPEG = ffmpegPath || 'ffmpeg'
-const FFPROBE = ffprobePath || 'ffprobe'
+const FFPROBE = (typeof ffprobePath === 'string' ? ffprobePath : (ffprobePath as { path: string }).path) || 'ffprobe'
 
 /** Get MIME content type from a URL by inspecting its extension */
 export function getContentType(url: string): string {

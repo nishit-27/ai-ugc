@@ -17,8 +17,10 @@ function formatDate(dateStr?: string) {
 
 export default function PipelineBatchList({
   batches,
+  loading,
 }: {
   batches: PipelineBatch[];
+  loading?: boolean;
 }) {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(batches.length / PER_PAGE));
@@ -27,6 +29,29 @@ export default function PipelineBatchList({
     () => batches.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE),
     [batches, safePage],
   );
+
+  if (loading) {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-[var(--background)]" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-3/4 rounded bg-[var(--background)]" />
+                <div className="h-2.5 w-1/2 rounded bg-[var(--background)]" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <div className="h-6 w-14 rounded-md bg-[var(--background)]" />
+              <div className="h-6 w-14 rounded-md bg-[var(--background)]" />
+              <div className="h-6 w-14 rounded-md bg-[var(--background)]" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   if (batches.length === 0) {
     return (

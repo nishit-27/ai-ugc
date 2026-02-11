@@ -42,6 +42,7 @@ function setCachedJobs(jobs: TemplateJob[]) {
 
 export function useTemplates() {
   const [jobs, setJobs] = useState<TemplateJob[]>(getCachedJobs);
+  const [loading, setLoading] = useState(() => getCachedJobs().length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const lastSnapshotRef = useRef('');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -87,6 +88,8 @@ export function useTemplates() {
     } catch {
       clearTimeout(timeout);
       // Silently ignore — cached data stays visible
+    } finally {
+      if (mountedRef.current) setLoading(false);
     }
   }, []);
 
@@ -133,5 +136,5 @@ export function useTemplates() {
     scheduleNext(); // re-kick adaptive timer after manual refresh
   }, [loadJobs, scheduleNext]);
 
-  return { jobs, refresh, refreshing };
+  return { jobs, loading, refresh, refreshing };
 }

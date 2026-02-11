@@ -12,8 +12,8 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 
 function JobsPageInner() {
   const searchParams = useSearchParams();
-  const { jobs, refresh: refreshJobs, refreshing: refreshingJobs } = useTemplates();
-  const { batches, refresh: refreshBatches, refreshing: refreshingBatches } = usePipelineBatches();
+  const { jobs, loading: jobsLoading, refresh: refreshJobs, refreshing: refreshingJobs } = useTemplates();
+  const { batches, loading: batchesLoading, refresh: refreshBatches, refreshing: refreshingBatches } = usePipelineBatches();
 
   const [tab, setTab] = useState<'single' | 'batch'>(() => {
     const param = searchParams.get('tab');
@@ -60,7 +60,10 @@ function JobsPageInner() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Jobs</h1>
           <p className="text-xs text-[var(--text-muted)]">
-            {itemCount} {tab === 'single' ? 'job' : 'batch'}{itemCount !== 1 ? (tab === 'single' ? 's' : 'es') : ''}
+            {(tab === 'single' && jobsLoading) || (tab === 'batch' && batchesLoading)
+              ? 'Loading...'
+              : `${itemCount} ${tab === 'single' ? 'job' : 'batch'}${itemCount !== 1 ? (tab === 'single' ? 's' : 'es') : ''}`
+            }
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -102,20 +105,30 @@ function JobsPageInner() {
         </div>
       </div>
 
-      {tab === 'single' && newJobName && (
-        <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900/50 dark:bg-blue-950/30">
-          <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-          <div>
-            <p className="text-sm font-medium text-blue-700 dark:text-blue-300">Pipeline started</p>
-            <p className="text-xs text-blue-600/70 dark:text-blue-400/70">{newJobName} is being processed. This may take a moment.</p>
-          </div>
+      {/* Full-page loader while fetching from DB */}
+      {((tab === 'single' && jobsLoading) || (tab === 'batch' && batchesLoading)) ? (
+        <div className="flex flex-col items-center justify-center py-24 gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" />
+          <p className="text-sm font-medium text-[var(--text-muted)]">Loading jobs...</p>
         </div>
-      )}
-
-      {tab === 'single' ? (
-        <TemplateJobList jobs={singleJobs} />
       ) : (
-        <PipelineBatchList batches={batches} />
+        <>
+          {tab === 'single' && newJobName && (
+            <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900/50 dark:bg-blue-950/30">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+              <div>
+                <p className="text-sm font-medium text-blue-700 dark:text-blue-300">Pipeline started</p>
+                <p className="text-xs text-blue-600/70 dark:text-blue-400/70">{newJobName} is being processed. This may take a moment.</p>
+              </div>
+            </div>
+          )}
+
+          {tab === 'single' ? (
+            <TemplateJobList jobs={singleJobs} />
+          ) : (
+            <PipelineBatchList batches={batches} />
+          )}
+        </>
       )}
     </div>
   );

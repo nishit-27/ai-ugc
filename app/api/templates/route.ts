@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createTemplateJob, getAllTemplateJobs, createPipelineBatch, updatePipelineBatch, initDatabase } from '@/lib/db';
-import { getCachedSignedUrl } from '@/lib/signedUrlCache';
 import { processTemplateJob } from '@/lib/processTemplateJob';
 import type { MiniAppStep, BatchVideoGenConfig, VideoGenConfig } from '@/types';
 
@@ -11,54 +10,10 @@ export async function GET() {
     await initDatabase();
     const jobs = await getAllTemplateJobs();
 
-    // Only sign completed jobs that have a GCS output URL.
-    // Each signing has a 5s timeout to prevent the whole request from hanging.
-    const jobsWithSignedUrls = await Promise.all(
-      jobs.map(async (job: { status?: string; outputUrl?: string; stepResults?: { stepId: string; type: string; label: string; outputUrl: string; signedUrl?: string }[]; [key: string]: unknown }) => {
-        const result = { ...job };
-
-        // Sign final output URL
-        if (
-          job.status === 'completed' &&
-          job.outputUrl &&
-          job.outputUrl.includes('storage.googleapis.com')
-        ) {
-          try {
-            const signedUrl = await Promise.race([
-              getCachedSignedUrl(job.outputUrl),
-              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-            ]);
-            result.signedUrl = signedUrl;
-          } catch {
-            result.signedUrl = job.outputUrl;
-          }
-        }
-
-        // Sign step result URLs
-        if (Array.isArray(job.stepResults) && job.stepResults.length > 0) {
-          result.stepResults = await Promise.all(
-            job.stepResults.map(async (sr) => {
-              if (sr.outputUrl?.includes('storage.googleapis.com')) {
-                try {
-                  const signed = await Promise.race([
-                    getCachedSignedUrl(sr.outputUrl),
-                    new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-                  ]);
-                  return { ...sr, signedUrl: signed };
-                } catch {
-                  return { ...sr, signedUrl: sr.outputUrl };
-                }
-              }
-              return sr;
-            })
-          );
-        }
-
-        return result;
-      })
-    );
-
-    return NextResponse.json(jobsWithSignedUrls, {
+    // Return jobs immediately — no URL signing here.
+    // Signed URLs are resolved lazily on the client via /api/signed-url
+    // or on-demand via /api/templates/[id].
+    return NextResponse.json(jobs, {
       headers: { 'Cache-Control': 'no-store, max-age=0' },
     });
   } catch (err) {

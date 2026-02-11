@@ -1,3 +1,3 @@
-declare module 'ffprobe-static' {
+declare module '@ffprobe-installer/ffprobe' {
   export const path: string;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Send, Download, Check, Loader2, AlertCircle, ChevronLeft, ChevronRight, Play } from 'lucide-react';
 import type { TemplateJob, StepResult } from '@/types';
@@ -8,6 +8,77 @@ import Spinner from '@/components/ui/Spinner';
 import StatusBadge from '@/components/ui/StatusBadge';
 import ProgressBar from '@/components/ui/ProgressBar';
 import Modal from '@/components/ui/Modal';
+
+// ── Client-side signed URL cache ──
+const _signedCache = new Map<string, string>();
+const _pendingUrls = new Set<string>();
+
+async function fetchSignedUrl(gcsUrl: string): Promise<string | null> {
+  if (_signedCache.has(gcsUrl)) return _signedCache.get(gcsUrl)!;
+  if (_pendingUrls.has(gcsUrl)) return null;
+  _pendingUrls.add(gcsUrl);
+  try {
+    const res = await fetch(`/api/signed-url?url=${encodeURIComponent(gcsUrl)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.signedUrl) {
+      _signedCache.set(gcsUrl, data.signedUrl);
+      return data.signedUrl;
+    }
+  } catch {} finally {
+    _pendingUrls.delete(gcsUrl);
+  }
+  return null;
+}
+
+function useSignedUrls(jobs: TemplateJob[]) {
+  const [signedMap, setSignedMap] = useState<Record<string, string>>({});
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // Sign URLs for completed jobs that need it
+  useEffect(() => {
+    const needSigning = jobs.filter(
+      (j) => j.status === 'completed' && j.outputUrl?.includes('storage.googleapis.com') && !j.signedUrl && !signedMap[j.id],
+    );
+    if (needSigning.length === 0) return;
+
+    // Process in parallel batches of 4
+    const batch = needSigning.slice(0, 8);
+    let cancelled = false;
+
+    (async () => {
+      const results = await Promise.all(
+        batch.map(async (j) => {
+          const signed = await fetchSignedUrl(j.outputUrl!);
+          return { id: j.id, url: signed };
+        }),
+      );
+      if (cancelled || !mountedRef.current) return;
+      const updates: Record<string, string> = {};
+      for (const r of results) {
+        if (r.url) updates[r.id] = r.url;
+      }
+      if (Object.keys(updates).length > 0) {
+        setSignedMap((prev) => ({ ...prev, ...updates }));
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [jobs, signedMap]);
+
+  // Merge signed URLs into jobs
+  const getSignedUrl = useCallback(
+    (job: TemplateJob) => job.signedUrl || signedMap[job.id] || undefined,
+    [signedMap],
+  );
+
+  return { getSignedUrl };
+}
 
 const stepIcon = (status: 'done' | 'active' | 'pending' | 'disabled') => {
   switch (status) {
@@ -20,15 +91,33 @@ const stepIcon = (status: 'done' | 'active' | 'pending' | 'disabled') => {
 
 const PER_PAGE = 16;
 
-export default function TemplateJobList({ jobs }: { jobs: TemplateJob[] }) {
+export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]; loading?: boolean }) {
   const router = useRouter();
   const [selectedJob, setSelectedJob] = useState<TemplateJob | null>(null);
   const [page, setPage] = useState(1);
   // null = show final output, string = stepId to show
   const [viewingStepId, setViewingStepId] = useState<string | null>(null);
+  const { getSignedUrl } = useSignedUrls(jobs);
 
-  // Keep modal in sync with live polling data
-  const liveJob = selectedJob ? jobs.find((j) => j.id === selectedJob.id) ?? selectedJob : null;
+  // When a job is selected, fetch full signed details (incl. step result URLs)
+  const [modalJob, setModalJob] = useState<TemplateJob | null>(null);
+  useEffect(() => {
+    if (!selectedJob) { setModalJob(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/templates/${selectedJob.id}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled) setModalJob(data);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [selectedJob?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep modal in sync with live polling data, prefer modalJob (has signed URLs)
+  const polledJob = selectedJob ? jobs.find((j) => j.id === selectedJob.id) : null;
+  const liveJob = modalJob && modalJob.id === selectedJob?.id ? modalJob : polledJob ?? selectedJob;
 
   const totalPages = Math.max(1, Math.ceil(jobs.length / PER_PAGE));
   const safePage = Math.min(page, totalPages);
@@ -36,6 +125,24 @@ export default function TemplateJobList({ jobs }: { jobs: TemplateJob[] }) {
     () => jobs.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE),
     [jobs, safePage],
   );
+
+  if (loading) {
+    return (
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="animate-pulse overflow-hidden rounded-xl shadow-sm">
+            <div className="bg-[var(--surface)]" style={{ aspectRatio: '9/16' }}>
+              <div className="h-full w-full bg-[var(--background)]" />
+            </div>
+            <div className="bg-[var(--surface)] px-2.5 py-2 space-y-1.5">
+              <div className="h-3 w-3/4 rounded bg-[var(--background)]" />
+              <div className="h-2.5 w-1/2 rounded bg-[var(--background)]" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   if (jobs.length === 0) {
     return (
@@ -50,7 +157,9 @@ export default function TemplateJobList({ jobs }: { jobs: TemplateJob[] }) {
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
         {paginatedJobs.map((job) => {
           const isActive = job.status === 'queued' || job.status === 'processing';
+          const resolvedUrl = getSignedUrl(job);
           const hasVideo = job.status === 'completed' && job.outputUrl;
+          const videoReady = hasVideo && resolvedUrl;
           const progress = job.totalSteps > 0 ? Math.round((job.currentStep / job.totalSteps) * 100) : 0;
 
           return (
@@ -66,15 +175,20 @@ export default function TemplateJobList({ jobs }: { jobs: TemplateJob[] }) {
                 className="relative w-full bg-black/90"
                 style={{ aspectRatio: '9/16' }}
               >
-                {hasVideo ? (
+                {videoReady ? (
                   <video
-                    src={job.signedUrl || job.outputUrl}
+                    src={resolvedUrl}
                     className="absolute inset-0 h-full w-full object-contain"
                     muted
                     playsInline
                     preload="metadata"
                     onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }}
                   />
+                ) : hasVideo && !resolvedUrl ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                    <div className="h-5 w-5 rounded-full border-2 border-white/20 border-t-white/60 animate-spin" />
+                    <span className="text-[9px] text-white/40">Loading</span>
+                  </div>
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
                     {isActive ? (
@@ -155,7 +269,7 @@ export default function TemplateJobList({ jobs }: { jobs: TemplateJob[] }) {
       {/* ── Detail Modal ── */}
       <Modal
         open={!!liveJob}
-        onClose={() => { setSelectedJob(null); setViewingStepId(null); }}
+        onClose={() => { setSelectedJob(null); setModalJob(null); setViewingStepId(null); }}
         title={liveJob?.name || 'Job'}
         maxWidth="max-w-sm"
       >
@@ -170,7 +284,7 @@ export default function TemplateJobList({ jobs }: { jobs: TemplateJob[] }) {
           const progress = enabledSteps.length > 0
             ? Math.round((completedSteps / enabledSteps.length) * 100)
             : 0;
-          const finalVideoSrc = liveJob.signedUrl || liveJob.outputUrl;
+          const finalVideoSrc = getSignedUrl(liveJob) || liveJob.outputUrl;
           const stepResults: StepResult[] = liveJob.stepResults || [];
 
           // Determine which video to show

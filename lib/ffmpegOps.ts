@@ -3,11 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import ffmpegPath from 'ffmpeg-static';
-import { path as ffprobePath } from 'ffprobe-static';
+import ffprobePath from '@ffprobe-installer/ffprobe';
+
+const FFPROBE_PATH = typeof ffprobePath === 'string' ? ffprobePath : (ffprobePath as { path: string }).path;
 import type { TextOverlayConfig, BgMusicConfig } from '@/types';
 
 const FFMPEG = ffmpegPath || 'ffmpeg';
-const FFPROBE = ffprobePath || 'ffprobe';
+const FFPROBE = FFPROBE_PATH || 'ffprobe';
 
 function getTempDir(): string {
   const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
