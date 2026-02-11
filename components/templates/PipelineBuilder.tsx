@@ -133,11 +133,11 @@ function SortableFlowNode({
       {/* Card */}
       <div
         onClick={(e) => { e.stopPropagation(); onSelect(); }}
-        className={`group relative cursor-pointer rounded-2xl bg-[var(--surface)] backdrop-blur-xl transition-all duration-150 ${
+        className={`group relative cursor-pointer rounded-2xl border border-black/[0.08] bg-[var(--surface)] backdrop-blur-xl transition-all duration-150 ${
           isDragging ? 'scale-[1.02] shadow-xl' : ''
         } ${isSelected
           ? 'ring-1 ring-[var(--primary)] shadow-md'
-          : 'shadow-sm hover:shadow-md'
+          : 'shadow hover:shadow-md'
         } ${!step.enabled ? 'opacity-40' : ''}`}
       >
         {/* Animated green dashed border when configured */}
@@ -224,7 +224,7 @@ function ZoomControls({
   onFitView: () => void;
 }) {
   return (
-    <div className="absolute bottom-4 right-4 z-20 flex items-center gap-1 rounded-xl bg-[var(--surface)] px-2 py-1.5 shadow-lg backdrop-blur-xl border border-[var(--border)]">
+    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 rounded-xl bg-[var(--surface)] px-2 py-1.5 shadow-lg backdrop-blur-xl border border-[var(--border)]">
       <button
         onClick={onZoomOut}
         className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--accent)]"
@@ -421,10 +421,10 @@ export default function PipelineBuilder({
             {/* ── Source Node ── */}
             <div
               onClick={() => onSelect('source')}
-              className={`relative cursor-pointer rounded-2xl bg-[var(--surface)] backdrop-blur-xl transition-all duration-150 ${
+              className={`relative cursor-pointer rounded-2xl border border-black/[0.08] bg-[var(--surface)] backdrop-blur-xl transition-all duration-150 ${
                 selectedId === 'source'
                   ? 'ring-1 ring-[var(--primary)] shadow-md'
-                  : 'shadow-sm hover:shadow-md'
+                  : 'shadow hover:shadow-md'
               }`}
               style={{ width: CARD_W }}
             >
@@ -476,7 +476,7 @@ export default function PipelineBuilder({
             {/* ── Add Step ── */}
             <button
               onClick={(e) => { e.stopPropagation(); setShowPicker(true); }}
-              className="group flex items-center justify-center gap-2 rounded-2xl bg-[var(--surface)] shadow-sm transition-all duration-150 hover:shadow-md hover:bg-[var(--accent)]"
+              className="group flex items-center justify-center gap-2 rounded-2xl border border-black/[0.08] bg-[var(--surface)] shadow transition-all duration-150 hover:shadow-md hover:bg-[var(--accent)]"
               style={{ width: CARD_W, height: 44, backdropFilter: 'blur(4px)' }}
             >
               <Plus className="h-4 w-4 text-[var(--text-muted)] transition-colors group-hover:text-[var(--primary)]" />
@@ -487,7 +487,7 @@ export default function PipelineBuilder({
 
             {/* ── Output Node ── */}
             <div
-              className="rounded-2xl bg-[var(--surface)] backdrop-blur-xl shadow-sm"
+              className="rounded-2xl border border-black/[0.08] bg-[var(--surface)] backdrop-blur-xl shadow"
               style={{ width: CARD_W }}
             >
               <div className="flex items-center gap-3 px-4 py-3">
