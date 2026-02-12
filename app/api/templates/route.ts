@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createTemplateJob, getAllTemplateJobs, createPipelineBatch, updatePipelineBatch, initDatabase } from '@/lib/db';
 import { processTemplateJob } from '@/lib/processTemplateJob';
 import type { MiniAppStep, BatchVideoGenConfig, VideoGenConfig } from '@/types';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300; // 5 minutes — video processing needs more than the default 10s/60s
 
 export async function GET() {
   try {
@@ -123,11 +124,13 @@ export async function POST(request: NextRequest) {
       // Update batch status to processing
       await updatePipelineBatch(batch.id, { status: 'processing' });
 
-      // Fire and forget all child jobs
+      // Schedule child jobs via after() so Vercel keeps the Lambda alive
       for (const job of childJobs) {
         if (job) {
-          processTemplateJob(job.id).catch((err) => {
-            console.error(`processTemplateJob error (batch child ${job.id}):`, err);
+          const childId = job.id;
+          after(async () => {
+            try { await processTemplateJob(childId); }
+            catch (err) { console.error(`processTemplateJob error (batch child ${childId}):`, err); }
           });
         }
       }
@@ -162,9 +165,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create template job' }, { status: 500 });
     }
 
-    // Fire and forget
-    processTemplateJob(job.id).catch((err) => {
-      console.error('processTemplateJob error:', err);
+    // Schedule via after() so Vercel keeps the Lambda alive for processing
+    after(async () => {
+      try { await processTemplateJob(job.id); }
+      catch (err) { console.error('processTemplateJob error:', err); }
     });
 
     return NextResponse.json(job);

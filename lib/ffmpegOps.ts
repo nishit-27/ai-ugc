@@ -32,24 +32,49 @@ const FONT_ITALIC_MAP: Record<string, string> = {
   'Georgia, serif': 'Lora-BoldItalic.ttf',
 };
 
-// Directories where bundled fonts may live
+// Directories where bundled fonts may live.
+// On Vercel Lambda, process.cwd() is /var/task and __dirname varies with bundling.
 const FONT_DIRS = [
   path.join(process.cwd(), 'lib', 'fonts'),
+  path.join(process.cwd(), '.next', 'server', 'lib', 'fonts'),
   path.join(__dirname, 'fonts'),
   path.join(__dirname, '..', 'lib', 'fonts'),
+  path.join(__dirname, '..', '..', 'lib', 'fonts'),
 ];
 
 // Cache resolved paths so we don't hit the filesystem repeatedly
 const _fontCache = new Map<string, string>();
 
+// Track whether we've logged font dir info (once per cold start)
+let _fontDirsLogged = false;
+
 /**
  * Resolve a CSS font-family to a bundled TTF file path.
  * Falls back to Inter-Bold.ttf (the default sans) if the requested family is not found.
+ * IMPORTANT: On Vercel Lambda there is no fontconfig — if the font file doesn't exist,
+ * Pango will hang indefinitely. We MUST validate the file exists.
  */
 function getBundledFont(fontFamily?: string, italic = false): string {
   const cacheKey = `${fontFamily || 'sans-serif'}:${italic ? 'i' : 'n'}`;
   const cached = _fontCache.get(cacheKey);
   if (cached && fs.existsSync(cached)) return cached;
+
+  // Log font directory search paths once per cold start for debugging
+  if (!_fontDirsLogged) {
+    _fontDirsLogged = true;
+    console.log('[font-debug] cwd:', process.cwd());
+    console.log('[font-debug] __dirname:', __dirname);
+    for (const dir of FONT_DIRS) {
+      const exists = fs.existsSync(dir);
+      console.log(`[font-debug] ${dir} → ${exists ? 'EXISTS' : 'NOT FOUND'}`);
+      if (exists) {
+        try {
+          const files = fs.readdirSync(dir);
+          console.log(`[font-debug]   files: ${files.join(', ')}`);
+        } catch {}
+      }
+    }
+  }
 
   // Pick the right filename
   const map = italic ? FONT_ITALIC_MAP : FONT_FILE_MAP;
@@ -66,11 +91,27 @@ function getBundledFont(fontFamily?: string, italic = false): string {
   // If italic requested but no italic file exists, fall back to the regular bold
   if (italic) return getBundledFont(fontFamily, false);
 
-  // Last resort — first candidate (sharp may use built-in fallback)
-  const fallback = path.join(FONT_DIRS[0], FONT_FILE_MAP['sans-serif']);
-  console.warn(`Font not found for "${fontFamily}", falling back to ${fallback}`);
-  _fontCache.set(cacheKey, fallback);
-  return fallback;
+  // Try ANY font file we can find — better to render with wrong font than to hang
+  for (const dir of FONT_DIRS) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.ttf'));
+      if (files.length > 0) {
+        const fallback = path.join(dir, files[0]);
+        console.warn(`[font-debug] Exact font "${filename}" not found, using fallback: ${fallback}`);
+        _fontCache.set(cacheKey, fallback);
+        return fallback;
+      }
+    } catch {}
+  }
+
+  // No font files found anywhere — throw a clear error instead of returning
+  // a non-existent path that would cause Pango to hang on fontconfig (which
+  // doesn't exist on Vercel Lambda).
+  throw new Error(
+    `Font file "${filename}" not found in any of: ${FONT_DIRS.join(', ')}. ` +
+    `Ensure lib/fonts/ is included in outputFileTracingIncludes in next.config.ts.`
+  );
 }
 
 function getTempDir(): string {
@@ -158,7 +199,9 @@ function escPango(s: string): string {
 
 /**
  * Ensure a raw RGBA buffer + position fits inside a canvas.
- * Crops the buffer if it overflows the canvas bounds.
+ * Handles negative left/top (off-screen to the left/top) by cropping from
+ * the corresponding edge of the input — this matches CSS overflow:hidden
+ * behaviour when text is centered but wider than the container.
  * Returns null if the layer is entirely off-canvas.
  */
 async function safeRawComposite(
@@ -167,61 +210,68 @@ async function safeRawComposite(
   left: number, top: number,
   canvasW: number, canvasH: number,
 ): Promise<sharp.OverlayOptions | null> {
-  let l = Math.max(0, left);
-  let t = Math.max(0, top);
-  const availW = canvasW - l;
-  const availH = canvasH - t;
-  if (availW <= 0 || availH <= 0) return null;
+  // How many pixels to skip from the input buffer (negative position)
+  const srcX = Math.max(0, -left);
+  const srcY = Math.max(0, -top);
+  // Where to place the visible portion on the canvas
+  const dstX = Math.max(0, left);
+  const dstY = Math.max(0, top);
 
-  if (w <= availW && h <= availH) {
-    return { input: data, raw: { width: w, height: h, channels: channels as 1|2|3|4 }, left: l, top: t };
+  const visibleW = Math.min(w - srcX, canvasW - dstX);
+  const visibleH = Math.min(h - srcY, canvasH - dstY);
+  if (visibleW <= 0 || visibleH <= 0) return null;
+
+  // No cropping needed — the overlay fits entirely within the canvas
+  if (srcX === 0 && srcY === 0 && visibleW === w && visibleH === h) {
+    return { input: data, raw: { width: w, height: h, channels: channels as 1|2|3|4 }, left: dstX, top: dstY };
   }
 
-  // Crop to fit within canvas
-  const cropW = Math.min(w, availW);
-  const cropH = Math.min(h, availH);
+  // Extract only the visible portion of the overlay
   const cropped = await sharp(data, { raw: { width: w, height: h, channels: channels as 1|2|3|4 } })
-    .extract({ left: 0, top: 0, width: cropW, height: cropH })
+    .extract({ left: srcX, top: srcY, width: visibleW, height: visibleH })
     .raw()
     .toBuffer({ resolveWithObject: true });
 
   return {
     input: cropped.data,
     raw: { width: cropped.info.width, height: cropped.info.height, channels: cropped.info.channels as 1|2|3|4 },
-    left: l, top: t,
+    left: dstX, top: dstY,
   };
 }
 
 /**
  * Ensure a PNG buffer + position fits inside a canvas.
- * Crops if it overflows.
+ * Handles negative left/top the same way as safeRawComposite.
  */
 async function safePngComposite(
   pngBuf: Buffer,
   left: number, top: number,
   canvasW: number, canvasH: number,
 ): Promise<sharp.OverlayOptions | null> {
-  let l = Math.max(0, left);
-  let t = Math.max(0, top);
   const meta = await sharp(pngBuf).metadata();
   const w = meta.width || 0;
   const h = meta.height || 0;
-  const availW = canvasW - l;
-  const availH = canvasH - t;
-  if (availW <= 0 || availH <= 0 || w === 0 || h === 0) return null;
+  if (w === 0 || h === 0) return null;
 
-  if (w <= availW && h <= availH) {
-    return { input: pngBuf, left: l, top: t };
+  const srcX = Math.max(0, -left);
+  const srcY = Math.max(0, -top);
+  const dstX = Math.max(0, left);
+  const dstY = Math.max(0, top);
+
+  const visibleW = Math.min(w - srcX, canvasW - dstX);
+  const visibleH = Math.min(h - srcY, canvasH - dstY);
+  if (visibleW <= 0 || visibleH <= 0) return null;
+
+  if (srcX === 0 && srcY === 0 && visibleW === w && visibleH === h) {
+    return { input: pngBuf, left: dstX, top: dstY };
   }
 
-  const cropW = Math.min(w, availW);
-  const cropH = Math.min(h, availH);
   const cropped = await sharp(pngBuf)
-    .extract({ left: 0, top: 0, width: cropW, height: cropH })
+    .extract({ left: srcX, top: srcY, width: visibleW, height: visibleH })
     .png()
     .toBuffer();
 
-  return { input: cropped, left: l, top: t };
+  return { input: cropped, left: dstX, top: dstY };
 }
 
 // ── Shadow definition for text style presets ──
@@ -253,8 +303,8 @@ function getEffectiveFontFamily(configFamily?: string, textStyle?: string): stri
 
 /**
  * Render Pango text to a raw RGBA buffer via sharp.
- * When width is omitted, Pango renders at natural width (NO auto-wrapping).
- * This matches the preview which uses CSS white-space:pre.
+ * We pass a very large `width` so Pango never auto-wraps (our wrapping is pre-applied).
+ * A large explicit width is safer than omitting it — some libvips builds hang without it.
  */
 async function renderPangoText(
   markup: string,
@@ -263,7 +313,7 @@ async function renderPangoText(
 ): Promise<{ data: Buffer; width: number; height: number; channels: number }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const result = await (sharp as any)({
-    text: { text: markup, fontfile: fontPath, rgba: true, align, dpi: 72 },
+    text: { text: markup, fontfile: fontPath, rgba: true, align, dpi: 72, width: 10000 },
   }).toBuffer({ resolveWithObject: true });
   return { data: result.data, width: result.info.width, height: result.info.height, channels: result.info.channels };
 }
@@ -402,8 +452,10 @@ async function renderTextOverlayPng(
     }
   }
 
-  overlayX = Math.max(0, overlayX);
-  overlayY = Math.max(0, overlayY);
+  // NOTE: overlayX/overlayY CAN be negative when text is wider/taller than the
+  // video (e.g. very long single word, centered). safeRawComposite/safePngComposite
+  // handle negative positions by extracting only the visible portion — matching
+  // CSS overflow:hidden behaviour in the preview.
 
   // ── Build composites ──
   const composites: sharp.OverlayOptions[] = [];

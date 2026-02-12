@@ -147,7 +147,7 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
   if (jobs.length === 0) {
     return (
       <div className="rounded-xl bg-[var(--surface)] p-8 text-center shadow-sm backdrop-blur-xl">
-        <p className="text-[var(--text-muted)]">No template jobs yet</p>
+        <p className="text-[var(--text-muted)]">No pipeline jobs yet</p>
       </div>
     );
   }

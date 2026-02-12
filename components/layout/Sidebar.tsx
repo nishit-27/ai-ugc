@@ -21,7 +21,7 @@ import ThemeToggle from '@/components/ui/ThemeToggle';
 
 const createItems = [
  
-  { href: '/templates', label: 'Templates', icon: LayoutTemplate },
+  { href: '/templates', label: 'Pipelines', icon: LayoutTemplate },
    { href: '/generate', label: 'Generate', icon: Sparkles },
 ];
 

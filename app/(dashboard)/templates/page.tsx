@@ -329,7 +329,7 @@ export default function TemplatesPage() {
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 py-3 md:px-6">
         <div className="shrink-0">
-          <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Templates</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Pipelines</h1>
           <p className="text-xs text-[var(--text-muted)]">Build multi-step video pipelines</p>
         </div>
 
