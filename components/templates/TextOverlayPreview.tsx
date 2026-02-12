@@ -77,10 +77,12 @@ export default function TextOverlayPreview({
   config,
   onChange,
   videoUrl,
+  isLoadingVideo,
 }: {
   config: TextOverlayConfig;
   onChange: (config: TextOverlayConfig) => void;
   videoUrl?: string;
+  isLoadingVideo?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -332,8 +334,17 @@ export default function TextOverlayPreview({
         ) : (
           <div className="flex h-full w-full items-center justify-center">
             <div className="text-center">
-              <div className="mb-1 text-2xl opacity-30">&#9654;</div>
-              <span className="text-[10px] text-white/40">Video Preview</span>
+              {isLoadingVideo ? (
+                <>
+                  <div className="mx-auto mb-2 h-5 w-5 rounded-full border-2 border-white/20 border-t-white/60 animate-spin" />
+                  <span className="text-[10px] text-white/40">Loading video...</span>
+                </>
+              ) : (
+                <>
+                  <div className="mb-1 text-2xl opacity-30">&#9654;</div>
+                  <span className="text-[10px] text-white/40">Video Preview</span>
+                </>
+              )}
             </div>
           </div>
         )}

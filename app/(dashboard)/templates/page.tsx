@@ -55,6 +55,7 @@ export default function TemplatesPage() {
   const [sourceDuration, setSourceDuration] = useState<number | undefined>(() => draft.current?.sourceDuration);
   const [previewUrl, setPreviewUrl] = useState(() => draft.current?.previewUrl ?? '');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResolvingPreview, setIsResolvingPreview] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Map<string, string>>(new Map());
 
   // Auto-save draft to sessionStorage on changes
@@ -62,6 +63,47 @@ export default function TemplatesPage() {
     const d: PipelineDraft = { steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl };
     try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {}
   }, [steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl]);
+
+  // Resolve pasted URL to a playable video URL for preview
+  useEffect(() => {
+    if (videoSource !== 'tiktok' || !tiktokUrl.trim()) {
+      // Don't clear previewUrl if it came from an upload
+      if (videoSource === 'tiktok') setPreviewUrl('');
+      return;
+    }
+
+    const url = tiktokUrl.trim();
+    const isTikTok = /tiktok\.com/i.test(url);
+    const isInstagram = /instagram\.com\/(p|reel|reels)\//i.test(url);
+    if (!isTikTok && !isInstagram) return;
+
+    setIsResolvingPreview(true);
+    setPreviewUrl('');
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetch('/api/resolve-video-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+        signal: controller.signal,
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.videoUrl) {
+            setPreviewUrl(data.videoUrl);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setIsResolvingPreview(false));
+    }, 800); // debounce 800ms
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+      setIsResolvingPreview(false);
+    };
+  }, [tiktokUrl, videoSource]);
 
   // UI state
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -402,6 +444,7 @@ export default function TemplatesPage() {
                 }}
                 videoUrl={previewUrl || undefined}
                 sourceDuration={sourceDuration}
+                isLoadingVideo={isResolvingPreview}
               />
             </div>
           </>

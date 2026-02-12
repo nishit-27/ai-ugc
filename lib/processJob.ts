@@ -17,6 +17,14 @@ import { rapidApiLimiter } from './rateLimiter';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { uploadBuffer } = require('./upload-via-presigned.cjs');
 
+function isTikTokUrl(url: string): boolean {
+  return /tiktok\.com/i.test(url);
+}
+
+function isInstagramUrl(url: string): boolean {
+  return /instagram\.com\/(p|reel|reels)\//i.test(url);
+}
+
 /**
  * Get TikTok download URL using /api/download/video endpoint
  * Returns the 'play' URL which works reliably with FAL
@@ -154,6 +162,165 @@ function extractPlayUrl(data: Record<string, unknown>): string | null {
   if (typeof data.play_watermark === 'string' && data.play_watermark) return data.play_watermark;
 
   return null;
+}
+
+/**
+ * Get Instagram video download URL using RapidAPI
+ */
+async function getInstagramDownloadUrlViaEndpoint(instagramUrl: string, rapidApiKey: string): Promise<{ url: string | null; shouldRetry: boolean }> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const https = require('https');
+
+  return new Promise((resolve) => {
+    const encodedUrl = encodeURIComponent(instagramUrl);
+    const options = {
+      method: 'GET',
+      hostname: 'instagram-looter2.p.rapidapi.com',
+      path: `/post-dl?url=${encodedUrl}`,
+      headers: {
+        'x-rapidapi-host': 'instagram-looter2.p.rapidapi.com',
+        'x-rapidapi-key': rapidApiKey,
+      },
+    };
+
+    const req = https.request(options, (res: import('http').IncomingMessage) => {
+      let data = '';
+      res.on('data', (chunk: Buffer) => (data += chunk.toString()));
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 429) {
+          console.warn(`[Instagram API] Rate limited (${res.statusCode}), will retry...`);
+          resolve({ url: null, shouldRetry: true });
+          return;
+        }
+        if (res.statusCode && res.statusCode >= 500) {
+          console.warn(`[Instagram API] Server error (${res.statusCode}), will retry...`);
+          resolve({ url: null, shouldRetry: true });
+          return;
+        }
+        if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+          console.error(`[Instagram API] HTTP ${res.statusCode}:`, data.slice(0, 300));
+          resolve({ url: null, shouldRetry: false });
+          return;
+        }
+        try {
+          const json = JSON.parse(data);
+          console.log('[Instagram API] Response keys:', Object.keys(json));
+
+          // Try common response shapes
+          const videoUrl = extractInstagramVideoUrl(json);
+          if (videoUrl) {
+            console.log('[Instagram API] Found video URL:', videoUrl.slice(0, 100) + '...');
+            resolve({ url: videoUrl, shouldRetry: false });
+          } else {
+            console.error('[Instagram API] No video URL found in response');
+            resolve({ url: null, shouldRetry: false });
+          }
+        } catch (e) {
+          console.error('[Instagram API] Parse error:', e);
+          resolve({ url: null, shouldRetry: true });
+        }
+      });
+    });
+    req.on('error', (e: Error) => {
+      console.error('[Instagram API] Request error:', e.message);
+      resolve({ url: null, shouldRetry: true });
+    });
+    req.end();
+  });
+}
+
+/**
+ * Extract video URL from Instagram API response
+ */
+function extractInstagramVideoUrl(data: Record<string, unknown>): string | null {
+  // data.medias[0].link pattern (instagram-looter2 response)
+  if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+    const d = data.data as Record<string, unknown>;
+
+    // medias array → find first video link
+    if (Array.isArray(d.medias) && d.medias.length > 0) {
+      for (const media of d.medias) {
+        if (typeof media === 'object' && media !== null) {
+          const m = media as Record<string, unknown>;
+          if (typeof m.link === 'string' && m.link) return m.link;
+          if (typeof m.url === 'string' && m.url) return m.url;
+        }
+      }
+    }
+
+    if (typeof d.video_url === 'string' && d.video_url) return d.video_url;
+    if (typeof d.url === 'string' && d.url) return d.url;
+  }
+
+  // data[] array pattern (alternative APIs)
+  if (Array.isArray(data.data) && data.data.length > 0) {
+    const first = data.data[0];
+    if (typeof first === 'object' && first !== null) {
+      const d = first as Record<string, unknown>;
+      if (typeof d.url === 'string' && d.url) return d.url;
+      if (typeof d.link === 'string' && d.link) return d.link;
+      if (typeof d.video_url === 'string' && d.video_url) return d.video_url;
+    }
+  }
+
+  // Top-level fields
+  if (typeof data.video_url === 'string' && data.video_url) return data.video_url;
+  if (typeof data.url === 'string' && data.url) return data.url;
+
+  return null;
+}
+
+async function getInstagramDownloadUrl(instagramUrl: string, rapidApiKey: string): Promise<string | null> {
+  const normalizedUrl = instagramUrl.trim();
+  console.log('[Instagram API] Requesting download for:', normalizedUrl);
+
+  const maxRetries = 3;
+  const baseDelay = 2000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    await rapidApiLimiter.acquire();
+    console.log(`[Instagram API] Attempt ${attempt}/${maxRetries}...`);
+
+    const result = await getInstagramDownloadUrlViaEndpoint(normalizedUrl, rapidApiKey);
+
+    if (result.url) {
+      return result.url;
+    }
+
+    if (!result.shouldRetry || attempt === maxRetries) {
+      console.error(`[Instagram API] Failed after ${attempt} attempt(s)`);
+      return null;
+    }
+
+    const delay = baseDelay * Math.pow(2, attempt - 1);
+    console.log(`[Instagram API] Waiting ${delay}ms before retry...`);
+    await new Promise((r) => setTimeout(r, delay));
+  }
+
+  return null;
+}
+
+/**
+ * Auto-detect URL type and download video accordingly
+ */
+export async function getVideoDownloadUrl(url: string, rapidApiKey: string): Promise<string> {
+  if (isTikTokUrl(url)) {
+    const result = await getTikTokDownloadUrl(url, rapidApiKey);
+    if (!result) {
+      throw new Error('Failed to get TikTok video URL. The video may be private or unavailable.');
+    }
+    return result;
+  }
+
+  if (isInstagramUrl(url)) {
+    const result = await getInstagramDownloadUrl(url, rapidApiKey);
+    if (!result) {
+      throw new Error('Failed to get Instagram video URL. The post may be private or unavailable.');
+    }
+    return result;
+  }
+
+  throw new Error('Unsupported URL. Only TikTok and Instagram URLs are supported.');
 }
 
 async function prepareVideoForFal(
@@ -320,23 +487,17 @@ export async function processJob(
       falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId);
       console.log(`[FAL] Uploaded video ready: ${falVideoUrl}`);
     } else if (job.tiktokUrl) {
-      // Handle TikTok URL (existing flow)
-      await updateJob(jobId, { step: 'Fetching TikTok video URL...' });
+      // Handle TikTok/Instagram URL (auto-detect)
+      await updateJob(jobId, { step: 'Fetching video...' });
 
-      // Get the TikTok play URL from RapidAPI
-      const tiktokPlayUrl = await getTikTokDownloadUrl(job.tiktokUrl, rapidApiKey);
-      if (!tiktokPlayUrl) {
-        throw new Error('Failed to get TikTok video URL. The video may be private or unavailable.');
-      }
-
-      console.log(`[TikTok] Got play URL (${tiktokPlayUrl.length} chars)`);
+      const playUrl = await getVideoDownloadUrl(job.tiktokUrl, rapidApiKey);
+      console.log(`[Video] Got play URL (${playUrl.length} chars)`);
 
       await updateJob(jobId, { step: 'Downloading and preparing video...' });
-      // Download TikTok video and upload to FAL-accessible URL
-      falVideoUrl = await prepareVideoForFal(tiktokPlayUrl, job.maxSeconds || 10, jobId);
+      falVideoUrl = await prepareVideoForFal(playUrl, job.maxSeconds || 10, jobId);
       console.log(`[FAL] Video uploaded: ${falVideoUrl}`);
     } else {
-      throw new Error('No video source provided. Please provide either a TikTok URL or upload a video.');
+      throw new Error('No video source provided. Please provide a video URL or upload a video.');
     }
 
     await updateJob(jobId, { step: 'Uploading model image...' });
@@ -350,7 +511,7 @@ export async function processJob(
       {
         input: {
           image_url: falImageUrl,
-          video_url: falVideoUrl, // Use uploaded video URL that FAL can access
+          video_url: falVideoUrl,
           character_orientation: 'video',
           keep_original_sound: true,
           prompt: job.customPrompt || prompt,
@@ -373,7 +534,6 @@ export async function processJob(
 
     await updateJob(jobId, { step: 'Downloading and uploading result...' });
 
-    // Download to temp, then upload to GCS
     const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
@@ -382,10 +542,8 @@ export async function processJob(
     try {
       await downloadFile(videoData.url, tempOutputPath);
 
-      // Upload to GCS
       const { filename, url } = await uploadVideoFromPath(tempOutputPath, `result-${jobId}.mp4`);
 
-      // Store in database
       await createMediaFile({
         filename,
         originalName: `result-${jobId}.mp4`,
@@ -450,23 +608,17 @@ export async function processJobWithImage(
       falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId);
       console.log(`[FAL] Uploaded video ready: ${falVideoUrl}`);
     } else if (job.tiktokUrl) {
-      // Handle TikTok URL (existing flow)
-      await updateJob(jobId, { step: 'Fetching TikTok video URL...' });
+      // Handle TikTok/Instagram URL (auto-detect)
+      await updateJob(jobId, { step: 'Fetching video...' });
 
-      // Get the TikTok play URL from RapidAPI
-      const tiktokPlayUrl = await getTikTokDownloadUrl(job.tiktokUrl, rapidApiKey);
-      if (!tiktokPlayUrl) {
-        throw new Error('Failed to get TikTok video URL. The video may be private or unavailable.');
-      }
-
-      console.log(`[TikTok] Got play URL (${tiktokPlayUrl.length} chars)`);
+      const playUrl = await getVideoDownloadUrl(job.tiktokUrl, rapidApiKey);
+      console.log(`[Video] Got play URL (${playUrl.length} chars)`);
 
       await updateJob(jobId, { step: 'Downloading and preparing video...' });
-      // Download TikTok video and upload to FAL-accessible URL
-      falVideoUrl = await prepareVideoForFal(tiktokPlayUrl, job.maxSeconds || 10, jobId);
+      falVideoUrl = await prepareVideoForFal(playUrl, job.maxSeconds || 10, jobId);
       console.log(`[FAL] Video uploaded: ${falVideoUrl}`);
     } else {
-      throw new Error('No video source provided. Please provide either a TikTok URL or upload a video.');
+      throw new Error('No video source provided. Please provide a video URL or upload a video.');
     }
 
     await updateJob(jobId, { step: 'Uploading model image...' });
@@ -481,7 +633,7 @@ export async function processJobWithImage(
       {
         input: {
           image_url: falImageUrl,
-          video_url: falVideoUrl, // Use uploaded video URL that FAL can access
+          video_url: falVideoUrl,
           character_orientation: 'video',
           keep_original_sound: true,
           prompt: job.customPrompt || prompt,
@@ -531,7 +683,6 @@ export async function processJobWithImage(
         completedAt: new Date().toISOString(),
       });
 
-      // Update batch progress
       const completedJob = await getJob(jobId);
       if (completedJob?.batchId) {
         await updateBatchProgress(completedJob.batchId);

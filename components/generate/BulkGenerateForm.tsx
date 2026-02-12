@@ -85,7 +85,7 @@ export default function BulkGenerateForm({
 
   const handleBulkGenerate = async () => {
     if (parsedUrls.length === 0) {
-      showToast('No TikTok URLs to generate', 'error');
+      showToast('No video URLs to generate', 'error');
       return;
     }
     if (!selectedModelForGenerate && !uploadedImagePath) {
@@ -140,16 +140,16 @@ export default function BulkGenerateForm({
       <div className="space-y-6">
         {/* Bulk URL Input */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
-          <h3 className="mb-4 text-lg font-semibold">TikTok URLs</h3>
+          <h3 className="mb-4 text-lg font-semibold">Video URLs</h3>
           <div className="mb-4">
             <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">
-              Paste TikTok URLs (one per line or comma-separated)
+              Paste TikTok or Instagram URLs (one per line or comma-separated)
             </label>
             <textarea
               value={bulkUrls}
               onChange={(e) => setBulkUrls(e.target.value)}
               onBlur={handleParseBulkUrls}
-              placeholder={"https://www.tiktok.com/@user/video/123...\nhttps://vm.tiktok.com/abc..."}
+              placeholder={"https://www.tiktok.com/@user/video/123...\nhttps://www.instagram.com/reel/abc..."}
               className="min-h-[150px] w-full resize-y rounded-lg border border-[var(--border)] px-4 py-3 text-sm focus:border-[var(--primary)] focus:outline-none"
             />
           </div>

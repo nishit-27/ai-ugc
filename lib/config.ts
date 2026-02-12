@@ -2,6 +2,7 @@ export const config = {
   FAL_KEY: process.env.FAL_KEY,
   RAPIDAPI_KEY: process.env.RAPIDAPI_KEY,
   LATE_API_KEY: process.env.LATE_API_KEY,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   LATE_API_URL: 'https://getlate.dev/api/v1',
   TIKTOK_ACCOUNT_ID: process.env.TIKTOK_ACCOUNT_ID,
   DATABASE_URL: process.env.DATABASE_URL,

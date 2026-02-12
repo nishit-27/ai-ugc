@@ -34,7 +34,7 @@ type SourceConfig = {
 };
 
 export default function NodeConfigPanel({
-  selectedId, steps, onUpdateStep, onRemoveStep, onClose, sourceConfig, videoUrl, sourceDuration, validationError,
+  selectedId, steps, onUpdateStep, onRemoveStep, onClose, sourceConfig, videoUrl, sourceDuration, validationError, isLoadingVideo,
 }: {
   selectedId: string | null;
   steps: MiniAppStep[];
@@ -45,6 +45,7 @@ export default function NodeConfigPanel({
   videoUrl?: string;
   sourceDuration?: number;
   validationError?: string;
+  isLoadingVideo?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -77,20 +78,43 @@ export default function NodeConfigPanel({
                     : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
                 }`}
               >
-                {src === 'tiktok' ? 'TikTok URL' : 'Upload Video'}
+                {src === 'tiktok' ? 'Paste URL' : 'Upload Video'}
               </button>
             ))}
           </div>
 
           {sourceConfig.videoSource === 'tiktok' ? (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-[var(--text-muted)]">TikTok URL</label>
-              <input
-                value={sourceConfig.tiktokUrl}
-                onChange={(e) => sourceConfig.onTiktokUrlChange(e.target.value)}
-                placeholder="https://www.tiktok.com/@user/video/..."
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-border)] focus:outline-none"
-              />
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--text-muted)]">Video URL</label>
+                <input
+                  value={sourceConfig.tiktokUrl}
+                  onChange={(e) => sourceConfig.onTiktokUrlChange(e.target.value)}
+                  placeholder="Paste TikTok or Instagram URL..."
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-border)] focus:outline-none"
+                />
+              </div>
+              {/* Video preview / loading */}
+              {sourceConfig.tiktokUrl.trim() && (
+                isLoadingVideo ? (
+                  <div className="flex flex-col items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--background)] py-6">
+                    <div className="h-6 w-6 rounded-full border-2 border-[var(--border)] border-t-[var(--foreground)] animate-spin" />
+                    <span className="text-xs text-[var(--text-muted)]">Fetching video...</span>
+                  </div>
+                ) : sourceConfig.previewUrl ? (
+                  <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-black">
+                    <video
+                      src={sourceConfig.previewUrl}
+                      className="w-full rounded-xl"
+                      style={{ maxHeight: 200 }}
+                      muted
+                      loop
+                      autoPlay
+                      playsInline
+                    />
+                  </div>
+                ) : null
+              )}
             </div>
           ) : (
             <div>
@@ -183,10 +207,11 @@ export default function NodeConfigPanel({
               config={step.config as TOC}
               onChange={(c) => onUpdateStep(step.id, { ...step, config: c })}
               videoUrl={videoUrl}
+              isLoadingVideo={isLoadingVideo}
             />
           )}
-          {step.type === 'video-generation' && <VideoGenConfig config={step.config as VGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} />}
-          {step.type === 'batch-video-generation' && <BatchVideoGenConfig config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} />}
+          {step.type === 'video-generation' && <VideoGenConfig config={step.config as VGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} />}
+          {step.type === 'batch-video-generation' && <BatchVideoGenConfig config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} />}
           {step.type === 'text-overlay' && <TextOverlayConfig config={step.config as TOC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} />}
           {step.type === 'bg-music' && <BgMusicConfig config={step.config as BMC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} />}
           {step.type === 'attach-video' && <AttachVideoConfig config={step.config as AVC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} />}

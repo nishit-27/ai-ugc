@@ -262,7 +262,7 @@ async function processStep(
     case 'text-overlay': {
       const cfg = step.config as TextOverlayConfig;
       const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${Date.now()}.mp4`);
-      addTextOverlay(currentVideoPath, outputPath, cfg);
+      await addTextOverlay(currentVideoPath, outputPath, cfg);
       return outputPath;
     }
 
