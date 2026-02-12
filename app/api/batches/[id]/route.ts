@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getBatch, deleteBatch, getJobsByBatchId, getModel } from '@/lib/db';
 import { getSignedUrlFromPublicUrl } from '@/lib/storage';
 
+export const dynamic = 'force-dynamic';
+
 type RouteParams = { params: Promise<{ id: string }> };
 
 type Job = {

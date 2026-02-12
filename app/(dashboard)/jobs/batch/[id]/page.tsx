@@ -21,10 +21,12 @@ export default function PipelineBatchDetailPage() {
   const [isLoading, setIsLoading] = useState(!_cache[id]);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const loadBatch = useCallback(async (showLoader = false) => {
     if (showLoader) setIsLoading(true);
     try {
-      const res = await fetch(`/api/pipeline-batches/${id}`);
+      const res = await fetch(`/api/pipeline-batches/${id}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to load');
       const data = await res.json();
       _cache[id] = data;
@@ -33,6 +35,7 @@ export default function PipelineBatchDetailPage() {
       showToast('Failed to load pipeline batch', 'error');
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }, [id, showToast]);
 
@@ -40,15 +43,15 @@ export default function PipelineBatchDetailPage() {
     loadBatch(!_cache[id]);
   }, [id, loadBatch]);
 
-  // Auto-refresh while active
+  // Auto-refresh while active (use batch.status only to avoid interval thrashing)
+  const batchStatus = batch?.status;
   useEffect(() => {
-    if (!batch) return;
-    const isActive = batch.status === 'pending' || batch.status === 'processing';
+    const isActive = batchStatus === 'pending' || batchStatus === 'processing';
     if (!isActive) return;
 
     const interval = setInterval(() => loadBatch(), 3000);
     return () => clearInterval(interval);
-  }, [batch, loadBatch]);
+  }, [batchStatus, loadBatch]);
 
   if (isLoading) {
     return (
@@ -110,10 +113,11 @@ export default function PipelineBatchDetailPage() {
             {batch.status.charAt(0).toUpperCase() + batch.status.slice(1)}
           </span>
           <button
-            onClick={() => loadBatch()}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
+            onClick={() => { setIsRefreshing(true); loadBatch(); }}
+            disabled={isRefreshing}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-50"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={async () => {

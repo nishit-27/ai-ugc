@@ -5,7 +5,7 @@ import { fal } from '@fal-ai/client';
 import { getTemplateJob, updateTemplateJob, getModelImage, updatePipelineBatchProgress } from '@/lib/db';
 import { uploadVideoFromPath, downloadToBuffer as gcsDownloadToBuffer } from '@/lib/storage';
 import { downloadFile, getVideoDuration, trimVideo } from '@/lib/serverUtils';
-import { addTextOverlay, mixAudio, concatVideos } from '@/lib/ffmpegOps';
+import { addTextOverlay, mixAudio, concatVideos, stripAudio } from '@/lib/ffmpegOps';
 import { config } from '@/lib/config';
 import { rapidApiLimiter } from '@/lib/rateLimiter';
 import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig } from '@/types';
@@ -204,6 +204,14 @@ async function processStep(
 
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${Date.now()}.mp4`);
         await downloadFile(videoData.url, outputPath);
+
+        // Strip audio if user toggled audio off
+        if (cfg.generateAudio === false) {
+          const silentPath = path.join(tempDir, `tpl-step-${stepIndex}-silent-${Date.now()}.mp4`);
+          stripAudio(outputPath, silentPath);
+          try { fs.unlinkSync(outputPath); } catch {}
+          return silentPath;
+        }
         return outputPath;
       } else {
         // Motion control — needs input video (currentVideoPath is already local)
@@ -255,6 +263,14 @@ async function processStep(
 
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${Date.now()}.mp4`);
         await downloadFile(videoData.url, outputPath);
+
+        // Strip audio if user toggled audio off
+        if (cfg.generateAudio === false) {
+          const silentPath = path.join(tempDir, `tpl-step-${stepIndex}-silent-${Date.now()}.mp4`);
+          stripAudio(outputPath, silentPath);
+          try { fs.unlinkSync(outputPath); } catch {}
+          return silentPath;
+        }
         return outputPath;
       }
     }

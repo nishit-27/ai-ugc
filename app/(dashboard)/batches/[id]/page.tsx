@@ -29,7 +29,7 @@ export default function BatchDetailPage() {
   const loadBatch = useCallback(async (showLoader = false) => {
     if (showLoader) setIsLoading(true);
     try {
-      const res = await fetch(`/api/batches/${id}`);
+      const res = await fetch(`/api/batches/${id}`, { cache: 'no-store' });
       const data = await res.json();
       _cache[id] = data;
       setBatch(data);

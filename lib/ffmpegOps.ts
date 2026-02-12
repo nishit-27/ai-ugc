@@ -12,6 +12,67 @@ import type { TextOverlayConfig, BgMusicConfig } from '@/types';
 const FFMPEG = ffmpegPath || 'ffmpeg';
 const FFPROBE = FFPROBE_PATH || 'ffprobe';
 
+// ── Font management ──
+// Map CSS font-family strings → bundled TTF filenames
+// Open-source alternatives that visually match the browser fonts
+const FONT_FILE_MAP: Record<string, string> = {
+  'sans-serif':                'Inter-Bold.ttf',
+  'Impact, sans-serif':        'Anton-Regular.ttf',
+  'Georgia, serif':            'Lora-Bold.ttf',
+  'Courier New, monospace':    'CourierPrime-Bold.ttf',
+  'Arial Black, sans-serif':   'ArchivoBlack-Regular.ttf',
+  'Times New Roman, serif':    'Tinos-Bold.ttf',
+  'Trebuchet MS, sans-serif':  'FiraSans-Bold.ttf',
+  'Verdana, sans-serif':       'OpenSans-Bold.ttf',
+};
+
+// Italic variants (for styles like "Classic" that need italic)
+const FONT_ITALIC_MAP: Record<string, string> = {
+  'sans-serif':     'Inter-BoldItalic.ttf',
+  'Georgia, serif': 'Lora-BoldItalic.ttf',
+};
+
+// Directories where bundled fonts may live
+const FONT_DIRS = [
+  path.join(process.cwd(), 'lib', 'fonts'),
+  path.join(__dirname, 'fonts'),
+  path.join(__dirname, '..', 'lib', 'fonts'),
+];
+
+// Cache resolved paths so we don't hit the filesystem repeatedly
+const _fontCache = new Map<string, string>();
+
+/**
+ * Resolve a CSS font-family to a bundled TTF file path.
+ * Falls back to Inter-Bold.ttf (the default sans) if the requested family is not found.
+ */
+function getBundledFont(fontFamily?: string, italic = false): string {
+  const cacheKey = `${fontFamily || 'sans-serif'}:${italic ? 'i' : 'n'}`;
+  const cached = _fontCache.get(cacheKey);
+  if (cached && fs.existsSync(cached)) return cached;
+
+  // Pick the right filename
+  const map = italic ? FONT_ITALIC_MAP : FONT_FILE_MAP;
+  const filename = (fontFamily && map[fontFamily]) || map['sans-serif'];
+
+  for (const dir of FONT_DIRS) {
+    const fullPath = path.join(dir, filename);
+    if (fs.existsSync(fullPath)) {
+      _fontCache.set(cacheKey, fullPath);
+      return fullPath;
+    }
+  }
+
+  // If italic requested but no italic file exists, fall back to the regular bold
+  if (italic) return getBundledFont(fontFamily, false);
+
+  // Last resort — first candidate (sharp may use built-in fallback)
+  const fallback = path.join(FONT_DIRS[0], FONT_FILE_MAP['sans-serif']);
+  console.warn(`Font not found for "${fontFamily}", falling back to ${fallback}`);
+  _fontCache.set(cacheKey, fallback);
+  return fallback;
+}
+
 function getTempDir(): string {
   const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -57,75 +118,6 @@ function wrapByWordCount(text: string, wordsPerLine: number): string {
 }
 
 /**
- * Resolve a CSS font-family to a system font file path.
- * Falls back to a known default if nothing matches.
- */
-function resolveFontFile(fontFamily?: string): string | null {
-  // Map CSS families to candidate file paths (macOS + Linux/Vercel)
-  const fontMap: Record<string, string[]> = {
-    'sans-serif': [
-      '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-      '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-      '/System/Library/Fonts/Helvetica.ttc',
-    ],
-    'Impact, sans-serif': [
-      '/usr/share/fonts/truetype/msttcorefonts/Impact.ttf',
-      '/System/Library/Fonts/Supplemental/Impact.ttf',
-      '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-    ],
-    'Georgia, serif': [
-      '/usr/share/fonts/truetype/msttcorefonts/Georgia.ttf',
-      '/System/Library/Fonts/Supplemental/Georgia.ttf',
-      '/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf',
-    ],
-    'Courier New, monospace': [
-      '/usr/share/fonts/truetype/msttcorefonts/cour.ttf',
-      '/System/Library/Fonts/Supplemental/Courier New.ttf',
-      '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf',
-    ],
-    'Arial Black, sans-serif': [
-      '/usr/share/fonts/truetype/msttcorefonts/Arial_Black.ttf',
-      '/System/Library/Fonts/Supplemental/Arial Black.ttf',
-      '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-    ],
-    'Times New Roman, serif': [
-      '/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf',
-      '/System/Library/Fonts/Supplemental/Times New Roman.ttf',
-      '/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf',
-    ],
-    'Trebuchet MS, sans-serif': [
-      '/usr/share/fonts/truetype/msttcorefonts/Trebuchet_MS.ttf',
-      '/System/Library/Fonts/Supplemental/Trebuchet MS.ttf',
-      '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-    ],
-    'Verdana, sans-serif': [
-      '/usr/share/fonts/truetype/msttcorefonts/Verdana.ttf',
-      '/System/Library/Fonts/Supplemental/Verdana.ttf',
-      '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-    ],
-  };
-
-  // Universal fallbacks
-  const fallbacks = [
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-    '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
-    '/usr/share/fonts/truetype/freefont/FreeSans.ttf',
-    '/System/Library/Fonts/Helvetica.ttc',
-  ];
-
-  const candidates = fontFamily ? (fontMap[fontFamily] || fallbacks) : fallbacks;
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
-  }
-  // Last resort: try fallbacks
-  for (const p of fallbacks) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
-
-/**
  * Probe video dimensions.
  */
 function probeVideoSize(filePath: string): { width: number; height: number } {
@@ -158,8 +150,132 @@ function parseColor(hex: string): { r: number; g: number; b: number; alpha: numb
 }
 
 /**
- * Render styled text as a transparent PNG using sharp's SVG input.
- * Returns the path to the generated PNG.
+ * Escape a string for Pango markup.
+ */
+function escPango(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * Ensure a raw RGBA buffer + position fits inside a canvas.
+ * Crops the buffer if it overflows the canvas bounds.
+ * Returns null if the layer is entirely off-canvas.
+ */
+async function safeRawComposite(
+  data: Buffer,
+  w: number, h: number, channels: number,
+  left: number, top: number,
+  canvasW: number, canvasH: number,
+): Promise<sharp.OverlayOptions | null> {
+  let l = Math.max(0, left);
+  let t = Math.max(0, top);
+  const availW = canvasW - l;
+  const availH = canvasH - t;
+  if (availW <= 0 || availH <= 0) return null;
+
+  if (w <= availW && h <= availH) {
+    return { input: data, raw: { width: w, height: h, channels: channels as 1|2|3|4 }, left: l, top: t };
+  }
+
+  // Crop to fit within canvas
+  const cropW = Math.min(w, availW);
+  const cropH = Math.min(h, availH);
+  const cropped = await sharp(data, { raw: { width: w, height: h, channels: channels as 1|2|3|4 } })
+    .extract({ left: 0, top: 0, width: cropW, height: cropH })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  return {
+    input: cropped.data,
+    raw: { width: cropped.info.width, height: cropped.info.height, channels: cropped.info.channels as 1|2|3|4 },
+    left: l, top: t,
+  };
+}
+
+/**
+ * Ensure a PNG buffer + position fits inside a canvas.
+ * Crops if it overflows.
+ */
+async function safePngComposite(
+  pngBuf: Buffer,
+  left: number, top: number,
+  canvasW: number, canvasH: number,
+): Promise<sharp.OverlayOptions | null> {
+  let l = Math.max(0, left);
+  let t = Math.max(0, top);
+  const meta = await sharp(pngBuf).metadata();
+  const w = meta.width || 0;
+  const h = meta.height || 0;
+  const availW = canvasW - l;
+  const availH = canvasH - t;
+  if (availW <= 0 || availH <= 0 || w === 0 || h === 0) return null;
+
+  if (w <= availW && h <= availH) {
+    return { input: pngBuf, left: l, top: t };
+  }
+
+  const cropW = Math.min(w, availW);
+  const cropH = Math.min(h, availH);
+  const cropped = await sharp(pngBuf)
+    .extract({ left: 0, top: 0, width: cropW, height: cropH })
+    .png()
+    .toBuffer();
+
+  return { input: cropped, left: l, top: t };
+}
+
+// ── Shadow definition for text style presets ──
+type ShadowDef = { ox: number; oy: number; blur: number; r: number; g: number; b: number; a: number };
+
+function getShadowsForStyle(style?: string): ShadowDef[] {
+  switch (style) {
+    case 'bold-shadow': return [{ ox: 2, oy: 2, blur: 0, r: 0, g: 0, b: 0, a: 153 }];
+    case 'neon':        return [
+      { ox: 0, oy: 0, blur: 14, r: 255, g: 0, b: 255, a: 255 },
+      { ox: 0, oy: 0, blur: 7, r: 255, g: 0, b: 255, a: 255 },
+    ];
+    case 'retro':       return [{ ox: 3, oy: 3, blur: 0, r: 0, g: 78, b: 137, a: 255 }];
+    case 'classic':     return [{ ox: 2, oy: 2, blur: 4, r: 0, g: 0, b: 0, a: 128 }];
+    default:            return [];
+  }
+}
+
+/**
+ * Resolve effective font family — some styles override the user's font choice.
+ * Mirrors the preview logic in TextOverlayPreview.tsx getTextStyle().
+ */
+function getEffectiveFontFamily(configFamily?: string, textStyle?: string): string {
+  // Style-level font overrides (from textStyles.ts)
+  if (textStyle === 'retro') return 'Impact, sans-serif';
+  if (textStyle === 'classic') return configFamily || 'Georgia, serif';
+  return configFamily || 'sans-serif';
+}
+
+/**
+ * Render Pango text to a raw RGBA buffer via sharp.
+ * When width is omitted, Pango renders at natural width (NO auto-wrapping).
+ * This matches the preview which uses CSS white-space:pre.
+ */
+async function renderPangoText(
+  markup: string,
+  fontPath: string,
+  align: 'left' | 'centre' | 'right',
+): Promise<{ data: Buffer; width: number; height: number; channels: number }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (sharp as any)({
+    text: { text: markup, fontfile: fontPath, rgba: true, align, dpi: 72 },
+  }).toBuffer({ resolveWithObject: true });
+  return { data: result.data, width: result.info.width, height: result.info.height, channels: result.info.channels };
+}
+
+/**
+ * Render styled text as a transparent PNG using sharp's Pango text input.
+ * Supports all fonts, styles, shadows, backgrounds, positions from the preview.
+ *
+ * IMPORTANT: The preview designs at a fixed 720px reference width.
+ * All config values (fontSize, padding, etc.) are in that 720px coordinate space.
+ * We scale everything proportionally to the actual video resolution so
+ * the output matches the preview exactly.
  */
 async function renderTextOverlayPng(
   videoWidth: number,
@@ -168,150 +284,199 @@ async function renderTextOverlayPng(
 ): Promise<string> {
   const {
     text, position, textAlign = 'center', fontSize = 48, fontColor = '#FFFFFF', bgColor,
-    textStyle,
+    textStyle, fontFamily,
     paddingLeft = 0, paddingRight = 0,
     customX, customY,
     wordsPerLine,
   } = config;
 
-  // ── Style preset overrides ──
-  let shadowX = 0, shadowY = 0, strokeW = 0;
+  // ── Scale factor: map 720px design space → actual video resolution ──
+  const DESIGN_WIDTH = 720;
+  const scale = videoWidth / DESIGN_WIDTH;
+  const scaledFontSize = Math.round(fontSize * scale);
+  const scaledPadL = Math.round((paddingLeft > 0 ? paddingLeft : 90) * scale);
+  const scaledPadR = Math.round((paddingRight > 0 ? paddingRight : 90) * scale);
+
+  // ── Style preset overrides (mirrors textStyles.ts) ──
   let effectiveBgColor = bgColor;
   let effectiveFontColor = fontColor;
-  let boxPad = 10;
+  let boxPad = Math.round(10 * scale);
+  let useBold = true;
+  let useItalic = false;
+  let letterSpacingEm = 0;
 
   if (textStyle) {
     switch (textStyle) {
-      case 'bold-shadow':  shadowX = 2; shadowY = 2; break;
-      case 'creator': break;
+      case 'plain':        useBold = true; break;
+      case 'bold-shadow':  useBold = true; break;
+      case 'creator':      useBold = true; letterSpacingEm = 0.12; break;
       case 'text-box':
-        effectiveBgColor = effectiveBgColor || '#FFFFFF'; effectiveFontColor = '#000000'; boxPad = 10; break;
+        effectiveBgColor = effectiveBgColor || '#FFFFFF'; effectiveFontColor = '#000000'; boxPad = Math.round(10 * scale); break;
       case 'bubble':
-        effectiveBgColor = effectiveBgColor || '#ff3b30'; effectiveFontColor = '#FFFFFF'; boxPad = 14; break;
+        effectiveBgColor = effectiveBgColor || '#ff3b30'; effectiveFontColor = '#FFFFFF'; boxPad = Math.round(14 * scale); break;
       case 'neon':
-        effectiveFontColor = '#ff00ff'; strokeW = 2; break;
+        effectiveFontColor = '#ff00ff'; break;
       case 'tag':
-        effectiveBgColor = effectiveBgColor || '#ffcc00'; effectiveFontColor = '#000000'; boxPad = 10; break;
+        effectiveBgColor = effectiveBgColor || '#ffcc00'; effectiveFontColor = '#000000'; boxPad = Math.round(10 * scale); break;
       case 'subscribe':
-        effectiveBgColor = effectiveBgColor || '#ff0000'; effectiveFontColor = '#FFFFFF'; boxPad = 14; break;
+        effectiveBgColor = effectiveBgColor || '#ff0000'; effectiveFontColor = '#FFFFFF'; boxPad = Math.round(14 * scale); letterSpacingEm = 0.05; break;
       case 'retro':
-        effectiveFontColor = '#ff6b35'; shadowX = 3; shadowY = 3; break;
-      case 'classic': shadowX = 2; shadowY = 2; break;
+        effectiveFontColor = '#ff6b35'; break;
+      case 'classic':
+        useItalic = true; break;
       case 'caption':
-        effectiveBgColor = effectiveBgColor || '#000000'; effectiveFontColor = '#FFFFFF'; boxPad = 12; break;
+        effectiveBgColor = effectiveBgColor || 'rgba(0,0,0,0.7)'; effectiveFontColor = '#FFFFFF'; boxPad = Math.round(12 * scale); break;
       case 'rounded':
-        effectiveBgColor = effectiveBgColor || '#8b5cf6'; effectiveFontColor = '#FFFFFF'; boxPad = 16; break;
+        effectiveBgColor = effectiveBgColor || '#8b5cf6'; effectiveFontColor = '#FFFFFF'; boxPad = Math.round(16 * scale); break;
     }
   }
 
-  // ── Word-wrap ──
+  // ── Resolve font ──
+  const effectiveFamily = getEffectiveFontFamily(fontFamily, textStyle);
+  const fontPath = getBundledFont(effectiveFamily, useItalic);
+
+  // ── Word-wrap (at DESIGN_WIDTH=720, same as the preview) ──
   let wrappedText = text;
-  const effectiveLeft = paddingLeft > 0 ? paddingLeft : 90;
-  const effectiveRight = paddingRight > 0 ? paddingRight : 90;
+  const designLeft = paddingLeft > 0 ? paddingLeft : 90;
+  const designRight = paddingRight > 0 ? paddingRight : 90;
 
   if (wordsPerLine && wordsPerLine > 0) {
     wrappedText = wrapByWordCount(wrappedText, wordsPerLine);
   } else {
-    const availableWidth = videoWidth - effectiveLeft - effectiveRight;
-    const charWidth = fontSize * 0.55;
+    const availableWidth = DESIGN_WIDTH - designLeft - designRight;
+    const charWidth = fontSize * 0.55; // unscaled, same as preview
     const maxCharsPerLine = Math.max(5, Math.floor(availableWidth / charWidth));
     wrappedText = wrapText(wrappedText, maxCharsPerLine);
   }
 
-  // Apply uppercase for certain styles
   if (textStyle === 'creator' || textStyle === 'subscribe') {
     wrappedText = wrappedText.toUpperCase();
   }
 
-  const lines = wrappedText.split('\n');
-  const lineHeight = Math.round(fontSize * 1.3);
-  const totalTextHeight = lines.length * lineHeight;
+  const pangoAlign = (textAlign === 'left' ? 'left' : textAlign === 'right' ? 'right' : 'centre') as 'left' | 'centre' | 'right';
 
-  // ── SVG font family ──
-  const svgFontFamily = 'sans-serif';
+  // ── Pango attributes (use SCALED font size for actual rendering) ──
+  const pangoSize = Math.round(scaledFontSize * 1024);
+  const weightAttr = useBold ? ' weight="bold"' : '';
+  const styleAttr = useItalic ? ' style="italic"' : '';
+  const spacingAttr = letterSpacingEm > 0 ? ` letter_spacing="${Math.round(letterSpacingEm * scaledFontSize * 1024)}"` : '';
 
-  // ── SVG anchor from textAlign ──
-  const anchor = textAlign === 'left' ? 'start' : textAlign === 'right' ? 'end' : 'middle';
+  function buildMarkup(hexColor: string, alpha = 255): string {
+    const alphaAttr = alpha < 255 ? ` alpha="${Math.round((alpha / 255) * 65535)}"` : '';
+    const lines = wrappedText.split('\n');
+    const inner = lines.map((line) =>
+      `<span foreground="${hexColor}"${alphaAttr} size="${pangoSize}"${weightAttr}${styleAttr}${spacingAttr}>${escPango(line)}</span>`
+    ).join('\n');
+    return `<span>${inner}</span>`;
+  }
 
-  // ── Build SVG text lines ──
-  const escSvg = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // ── Render main text ──
+  const mainMarkup = buildMarkup(effectiveFontColor);
+  const mainBuf = await renderPangoText(mainMarkup, fontPath, pangoAlign);
 
-  // Calculate text block X position
-  let textBlockX: number;
+  const textW = mainBuf.width;
+  const textH = mainBuf.height;
+
+  // ── Calculate position (using percentages to match the preview's CSS positioning) ──
+  let overlayX: number;
   if (position === 'custom' && customX !== undefined) {
-    textBlockX = Math.round(videoWidth * customX / 100);
+    overlayX = Math.round(videoWidth * customX / 100 - textW / 2);
   } else {
     switch (textAlign) {
-      case 'left':  textBlockX = effectiveLeft; break;
-      case 'right': textBlockX = videoWidth - effectiveRight; break;
-      default:      textBlockX = Math.round(videoWidth / 2 + (paddingLeft - paddingRight) / 2); break;
+      case 'left':  overlayX = scaledPadL; break;
+      case 'right': overlayX = videoWidth - scaledPadR - textW; break;
+      default:      overlayX = Math.round((videoWidth - textW) / 2 + (scaledPadL - scaledPadR) / 2); break;
     }
   }
 
-  // Calculate text block Y position (top of block)
-  let textBlockY: number;
+  let overlayY: number;
   if (position === 'custom' && customY !== undefined) {
-    textBlockY = Math.round(videoHeight * customY / 100 - totalTextHeight / 2);
+    overlayY = Math.round(videoHeight * customY / 100 - textH / 2);
   } else {
+    // Preview uses 12% from edge for top/bottom (CSS top:12%, bottom:12%)
     switch (position) {
-      case 'top':    textBlockY = 50; break;
-      case 'center': textBlockY = Math.round((videoHeight - totalTextHeight) / 2); break;
-      case 'bottom': textBlockY = videoHeight - totalTextHeight - 50; break;
-      default:       textBlockY = videoHeight - totalTextHeight - 50; break;
+      case 'top':    overlayY = Math.round(videoHeight * 0.12); break;
+      case 'center': overlayY = Math.round((videoHeight - textH) / 2); break;
+      case 'bottom': overlayY = Math.round(videoHeight * 0.88 - textH); break;
+      default:       overlayY = Math.round(videoHeight * 0.88 - textH); break;
     }
   }
 
-  // ── Build background rects (one per line, if bgColor is set) ──
-  let bgRects = '';
+  overlayX = Math.max(0, overlayX);
+  overlayY = Math.max(0, overlayY);
+
+  // ── Build composites ──
+  const composites: sharp.OverlayOptions[] = [];
+
+  // Background box
   if (effectiveBgColor) {
-    const bgC = parseColor(effectiveBgColor);
-    const bgAlpha = Math.round((bgC.alpha / 255) * 0.7 * 100) / 100;
-    const bgFill = `rgba(${bgC.r},${bgC.g},${bgC.b},${bgAlpha})`;
-    const rx = textStyle === 'rounded' || textStyle === 'bubble' ? 12 : 4;
-
-    // Approximate widths per line (rough estimate based on char count)
-    for (let i = 0; i < lines.length; i++) {
-      const approxLineW = lines[i].length * fontSize * 0.6;
-      const rectW = approxLineW + boxPad * 2;
-      const rectH = lineHeight + 4;
-      const rectY = textBlockY + i * lineHeight - 2;
-      let rectX: number;
-      switch (textAlign) {
-        case 'left':  rectX = textBlockX - boxPad; break;
-        case 'right': rectX = textBlockX - approxLineW - boxPad; break;
-        default:      rectX = textBlockX - approxLineW / 2 - boxPad; break;
-      }
-      bgRects += `<rect x="${rectX}" y="${rectY}" width="${rectW}" height="${rectH}" rx="${rx}" fill="${bgFill}" />`;
+    let bgR: number, bgG: number, bgB: number, bgA: number;
+    if (effectiveBgColor.startsWith('rgba(')) {
+      const m = effectiveBgColor.match(/rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)/);
+      if (m) { bgR = +m[1]; bgG = +m[2]; bgB = +m[3]; bgA = Math.round(+m[4] * 255); }
+      else { bgR = 0; bgG = 0; bgB = 0; bgA = 180; }
+    } else {
+      const c = parseColor(effectiveBgColor);
+      bgR = c.r; bgG = c.g; bgB = c.b; bgA = Math.round(c.alpha * 0.7);
     }
+
+    const rx = Math.round((textStyle === 'rounded' || textStyle === 'bubble' ? 12 : 4) * scale);
+    const bgW = Math.min(textW + boxPad * 2, videoWidth);
+    const bgH = Math.min(textH + boxPad * 2, videoHeight);
+    const bgSvg = `<svg width="${bgW}" height="${bgH}"><rect x="0" y="0" width="${bgW}" height="${bgH}" rx="${rx}" ry="${rx}" fill="rgba(${bgR},${bgG},${bgB},${bgA / 255})"/></svg>`;
+    const bgBuf = await sharp(Buffer.from(bgSvg)).png().toBuffer();
+    const bgComp = await safePngComposite(bgBuf, Math.max(0, overlayX - boxPad), Math.max(0, overlayY - boxPad), videoWidth, videoHeight);
+    if (bgComp) composites.push(bgComp);
   }
 
-  // ── Build text elements ──
-  let shadowEls = '';
-  let textEls = '';
-  const fontWeight = (textStyle === 'bold-shadow' || textStyle === 'creator' || textStyle === 'subscribe') ? 'bold' : 'normal';
-
-  for (let i = 0; i < lines.length; i++) {
-    const y = textBlockY + i * lineHeight + fontSize; // baseline
-    const attrs = `x="${textBlockX}" y="${y}" font-family="${svgFontFamily}" font-size="${fontSize}" font-weight="${fontWeight}" text-anchor="${anchor}"`;
-
-    if (shadowX || shadowY) {
-      shadowEls += `<text ${attrs} fill="rgba(0,0,0,0.6)" dx="${shadowX}" dy="${shadowY}">${escSvg(lines[i])}</text>`;
-    }
-
-    if (strokeW > 0) {
-      textEls += `<text ${attrs} fill="none" stroke="${effectiveFontColor}" stroke-width="${strokeW}" stroke-opacity="0.5">${escSvg(lines[i])}</text>`;
-    }
-
-    textEls += `<text ${attrs} fill="${effectiveFontColor}">${escSvg(lines[i])}</text>`;
+  // Text shadows (offsets scaled proportionally)
+  const shadows = getShadowsForStyle(textStyle);
+  if (!effectiveBgColor && shadows.length === 0) {
+    shadows.push({ ox: 1, oy: 1, blur: 3, r: 0, g: 0, b: 0, a: 230 });
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${videoWidth}" height="${videoHeight}">
-${bgRects}${shadowEls}${textEls}
-</svg>`;
+  for (const shadow of shadows) {
+    const shadowHex = `#${shadow.r.toString(16).padStart(2, '0')}${shadow.g.toString(16).padStart(2, '0')}${shadow.b.toString(16).padStart(2, '0')}`;
+    const shadowMarkup = buildMarkup(shadowHex, shadow.a);
+    const shadowBuf = await renderPangoText(shadowMarkup, fontPath, pangoAlign);
 
+    let shadowInput: Buffer = shadowBuf.data;
+    let shadowW = shadowBuf.width;
+    let shadowH = shadowBuf.height;
+    let shadowChannels = shadowBuf.channels;
+
+    if (shadow.blur > 0) {
+      const sigma = Math.max(0.3, shadow.blur * 0.5 * scale);
+      const blurred = await sharp(shadowInput, { raw: { width: shadowW, height: shadowH, channels: shadowChannels as 1 | 2 | 3 | 4 } })
+        .blur(sigma)
+        .toBuffer({ resolveWithObject: true });
+      shadowInput = blurred.data;
+      shadowW = blurred.info.width;
+      shadowH = blurred.info.height;
+      shadowChannels = blurred.info.channels;
+    }
+
+    const sox = Math.round(shadow.ox * scale);
+    const soy = Math.round(shadow.oy * scale);
+    const sc = await safeRawComposite(shadowInput, shadowW, shadowH, shadowChannels, overlayX + sox, overlayY + soy, videoWidth, videoHeight);
+    if (sc) composites.push(sc);
+  }
+
+  // Main text layer on top
+  const mainComp = await safeRawComposite(mainBuf.data, textW, textH, mainBuf.channels, overlayX, overlayY, videoWidth, videoHeight);
+  if (mainComp) composites.push(mainComp);
+
+  // ── Create transparent canvas and composite everything ──
   const tmpDir = getTempDir();
   const pngPath = path.join(tmpDir, `overlay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.png`);
-  await sharp(Buffer.from(svg)).png().toFile(pngPath);
+
+  await sharp({
+    create: { width: videoWidth, height: videoHeight, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  })
+    .composite(composites)
+    .png()
+    .toFile(pngPath);
+
   return pngPath;
 }
 
@@ -354,6 +519,19 @@ export async function addTextOverlay(
   } finally {
     try { fs.unlinkSync(overlayPng); } catch {}
   }
+}
+
+/**
+ * Strip all audio streams from a video, producing a silent video.
+ */
+export function stripAudio(inputPath: string, outputPath: string): void {
+  execFileSync(FFMPEG, [
+    '-y',
+    '-i', inputPath,
+    '-c:v', 'copy',
+    '-an',
+    outputPath,
+  ]);
 }
 
 /**
