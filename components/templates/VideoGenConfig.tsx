@@ -2,10 +2,18 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useModels } from '@/hooks/useModels';
-import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown } from 'lucide-react';
+import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, Check } from 'lucide-react';
 import type { VideoGenConfig as VGC, ModelImage } from '@/types';
 
-type ImageSource = 'model' | 'upload';
+type ImageSource = 'model' | 'upload' | 'extract';
+
+type ExtractedFrame = {
+  url: string;
+  gcsUrl: string;
+  score: number;
+  hasFace: boolean;
+  timestamp: number;
+};
 
 // Duration options per mode
 const VEO_DURATIONS = ['4s', '6s', '8s'];
@@ -76,11 +84,12 @@ function Dropdown({
 }
 
 export default function VideoGenConfig({
-  config, onChange, sourceDuration,
+  config, onChange, sourceDuration, sourceVideoUrl,
 }: {
   config: VGC;
   onChange: (c: VGC) => void;
   sourceDuration?: number;
+  sourceVideoUrl?: string;
 }) {
   const { models, modelImages, imagesLoading, loadModelImages } = useModels();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -88,6 +97,9 @@ export default function VideoGenConfig({
   const [imageSource, setImageSource] = useState<ImageSource>(
     () => (config.imageUrl && !config.imageId) ? 'upload' : 'model'
   );
+  const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
 
   useEffect(() => {
     if (config.modelId) loadModelImages(config.modelId);
@@ -97,8 +109,31 @@ export default function VideoGenConfig({
     setImageSource(src);
     if (src === 'upload') {
       onChange({ ...config, modelId: undefined, imageId: undefined });
+    } else if (src === 'extract') {
+      onChange({ ...config, modelId: undefined, imageId: undefined });
     } else {
       onChange({ ...config, imageUrl: undefined });
+    }
+  };
+
+  const handleExtractFrames = async () => {
+    if (!sourceVideoUrl) return;
+    setIsExtracting(true);
+    setExtractError(null);
+    setExtractedFrames([]);
+    try {
+      const res = await fetch('/api/extract-frames', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoUrl: sourceVideoUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to extract frames');
+      setExtractedFrames(data.frames || []);
+    } catch (e: unknown) {
+      setExtractError(e instanceof Error ? e.message : 'Failed to extract frames');
+    } finally {
+      setIsExtracting(false);
     }
   };
 
@@ -169,6 +204,7 @@ export default function VideoGenConfig({
           {([
             { key: 'model' as ImageSource, label: 'From Model' },
             { key: 'upload' as ImageSource, label: 'Upload Image' },
+            { key: 'extract' as ImageSource, label: 'Extract' },
           ]).map((opt) => (
             <button
               key={opt.key}
@@ -287,6 +323,74 @@ export default function VideoGenConfig({
               )}
               <input type="file" accept="image/*" className="hidden" onChange={handleFileChange} disabled={isUploadingImage} />
             </label>
+          )}
+        </div>
+      )}
+
+      {/* Extract Frames */}
+      {imageSource === 'extract' && (
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Extract from Video</label>
+          {!sourceVideoUrl ? (
+            <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--background)] py-8">
+              <span className="text-xs text-[var(--text-muted)]">Set a source video first</span>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <button
+                onClick={handleExtractFrames}
+                disabled={isExtracting}
+                className="w-full rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] transition-colors hover:opacity-90 disabled:opacity-50"
+              >
+                {isExtracting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                    Extracting frames...
+                  </span>
+                ) : (
+                  extractedFrames.length > 0 ? 'Re-extract Frames' : 'Extract Frames'
+                )}
+              </button>
+              {extractError && (
+                <p className="text-xs text-red-500">{extractError}</p>
+              )}
+              {extractedFrames.length > 0 && (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {extractedFrames.map((frame, i) => {
+                    const isSelected = config.imageUrl === frame.gcsUrl;
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => onChange({ ...config, imageUrl: frame.gcsUrl, imageId: undefined, modelId: undefined })}
+                        className={`relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
+                          isSelected
+                            ? 'border-[var(--primary)] shadow-md'
+                            : 'border-[var(--border)] hover:border-[var(--accent-border)]'
+                        }`}
+                      >
+                        <img src={frame.url} alt={`Frame ${i + 1}`} className="h-full w-full object-cover" />
+                        {/* Score badge */}
+                        <div className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[10px] font-bold ${
+                          frame.hasFace
+                            ? 'bg-green-500/90 text-white'
+                            : 'bg-gray-500/70 text-white'
+                        }`}>
+                          {frame.hasFace ? `${frame.score}/10` : 'No face'}
+                        </div>
+                        {/* Selected overlay */}
+                        {isSelected && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)]">
+                              <Check className="h-3 w-3 text-white" />
+                            </div>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}

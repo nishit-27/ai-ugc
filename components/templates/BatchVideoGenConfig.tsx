@@ -5,7 +5,15 @@ import { useModels } from '@/hooks/useModels';
 import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, Check } from 'lucide-react';
 import type { BatchVideoGenConfig as BVGC, BatchImageEntry, ModelImage } from '@/types';
 
-type ImageSource = 'model' | 'upload';
+type ImageSource = 'model' | 'upload' | 'extract';
+
+type ExtractedFrame = {
+  url: string;
+  gcsUrl: string;
+  score: number;
+  hasFace: boolean;
+  timestamp: number;
+};
 
 const VEO_DURATIONS = ['4s', '6s', '8s'];
 const VEO_ASPECTS = [
@@ -73,11 +81,12 @@ function Dropdown({
 }
 
 export default function BatchVideoGenConfig({
-  config, onChange, sourceDuration,
+  config, onChange, sourceDuration, sourceVideoUrl,
 }: {
   config: BVGC;
   onChange: (c: BVGC) => void;
   sourceDuration?: number;
+  sourceVideoUrl?: string;
 }) {
   const { models, modelImages, imagesLoading, loadModelImages } = useModels();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -85,6 +94,9 @@ export default function BatchVideoGenConfig({
   const [imageSource, setImageSource] = useState<ImageSource>(
     () => (config.images.length > 0 && config.images.some(i => i.imageUrl && !i.imageId)) ? 'upload' : 'model'
   );
+  const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
 
   useEffect(() => {
     if (config.modelId) loadModelImages(config.modelId);
@@ -92,7 +104,42 @@ export default function BatchVideoGenConfig({
 
   const handleImageSourceChange = (src: ImageSource) => {
     setImageSource(src);
-    onChange({ ...config, images: [], modelId: src === 'upload' ? undefined : config.modelId });
+    if (src === 'extract') {
+      onChange({ ...config, images: [], modelId: undefined });
+    } else {
+      onChange({ ...config, images: [], modelId: src === 'upload' ? undefined : config.modelId });
+    }
+  };
+
+  const handleExtractFrames = async () => {
+    if (!sourceVideoUrl) return;
+    setIsExtracting(true);
+    setExtractError(null);
+    setExtractedFrames([]);
+    try {
+      const res = await fetch('/api/extract-frames', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoUrl: sourceVideoUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to extract frames');
+      setExtractedFrames(data.frames || []);
+    } catch (e: unknown) {
+      setExtractError(e instanceof Error ? e.message : 'Failed to extract frames');
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  const isExtractedFrameSelected = (gcsUrl: string) => config.images.some(i => i.imageUrl === gcsUrl);
+
+  const toggleExtractedFrame = (frame: ExtractedFrame) => {
+    if (isExtractedFrameSelected(frame.gcsUrl)) {
+      onChange({ ...config, images: config.images.filter(i => i.imageUrl !== frame.gcsUrl) });
+    } else {
+      onChange({ ...config, images: [...config.images, { imageUrl: frame.gcsUrl, filename: 'extracted-frame.jpg' }] });
+    }
   };
 
   const isImageSelected = (imgId: string) => config.images.some(i => i.imageId === imgId);
@@ -187,6 +234,7 @@ export default function BatchVideoGenConfig({
           {([
             { key: 'model' as ImageSource, label: 'From Model' },
             { key: 'upload' as ImageSource, label: 'Upload Images' },
+            { key: 'extract' as ImageSource, label: 'Extract' },
           ]).map((opt) => (
             <button
               key={opt.key}
@@ -312,6 +360,77 @@ export default function BatchVideoGenConfig({
             )}
             <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} disabled={isUploadingImage} />
           </label>
+        </div>
+      )}
+
+      {/* Extract Frames (multi-select) */}
+      {imageSource === 'extract' && (
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Extract from Video</label>
+          {!sourceVideoUrl ? (
+            <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--background)] py-8">
+              <span className="text-xs text-[var(--text-muted)]">Set a source video first</span>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <button
+                onClick={handleExtractFrames}
+                disabled={isExtracting}
+                className="w-full rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)] transition-colors hover:opacity-90 disabled:opacity-50"
+              >
+                {isExtracting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                    Extracting frames...
+                  </span>
+                ) : (
+                  extractedFrames.length > 0 ? 'Re-extract Frames' : 'Extract Frames'
+                )}
+              </button>
+              {extractError && (
+                <p className="text-xs text-red-500">{extractError}</p>
+              )}
+              {extractedFrames.length > 0 && (
+                <>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {extractedFrames.map((frame, i) => {
+                      const selected = isExtractedFrameSelected(frame.gcsUrl);
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => toggleExtractedFrame(frame)}
+                          className={`relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
+                            selected
+                              ? 'border-[var(--primary)] shadow-md'
+                              : 'border-[var(--border)] hover:border-[var(--accent-border)]'
+                          }`}
+                        >
+                          <img src={frame.url} alt={`Frame ${i + 1}`} className="h-full w-full object-cover" />
+                          <div className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[10px] font-bold ${
+                            frame.hasFace
+                              ? 'bg-green-500/90 text-white'
+                              : 'bg-gray-500/70 text-white'
+                          }`}>
+                            {frame.hasFace ? `${frame.score}/10` : 'No face'}
+                          </div>
+                          {selected && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)]">
+                                <Check className="h-3 w-3 text-white" />
+                              </div>
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    Click frames to select/deselect. Each frame = one pipeline run.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 

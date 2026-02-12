@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
 
   // Either tiktokUrl OR videoUrl is required
   if (!tiktokUrl && !videoUrl) {
-    return NextResponse.json({ error: 'Either TikTok URL or uploaded video is required' }, { status: 400 });
+    return NextResponse.json({ error: 'Either a video URL or uploaded video is required' }, { status: 400 });
   }
 
   // Determine video source
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   if (!config.FAL_KEY) {
     return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
   }
-  // RapidAPI key only required for TikTok downloads
+  // RapidAPI key required for TikTok and Instagram downloads
   if (videoSource === 'tiktok' && !config.RAPIDAPI_KEY) {
     return NextResponse.json({ error: 'RapidAPI key not configured' }, { status: 500 });
   }

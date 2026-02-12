@@ -7,10 +7,19 @@ const TIKTOK_PATTERNS = [
   /https?:\/\/(www\.)?tiktok\.com\/t\/[\w]+/gi,
 ];
 
+// Instagram URL patterns
+const INSTAGRAM_PATTERNS = [
+  /https?:\/\/(www\.)?instagram\.com\/p\/[\w-]+\/?/gi,
+  /https?:\/\/(www\.)?instagram\.com\/reel\/[\w-]+\/?/gi,
+  /https?:\/\/(www\.)?instagram\.com\/reels\/[\w-]+\/?/gi,
+];
+
+const ALL_PATTERNS = [...TIKTOK_PATTERNS, ...INSTAGRAM_PATTERNS];
+
 /**
- * Extract valid TikTok URLs from text
+ * Extract valid TikTok and Instagram URLs from text
  */
-function extractTikTokUrls(text: string): { urls: string[]; invalid: string[] } {
+function extractVideoUrls(text: string): { urls: string[]; invalid: string[] } {
   const urls: string[] = [];
   const invalid: string[] = [];
 
@@ -18,10 +27,9 @@ function extractTikTokUrls(text: string): { urls: string[]; invalid: string[] } 
   const lines = text.split(/[\n\r,;]+/).map((line) => line.trim()).filter(Boolean);
 
   for (const line of lines) {
-    // Check if line matches any TikTok pattern
     let matched = false;
 
-    for (const pattern of TIKTOK_PATTERNS) {
+    for (const pattern of ALL_PATTERNS) {
       // Reset lastIndex for global regex
       pattern.lastIndex = 0;
       const matches = line.match(pattern);
@@ -32,7 +40,7 @@ function extractTikTokUrls(text: string): { urls: string[]; invalid: string[] } 
       }
     }
 
-    // If line looks like a URL but didn't match TikTok patterns
+    // If line looks like a URL but didn't match any pattern
     if (!matched && line.startsWith('http')) {
       invalid.push(line);
     }
@@ -55,7 +63,7 @@ function parseCSV(content: string): { urls: string[]; invalid: string[] } {
 
   if (firstLine.includes(',')) {
     const headers = firstLine.split(',').map((h) => h.trim());
-    const urlHeaders = ['url', 'tiktok', 'link', 'tiktok_url', 'video_url'];
+    const urlHeaders = ['url', 'tiktok', 'instagram', 'link', 'tiktok_url', 'video_url'];
     for (let i = 0; i < headers.length; i++) {
       if (urlHeaders.some((h) => headers[i].includes(h))) {
         urlColumnIndex = i;
@@ -76,7 +84,7 @@ function parseCSV(content: string): { urls: string[]; invalid: string[] } {
     const potentialUrl = columns[urlColumnIndex];
 
     if (potentialUrl) {
-      const result = extractTikTokUrls(potentialUrl);
+      const result = extractVideoUrls(potentialUrl);
       urls.push(...result.urls);
       invalid.push(...result.invalid);
     }
@@ -114,7 +122,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Text content is required' }, { status: 400 });
       }
 
-      const result = extractTikTokUrls(text);
+      const result = extractVideoUrls(text);
       urls = result.urls;
       invalid = result.invalid;
     }

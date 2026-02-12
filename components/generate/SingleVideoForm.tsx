@@ -119,11 +119,13 @@ export default function SingleVideoForm() {
               onClick={() => setVideoSource('tiktok')}
               className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
                 videoSource === 'tiktok'
+
+                
                   ? 'bg-[var(--primary)] text-white'
                   : 'text-[var(--text-muted)] hover:bg-[var(--background)]'
               }`}
             >
-              TikTok URL
+              Paste URL
             </button>
             <button
               onClick={() => setVideoSource('upload')}
@@ -140,12 +142,18 @@ export default function SingleVideoForm() {
 
         {videoSource === 'tiktok' ? (
           <div className="mb-4">
-            <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">TikTok URL</label>
+            <label className="mb-2 block text-sm font-medium text-[var(--text-muted)]">Video URL</label>
             <input
               type="text"
               value={tiktokUrl}
               onChange={(e) => setTiktokUrl(e.target.value)}
-              placeholder="https://www.tiktok.com/@user/video/..."
+              onBlur={() => {
+                const url = tiktokUrl.trim();
+                if (url && url.startsWith('http') && !(/tiktok\.com/i.test(url)) && !(/instagram\.com\/(p|reel|reels)\//i.test(url))) {
+                  showToast('Only TikTok and Instagram URLs are supported', 'error');
+                }
+              }}
+              placeholder="Paste TikTok or Instagram URL..."
               className="w-full rounded-lg border border-[var(--border)] px-4 py-3 text-sm focus:border-[var(--primary)] focus:outline-none"
             />
           </div>

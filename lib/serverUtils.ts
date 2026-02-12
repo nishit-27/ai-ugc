@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process'
 import fs from 'fs'
 import https from 'https'
 import http from 'http'
+import os from 'os'
 import path from 'path'
 import ffmpegPath from 'ffmpeg-static'
 import ffprobePath from '@ffprobe-installer/ffprobe'
@@ -62,6 +63,47 @@ export function trimVideo(inputPath: string, outputPath: string, maxSeconds: num
     '-c', 'copy',
     outputPath,
   ])
+}
+
+/** Extract random frames from a video file */
+export function extractRandomFrames(videoPath: string, count = 10): Array<{ timestamp: number; buffer: Buffer }> {
+  const duration = getVideoDuration(videoPath)
+  if (duration <= 0) throw new Error('Could not determine video duration')
+
+  const margin = 0.5
+  const minTs = Math.min(margin, duration * 0.1)
+  const maxTs = Math.max(duration - margin, duration * 0.9)
+
+  const timestamps: number[] = []
+  for (let i = 0; i < count; i++) {
+    timestamps.push(minTs + Math.random() * (maxTs - minTs))
+  }
+  timestamps.sort((a, b) => a - b)
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-'))
+  const frames: Array<{ timestamp: number; buffer: Buffer }> = []
+
+  try {
+    for (const ts of timestamps) {
+      const outPath = path.join(tmpDir, `frame-${ts.toFixed(3)}.jpg`)
+      execFileSync(FFMPEG, [
+        '-ss', String(ts),
+        '-i', videoPath,
+        '-vframes', '1',
+        '-q:v', '2',
+        '-y',
+        outPath,
+      ])
+      if (fs.existsSync(outPath)) {
+        frames.push({ timestamp: ts, buffer: fs.readFileSync(outPath) })
+        fs.unlinkSync(outPath)
+      }
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+
+  return frames
 }
 
 /** Download a file from a URL to a local path */
