@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { Upload, X, Video, Type, Music, Film, Link, Layers } from 'lucide-react';
+import PreviewModal from '@/components/ui/PreviewModal';
 import { useVideoUpload } from '@/hooks/useVideoUpload';
 import type { AttachVideoConfig as AVC, MiniAppStep, MiniAppType } from '@/types';
 
@@ -42,6 +43,7 @@ export default function AttachVideoConfig({
   const [uploadedFilename, setUploadedFilename] = useState<string | null>(null);
   const [activeSource, setActiveSource] = useState<VideoSource>(() => deriveSource(config));
   const [isDragging, setIsDragging] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Steps that appear before the current step
   const previousSteps = (steps && currentStepId)
@@ -149,9 +151,10 @@ export default function AttachVideoConfig({
             <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] p-2.5">
               <video
                 src={config.videoUrl}
-                className="h-16 w-24 shrink-0 rounded-lg object-cover bg-black"
+                className="h-16 w-24 shrink-0 rounded-lg object-cover bg-black cursor-pointer"
                 muted playsInline preload="metadata"
                 onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }}
+                onClick={() => setPreviewUrl(config.videoUrl)}
               />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-medium text-[var(--text)]">{uploadedFilename || 'Video clip'}</p>
@@ -235,6 +238,8 @@ export default function AttachVideoConfig({
           </div>
         </div>
       )}
+
+      {previewUrl && <PreviewModal src={previewUrl} type="video" onClose={() => setPreviewUrl(null)} />}
     </div>
   );
 }

@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useModels } from '@/hooks/useModels';
-import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, ChevronUp, Check, RefreshCw, Sparkles, Upload, User } from 'lucide-react';
+import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, ChevronUp, Check, RefreshCw, Sparkles, Upload, User, Expand } from 'lucide-react';
+import PreviewModal from '@/components/ui/PreviewModal';
 import type { VideoGenConfig as VGC, ModelImage } from '@/types';
 
 type ImageSource = 'model' | 'upload';
@@ -137,6 +138,7 @@ export default function VideoGenConfig({
     () => new Set(cached?.dismissedOptions ?? [])
   );
   const [isGeneratingFirstFrame, setIsGeneratingFirstFrame] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Helper: clear first frame options always resets dismissed set too
   const clearFirstFrameOptions = () => { setFirstFrameOptionsRaw([]); setDismissedOptions(new Set()); };
@@ -478,7 +480,7 @@ export default function VideoGenConfig({
                     onClick={() => setShowImageGrid(true)}
                     className="flex w-full items-center gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 transition-colors hover:bg-[var(--accent)]"
                   >
-                    <img src={selectedImg.signedUrl || selectedImg.gcsUrl} alt={selectedImg.filename} className="h-10 w-10 rounded-lg object-cover border border-[var(--primary)]" />
+                    <img src={selectedImg.signedUrl || selectedImg.gcsUrl} alt={selectedImg.filename} className="h-10 w-10 rounded-lg object-cover border border-[var(--primary)] cursor-pointer" onClick={(e) => { e.stopPropagation(); setPreviewUrl(selectedImg.signedUrl || selectedImg.gcsUrl); }} />
                     <div className="flex-1 text-left">
                       <p className="text-xs font-medium text-[var(--text)]">{selectedImg.filename}</p>
                       <p className="text-[10px] text-[var(--text-muted)]">Click to change</p>
@@ -512,13 +514,14 @@ export default function VideoGenConfig({
                           setShowImageGrid(false);
                           onChange({ ...config, imageId: img.id, imageUrl: undefined });
                         }}
-                        className={`relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
+                        className={`group relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
                           config.imageId === img.id
                             ? 'border-[var(--primary)] shadow-md'
                             : 'border-[var(--border)] hover:border-[var(--accent-border)]'
                         }`}
                       >
                         <img src={img.signedUrl || img.gcsUrl} alt={img.filename} className="h-full w-full object-cover" />
+                        <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(img.signedUrl || img.gcsUrl); }} className="absolute bottom-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
                         {config.imageId === img.id && (
                           <div className="absolute inset-0 flex items-center justify-center bg-black/20">
                             <div className="h-4 w-4 rounded-full border-2 border-white bg-[var(--primary)]" />
@@ -545,7 +548,8 @@ export default function VideoGenConfig({
               <img
                 src={config.imageUrl || ''}
                 alt="Uploaded"
-                className="max-h-36 w-full rounded-xl border border-[var(--border)] object-contain bg-[var(--background)] p-1"
+                className="max-h-36 w-full rounded-xl border border-[var(--border)] object-contain bg-[var(--background)] p-1 cursor-pointer"
+                onClick={() => { if (config.imageUrl) setPreviewUrl(config.imageUrl); }}
               />
               <button
                 onClick={() => {
@@ -595,7 +599,8 @@ export default function VideoGenConfig({
                 <img
                   src={originalModelImageUrlRef.current || config.imageUrl || ''}
                   alt="Model face"
-                  className="h-10 w-10 rounded object-cover"
+                  className="h-10 w-10 rounded object-cover cursor-pointer"
+                  onClick={() => setPreviewUrl(originalModelImageUrlRef.current || config.imageUrl || '')}
                 />
                 <span className="text-xs text-[var(--text-muted)]">Face reference image</span>
               </div>
@@ -645,7 +650,7 @@ export default function VideoGenConfig({
                   {(() => {
                     const faceUrl = resolveModelImageDisplay();
                     return faceUrl ? (
-                      <div className="relative aspect-[3/4] overflow-hidden rounded-2xl">
+                      <div className="relative aspect-[3/4] overflow-hidden rounded-2xl cursor-pointer" onClick={() => setPreviewUrl(faceUrl)}>
                         <img src={faceUrl} alt="Face" className="h-full w-full object-cover" />
                         <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/50 to-transparent px-2.5 pb-2 pt-5">
                           <p className="text-[10px] font-medium text-white/80">Model image</p>
@@ -671,7 +676,7 @@ export default function VideoGenConfig({
                       {(() => {
                         const selectedFrame = extractedFrames.find(f => f.gcsUrl === config.extractedFrameUrl);
                         const displayUrl = selectedFrame?.url || sceneDisplayUrl || config.extractedFrameUrl;
-                        return <img src={displayUrl} alt="Scene" className="h-full w-full object-cover" />;
+                        return <img src={displayUrl} alt="Scene" className="h-full w-full object-cover cursor-pointer" onClick={() => setPreviewUrl(displayUrl)} />;
                       })()}
                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/0 group-hover:bg-black/40 transition-colors">
                         <button
@@ -770,11 +775,12 @@ export default function VideoGenConfig({
                             clearFirstFrameOptions();
                             setShowScenePicker(false);
                           }}
-                          className={`relative aspect-square overflow-hidden rounded-lg transition-all ${
+                          className={`group relative aspect-square overflow-hidden rounded-lg transition-all ${
                             isSel ? 'ring-2 ring-[var(--primary)] ring-offset-1 ring-offset-[var(--background)]' : 'hover:opacity-80'
                           }`}
                         >
                           <img src={frame.url} alt={`Frame ${i + 1}`} className="h-full w-full object-cover rounded-lg" />
+                          <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(frame.url); }} className="absolute bottom-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
                           {frame.hasFace && (
                             <div className="absolute left-0.5 top-0.5 rounded-md bg-green-500/80 px-1 py-0.5 text-[7px] font-bold text-white">
                               {frame.score}
@@ -823,9 +829,10 @@ export default function VideoGenConfig({
                           onChange({ ...config, extractedFrameUrl: frame.gcsUrl });
                           clearFirstFrameOptions();
                         }}
-                        className="relative aspect-square overflow-hidden rounded-lg hover:opacity-80 transition-all"
+                        className="group relative aspect-square overflow-hidden rounded-lg hover:opacity-80 transition-all"
                       >
                         <img src={frame.url} alt={`Frame ${i + 1}`} className="h-full w-full object-cover rounded-lg" />
+                        <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(frame.url); }} className="absolute bottom-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
                         {frame.hasFace && (
                           <div className="absolute left-0.5 top-0.5 rounded-md bg-green-500/80 px-1 py-0.5 text-[7px] font-bold text-white">
                             {frame.score}
@@ -916,13 +923,14 @@ export default function VideoGenConfig({
                           <div key={i} className="relative">
                             <button
                               onClick={() => handleSelectFirstFrame(opt)}
-                              className={`relative w-full aspect-[3/4] overflow-hidden rounded-2xl border-2 transition-all duration-150 ${
+                              className={`group relative w-full aspect-[3/4] overflow-hidden rounded-2xl border-2 transition-all duration-150 ${
                                 isSelected
                                   ? 'border-[var(--primary)]'
                                   : 'border-transparent hover:opacity-90'
                               }`}
                             >
                               <img src={opt.url} alt={`Option ${String.fromCharCode(65 + i)}`} className="h-full w-full object-cover" />
+                              <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(opt.url); }} className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
                               <div className="absolute top-2 left-2 flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-[9px] font-bold text-white backdrop-blur-sm">
                                 {String.fromCharCode(65 + i)}
                               </div>
@@ -1040,6 +1048,8 @@ export default function VideoGenConfig({
 
         </div>
       </div>
+
+      {previewUrl && <PreviewModal src={previewUrl} onClose={() => setPreviewUrl(null)} />}
     </div>
   );
 }

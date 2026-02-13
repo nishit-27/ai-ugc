@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { X, Video, Type, Music, Film, Upload, Layers } from 'lucide-react';
+import PreviewModal from '@/components/ui/PreviewModal';
 import type { MiniAppStep, MiniAppType, VideoGenConfig as VGC, TextOverlayConfig as TOC, BgMusicConfig as BMC, AttachVideoConfig as AVC, BatchVideoGenConfig as BVGC } from '@/types';
 import VideoGenConfig from './VideoGenConfig';
 import TextOverlayConfig from './TextOverlayConfig';
@@ -49,6 +50,7 @@ export default function NodeConfigPanel({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const step = selectedId && selectedId !== 'source' ? steps.find((s) => s.id === selectedId) : null;
 
   /* ── Source node ── */
@@ -102,7 +104,7 @@ export default function NodeConfigPanel({
                     <span className="text-xs text-[var(--text-muted)]">Fetching video...</span>
                   </div>
                 ) : sourceConfig.previewUrl ? (
-                  <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-black">
+                  <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-black cursor-pointer" onClick={() => setPreviewUrl(sourceConfig.previewUrl || null)}>
                     <video
                       src={sourceConfig.previewUrl}
                       className="w-full rounded-xl"
@@ -122,7 +124,7 @@ export default function NodeConfigPanel({
               <input ref={fileRef} type="file" accept="video/*" onChange={sourceConfig.onVideoUpload} className="hidden" />
               {sourceConfig.videoUrl ? (
                 <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] p-2.5">
-                  <video src={sourceConfig.previewUrl || sourceConfig.videoUrl} className="h-16 w-12 shrink-0 rounded-lg object-cover bg-black" muted playsInline preload="metadata" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }} />
+                  <video src={sourceConfig.previewUrl || sourceConfig.videoUrl} className="h-16 w-12 shrink-0 rounded-lg object-cover bg-black cursor-pointer" muted playsInline preload="metadata" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }} onClick={() => setPreviewUrl(sourceConfig.previewUrl || sourceConfig.videoUrl)} />
                   <div className="flex-1 min-w-0">
                     <p className="truncate text-xs font-medium text-[var(--text)]">{sourceConfig.uploadedFilename}</p>
                     <button onClick={sourceConfig.onVideoRemove} className="mt-0.5 flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-red-500 transition-colors">
@@ -169,6 +171,7 @@ export default function NodeConfigPanel({
             Not needed if the first step is Video Generation with Subtle Animation mode.
           </p>
         </div>
+        {previewUrl && <PreviewModal src={previewUrl} type="video" onClose={() => setPreviewUrl(null)} />}
       </div>
     );
   }

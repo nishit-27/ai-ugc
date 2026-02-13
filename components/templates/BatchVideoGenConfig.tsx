@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useModels } from '@/hooks/useModels';
-import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, Check, RefreshCw } from 'lucide-react';
+import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, Check, RefreshCw, Expand } from 'lucide-react';
+import PreviewModal from '@/components/ui/PreviewModal';
 import type { BatchVideoGenConfig as BVGC, BatchImageEntry, ModelImage } from '@/types';
 
 type ImageSource = 'model' | 'upload';
@@ -126,6 +127,7 @@ export default function BatchVideoGenConfig({
   const [generatingIndices, setGeneratingIndices] = useState<Set<number>>(new Set());
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
   const [generateAllProgress, setGenerateAllProgress] = useState({ done: 0, total: 0 });
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Refs that track latest values for the unmount save
   const extractedFramesRef = useRef(extractedFrames);
@@ -482,13 +484,14 @@ export default function BatchVideoGenConfig({
                     <button
                       key={img.id}
                       onClick={() => toggleModelImage(img)}
-                      className={`relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
+                      className={`group relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
                         selected
                           ? 'border-[var(--primary)] shadow-md'
                           : 'border-[var(--border)] hover:border-[var(--accent-border)]'
                       }`}
                     >
                       <img src={img.signedUrl || img.gcsUrl} alt={img.filename} className="h-full w-full object-cover" />
+                      <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(img.signedUrl || img.gcsUrl); }} className="absolute bottom-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
                       {selected && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                           <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)]">
@@ -566,7 +569,8 @@ export default function BatchVideoGenConfig({
                   <img
                     src={img.imageUrl || modelImages.find(m => m.id === img.imageId)?.signedUrl || modelImages.find(m => m.id === img.imageId)?.gcsUrl || ''}
                     alt={img.filename || `Image ${i + 1}`}
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-cover cursor-pointer"
+                    onClick={() => setPreviewUrl(img.imageUrl || modelImages.find(m => m.id === img.imageId)?.signedUrl || modelImages.find(m => m.id === img.imageId)?.gcsUrl || '')}
                   />
                 )}
                 <button
@@ -632,13 +636,14 @@ export default function BatchVideoGenConfig({
                                 setFirstFrameResults(new Map()); // Reset all generated options when frame changes
                                 onChange({ ...config, extractedFrameUrl: frame.gcsUrl });
                               }}
-                              className={`relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
+                              className={`group relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
                                 isSelected
                                   ? 'border-[var(--primary)] shadow-md'
                                   : 'border-[var(--border)] hover:border-[var(--accent-border)]'
                               }`}
                             >
                               <img src={frame.url} alt={`Frame ${i + 1}`} className="h-full w-full object-cover" />
+                              <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(frame.url); }} className="absolute bottom-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
                               <div className={`absolute left-0.5 top-0.5 rounded px-0.5 py-0 text-[9px] font-bold ${
                                 frame.hasFace ? 'bg-green-500/90 text-white' : 'bg-gray-500/70 text-white'
                               }`}>
@@ -694,7 +699,8 @@ export default function BatchVideoGenConfig({
                             <img
                               src={displayUrl}
                               alt={entry.filename || `Image ${idx + 1}`}
-                              className="h-9 w-9 rounded object-cover shrink-0"
+                              className="h-9 w-9 rounded object-cover shrink-0 cursor-pointer"
+                              onClick={() => { if (displayUrl) setPreviewUrl(displayUrl); }}
                             />
                             <span className="text-xs text-[var(--text)] truncate flex-1">
                               {entry.filename || `Image ${idx + 1}`}
@@ -731,13 +737,14 @@ export default function BatchVideoGenConfig({
                                   <button
                                     key={oi}
                                     onClick={() => handleSelectFirstFrameForIndex(idx, opt)}
-                                    className={`relative aspect-[4/3] overflow-hidden rounded border-2 transition-all duration-150 ${
+                                    className={`group relative aspect-[4/3] overflow-hidden rounded border-2 transition-all duration-150 ${
                                       isSelected
                                         ? 'border-[var(--primary)] shadow-sm'
                                         : 'border-[var(--border)] hover:border-[var(--accent-border)]'
                                     }`}
                                   >
                                     <img src={opt.url} alt={`Option ${String.fromCharCode(65 + oi)}`} className="h-full w-full object-cover" />
+                                    <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(opt.url); }} className="absolute bottom-0.5 left-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
                                     {isSelected && (
                                       <div className="absolute inset-0 flex items-center justify-center bg-black/20">
                                         <div className="flex h-4 w-4 items-center justify-center rounded-full bg-[var(--primary)]">
@@ -860,6 +867,8 @@ export default function BatchVideoGenConfig({
 
         </div>
       </div>
+
+      {previewUrl && <PreviewModal src={previewUrl} onClose={() => setPreviewUrl(null)} />}
     </div>
   );
 }
