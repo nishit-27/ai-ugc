@@ -2,8 +2,8 @@
 
 import { useCallback, useRef } from 'react';
 
-const RECOVERY_COOLDOWN = 30_000;           // Check every 30 seconds
-const STUCK_THRESHOLD_MS = 30_000;          // Consider stuck after 30s
+const RECOVERY_COOLDOWN = 60_000;           // Check every 60 seconds
+const STUCK_THRESHOLD_MS = 5 * 60_000;     // Consider stuck after 5 min (webhook handles fast path)
 
 /**
  * Hook that provides a function to trigger stuck-job recovery.

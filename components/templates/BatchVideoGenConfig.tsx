@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useModels } from '@/hooks/useModels';
 import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, Check, RefreshCw, Expand } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
-import type { BatchVideoGenConfig as BVGC, BatchImageEntry, ModelImage } from '@/types';
+import type { BatchVideoGenConfig as BVGC, BatchImageEntry, ModelImage, FirstFrameModelId } from '@/types';
 
 type ImageSource = 'model' | 'upload';
 
@@ -285,7 +285,7 @@ export default function BatchVideoGenConfig({
       const res = await fetch('/api/generate-first-frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelImageUrl, frameImageUrl: config.extractedFrameUrl }),
+        body: JSON.stringify({ modelImageUrl, frameImageUrl: config.extractedFrameUrl, firstFrameModel: config.firstFrameModel || 'nano-banana' }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate');
@@ -601,6 +601,34 @@ export default function BatchVideoGenConfig({
 
           {config.firstFrameEnabled && (
             <div className="space-y-3 pl-5">
+              {/* Model selector */}
+              <div className="flex gap-1.5 rounded-lg bg-[var(--accent)] p-1">
+                {([
+                  { key: 'nano-banana' as FirstFrameModelId, label: 'Nano Banana' },
+                  { key: 'kling-v3' as FirstFrameModelId, label: 'Kling V3' },
+                ] as const).map((opt) => {
+                  const selected = (config.firstFrameModel || 'nano-banana') === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      onClick={() => {
+                        if ((config.firstFrameModel || 'nano-banana') !== opt.key) {
+                          setFirstFrameResults(new Map());
+                          onChange({ ...config, firstFrameModel: opt.key });
+                        }
+                      }}
+                      className={`flex-1 rounded-md px-3 py-1.5 text-[11px] font-semibold transition-all duration-150 ${
+                        selected
+                          ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--background)]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Step 1: Extract shared frame */}
               <div>
                 <label className="mb-1.5 block text-[11px] font-medium text-[var(--text-muted)]">1. Pick a scene frame (shared for all)</label>
@@ -764,6 +792,7 @@ export default function BatchVideoGenConfig({
                           {selectedGcsUrl && (
                             <p className="text-[10px] text-green-600 font-medium">Selected</p>
                           )}
+
                         </div>
                       );
                     })}

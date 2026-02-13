@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useModels } from '@/hooks/useModels';
 import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, ChevronUp, Check, RefreshCw, Sparkles, Upload, User, Expand } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
-import type { VideoGenConfig as VGC, ModelImage } from '@/types';
+import type { VideoGenConfig as VGC, ModelImage, FirstFrameModelId } from '@/types';
 
 type ImageSource = 'model' | 'upload';
 
@@ -307,7 +307,7 @@ export default function VideoGenConfig({
       const res = await fetch('/api/generate-first-frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelImageUrl, frameImageUrl: config.extractedFrameUrl }),
+        body: JSON.stringify({ modelImageUrl, frameImageUrl: config.extractedFrameUrl, firstFrameModel: config.firstFrameModel || 'nano-banana' }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate first frame');
@@ -642,6 +642,35 @@ export default function VideoGenConfig({
           {/* Body */}
           {config.firstFrameEnabled && (
             <div className="px-4 pb-4 space-y-3.5">
+              {/* Model selector */}
+              <div className="flex gap-1.5 rounded-lg bg-[var(--background)] p-1">
+                {([
+                  { key: 'nano-banana' as FirstFrameModelId, label: 'Nano Banana' },
+                  { key: 'kling-v3' as FirstFrameModelId, label: 'Kling V3' },
+                ] as const).map((opt) => {
+                  const selected = (config.firstFrameModel || 'nano-banana') === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      onClick={() => {
+                        if ((config.firstFrameModel || 'nano-banana') !== opt.key) {
+                          clearFirstFrameOptions();
+                          setGenerateError(null);
+                          onChange({ ...config, firstFrameModel: opt.key });
+                        }
+                      }}
+                      className={`flex-1 rounded-md px-3 py-1.5 text-[11px] font-semibold transition-all duration-150 ${
+                        selected
+                          ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--accent)]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Two slots: Face + Scene */}
               <div className="grid grid-cols-2 gap-3">
                 {/* Face slot (auto-filled from model image) */}

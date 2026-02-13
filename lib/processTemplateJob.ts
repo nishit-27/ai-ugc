@@ -6,8 +6,8 @@ import { getTemplateJob, updateTemplateJob, getModelImage, updatePipelineBatchPr
 import { uploadVideoFromPath, downloadToBuffer as gcsDownloadToBuffer } from '@/lib/storage';
 import { downloadFile, getVideoDuration, trimVideo } from '@/lib/serverUtils';
 import { addTextOverlay, mixAudio, concatVideos, stripAudio } from '@/lib/ffmpegOps';
-import { config } from '@/lib/config';
-import { rapidApiLimiter } from '@/lib/rateLimiter';
+import { config, getFalWebhookUrl } from '@/lib/config';
+import { getVideoDownloadUrl } from '@/lib/processJob';
 import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig } from '@/types';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -29,68 +29,6 @@ async function downloadToLocal(url: string, destPath: string): Promise<void> {
   } else {
     await downloadFile(url, destPath);
   }
-}
-
-/**
- * Get TikTok download URL (same logic as processJob.ts).
- */
-async function getTikTokDownloadUrl(tiktokUrl: string): Promise<string | null> {
-  const rapidApiKey = config.RAPIDAPI_KEY;
-  if (!rapidApiKey) return null;
-
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const https = require('https');
-  const normalizedUrl = tiktokUrl.trim();
-  const maxRetries = 3;
-  const baseDelay = 2000;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    await rapidApiLimiter.acquire();
-
-    const result = await new Promise<{ url: string | null; shouldRetry: boolean }>((resolve) => {
-      const encodedUrl = encodeURIComponent(normalizedUrl);
-      const options = {
-        method: 'GET',
-        hostname: 'tiktok-api23.p.rapidapi.com',
-        path: `/api/download/video?url=${encodedUrl}`,
-        headers: {
-          'x-rapidapi-host': 'tiktok-api23.p.rapidapi.com',
-          'x-rapidapi-key': rapidApiKey,
-        },
-      };
-
-      const req = https.request(options, (res: import('http').IncomingMessage) => {
-        let data = '';
-        res.on('data', (chunk: Buffer) => (data += chunk.toString()));
-        res.on('end', () => {
-          if (res.statusCode && res.statusCode >= 429) {
-            resolve({ url: null, shouldRetry: true });
-            return;
-          }
-          if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-            resolve({ url: null, shouldRetry: false });
-            return;
-          }
-          try {
-            const json = JSON.parse(data);
-            const playUrl = json.play || json.hdplay || json.data?.play || json.data?.hdplay;
-            resolve({ url: playUrl || null, shouldRetry: !playUrl });
-          } catch {
-            resolve({ url: null, shouldRetry: true });
-          }
-        });
-      });
-      req.on('error', () => resolve({ url: null, shouldRetry: true }));
-      req.end();
-    });
-
-    if (result.url) return result.url;
-    if (!result.shouldRetry || attempt === maxRetries) return null;
-
-    const delay = baseDelay * Math.pow(2, attempt - 1);
-    await new Promise((r) => setTimeout(r, delay));
-  }
-  return null;
 }
 
 /**
@@ -150,7 +88,7 @@ async function prepareVideoForFal(videoUrl: string, maxSeconds: number, jobId: s
  * Process a single pipeline step.
  * Takes the current video path and returns the new video path.
  */
-async function processStep(
+export async function processStep(
   step: MiniAppStep,
   currentVideoPath: string,
   jobId: string,
@@ -194,6 +132,7 @@ async function processStep(
             resolution: (cfg.resolution || veo.resolution) as '720p' | '1080p',
             generate_audio: cfg.generateAudio ?? veo.generateAudio,
           },
+          webhookUrl: getFalWebhookUrl(),
         });
 
         await updateTemplateJob(jobId, {
@@ -258,6 +197,7 @@ async function processStep(
             keep_original_sound: cfg.generateAudio ?? true,
             prompt: cfg.prompt || config.prompt,
           },
+          webhookUrl: getFalWebhookUrl(),
         });
 
         await updateTemplateJob(jobId, {
@@ -332,16 +272,16 @@ async function processStep(
     case 'attach-video': {
       const cfg = step.config as AttachVideoConfig;
 
-      // Resolve clip source: pipeline step output → TikTok URL → uploaded URL
+      // Resolve clip source: pipeline step output → social URL → uploaded URL
       let clipUrl: string | undefined;
       let clipIsLocal = false;
       if (cfg.sourceStepId && stepOutputs.has(cfg.sourceStepId)) {
         clipUrl = stepOutputs.get(cfg.sourceStepId);
         clipIsLocal = true;
       } else if (cfg.tiktokUrl) {
-        const playUrl = await getTikTokDownloadUrl(cfg.tiktokUrl);
-        if (!playUrl) throw new Error('Failed to get TikTok video URL for attach step');
-        clipUrl = playUrl;
+        const rapidApiKey = config.RAPIDAPI_KEY;
+        if (!rapidApiKey) throw new Error('RAPIDAPI_KEY not configured');
+        clipUrl = await getVideoDownloadUrl(cfg.tiktokUrl, rapidApiKey);
       } else {
         clipUrl = cfg.videoUrl;
       }
@@ -389,6 +329,27 @@ export async function processTemplateJob(jobId: string): Promise<void> {
   try {
     await updateTemplateJob(jobId, { status: 'processing', step: 'Starting pipeline...' });
 
+    // Resolve social URL once — download, store in GCS, update DB
+    if (job.tiktokUrl && job.videoSource !== 'upload') {
+      await updateTemplateJob(jobId, { step: 'Fetching video...' });
+      const rapidApiKey = config.RAPIDAPI_KEY;
+      if (!rapidApiKey) throw new Error('RAPIDAPI_KEY not configured');
+      const playUrl = await getVideoDownloadUrl(job.tiktokUrl, rapidApiKey);
+
+      await updateTemplateJob(jobId, { step: 'Downloading and storing video...' });
+      const tempPath = path.join(tempDir, `tpl-source-${jobId}-${Date.now()}.mp4`);
+      try {
+        await downloadFile(playUrl, tempPath);
+        const { url: gcsUrl } = await uploadVideoFromPath(tempPath, `tpl-source-${jobId}.mp4`);
+        await updateTemplateJob(jobId, { videoUrl: gcsUrl, videoSource: 'upload' });
+        job.videoUrl = gcsUrl;
+        job.videoSource = 'upload';
+        console.log(`[Template] Video stored in GCS: ${gcsUrl.slice(0, 80)}...`);
+      } finally {
+        try { fs.unlinkSync(tempPath); } catch {}
+      }
+    }
+
     // Get initial video
     let currentVideoPath: string;
     const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
@@ -398,17 +359,9 @@ export async function processTemplateJob(jobId: string): Promise<void> {
       // No input video needed for image-to-video
       currentVideoPath = '';
     } else if (job.videoSource === 'upload' && job.videoUrl) {
-      await updateTemplateJob(jobId, { step: 'Downloading uploaded video...' });
+      await updateTemplateJob(jobId, { step: 'Downloading video...' });
       currentVideoPath = path.join(tempDir, `tpl-input-${jobId}-${Date.now()}.mp4`);
       await downloadToLocal(job.videoUrl, currentVideoPath);
-      tempFiles.push(currentVideoPath);
-    } else if (job.tiktokUrl) {
-      await updateTemplateJob(jobId, { step: 'Fetching TikTok video...' });
-      const playUrl = await getTikTokDownloadUrl(job.tiktokUrl);
-      if (!playUrl) throw new Error('Failed to get TikTok video URL');
-
-      currentVideoPath = path.join(tempDir, `tpl-input-${jobId}-${Date.now()}.mp4`);
-      await downloadFile(playUrl, currentVideoPath);
       tempFiles.push(currentVideoPath);
     } else {
       throw new Error('No video source provided');
@@ -498,7 +451,7 @@ export async function processTemplateJob(jobId: string): Promise<void> {
   }
 }
 
-function getStepLabel(step: MiniAppStep): string {
+export function getStepLabel(step: MiniAppStep): string {
   switch (step.type) {
     case 'video-generation': {
       const cfg = step.config as VideoGenConfig;
@@ -518,9 +471,9 @@ function getStepLabel(step: MiniAppStep): string {
 }
 
 /**
- * Process a pipeline batch: resolve the TikTok URL ONCE, upload the video
+ * Process a pipeline batch: resolve the social URL ONCE, upload the video
  * to stable storage, then process all child jobs using the stable URL.
- * This avoids hitting RapidAPI N times for the same TikTok video.
+ * This avoids hitting RapidAPI N times for the same video.
  */
 export async function processPipelineBatch(
   childJobIds: string[],
@@ -532,10 +485,11 @@ export async function processPipelineBatch(
 
   try {
     if (!videoUrl && tiktokUrl) {
-      // Resolve TikTok URL ONCE for the entire batch
-      console.log(`[PipelineBatch] Resolving TikTok URL once for ${childJobIds.length} jobs: ${tiktokUrl}`);
-      const playUrl = await getTikTokDownloadUrl(tiktokUrl);
-      if (!playUrl) throw new Error('Failed to get TikTok video URL');
+      // Resolve social URL ONCE for the entire batch
+      console.log(`[PipelineBatch] Resolving video URL once for ${childJobIds.length} jobs: ${tiktokUrl}`);
+      const rapidApiKey = config.RAPIDAPI_KEY;
+      if (!rapidApiKey) throw new Error('RAPIDAPI_KEY not configured');
+      const playUrl = await getVideoDownloadUrl(tiktokUrl, rapidApiKey);
 
       // Download video to temp file
       sharedVideoPath = path.join(tempDir, `pipeline-batch-input-${Date.now()}.mp4`);

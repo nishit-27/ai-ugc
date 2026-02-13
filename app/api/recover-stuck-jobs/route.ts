@@ -13,6 +13,8 @@ import {
 import { config } from '@/lib/config';
 import { uploadVideoFromPath } from '@/lib/storage';
 import { downloadFile } from '@/lib/serverUtils';
+import { processStep, getStepLabel } from '@/lib/processTemplateJob';
+import type { MiniAppStep } from '@/types';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -20,7 +22,7 @@ import os from 'os';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120; // 2 min — recovery downloads + re-uploads videos
 
-const STUCK_THRESHOLD_MINUTES = 0.5; // 30 seconds
+const STUCK_THRESHOLD_MINUTES = 5; // 5 minutes (webhook handles fast path)
 
 function getTempDir(): string {
   const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
@@ -145,6 +147,7 @@ async function recoverTemplateJob(job: {
   totalSteps: number;
   pipelineBatchId?: string;
   stepResults?: { stepId: string; type: string; label: string; outputUrl: string }[];
+  pipeline?: MiniAppStep[];
 }): Promise<{ id: string; recovered: boolean; status: string }> {
   if (!job.falRequestId || !job.falEndpoint) {
     await updateTemplateJob(job.id, {
@@ -182,48 +185,81 @@ async function recoverTemplateJob(job: {
         return { id: job.id, recovered: false, status: 'no_video_url' };
       }
 
-      // Download FAL result and upload to GCS
+      // Download FAL result and continue pipeline
       const tempDir = getTempDir();
-      const tempPath = path.join(tempDir, `recover-tpl-${job.id}.mp4`);
+      const tempFiles: string[] = [];
+      let currentVideoPath = path.join(tempDir, `recover-tpl-${job.id}.mp4`);
       try {
-        await downloadFile(videoData.url, tempPath);
-        const { url: outputUrl } = await uploadVideoFromPath(tempPath, `template-${job.id}-recovered.mp4`);
+        await downloadFile(videoData.url, currentVideoPath);
+        tempFiles.push(currentVideoPath);
 
-        // Build step results
+        const { url: recoveredUrl } = await uploadVideoFromPath(currentVideoPath, `template-${job.id}-recovered.mp4`);
+
         const stepResults = [...(job.stepResults || [])];
         stepResults.push({
           stepId: `recovered-step-${job.currentStep}`,
           type: 'video-generation',
           label: 'Video Generation (recovered)',
-          outputUrl,
+          outputUrl: recoveredUrl,
         });
 
-        // If this was the last step (or only step), mark as completed
-        const isLastStep = job.currentStep >= job.totalSteps - 1;
-        if (isLastStep) {
-          await updateTemplateJob(job.id, {
-            status: 'completed',
-            step: 'Done! (recovered)',
-            outputUrl,
-            stepResults,
-            completedAt: new Date().toISOString(),
-          });
-          if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
-          return { id: job.id, recovered: true, status: 'completed' };
-        } else {
-          // There are more steps — we can't easily resume the pipeline
-          // Mark the FAL step as done and mark job as failed with info
-          await updateTemplateJob(job.id, {
-            status: 'failed',
-            step: 'Failed',
-            stepResults,
-            error: `FAL completed but Lambda timed out. Video saved but remaining pipeline steps (${job.currentStep + 1}/${job.totalSteps}) could not be processed. Please retry the job.`,
-          });
-          if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
-          return { id: job.id, recovered: false, status: 'partial_recovery' };
+        // Persist recovered step immediately so it survives if we timeout on a later FAL step
+        await updateTemplateJob(job.id, {
+          currentStep: job.currentStep + 1,
+          step: `Step ${job.currentStep + 1}/${job.totalSteps}: Video Generation — done (recovered)`,
+          stepResults,
+        });
+
+        // Continue processing remaining pipeline steps (text overlay, audio, etc.)
+        const enabledSteps = (job.pipeline || []).filter((s: MiniAppStep) => s.enabled);
+        const remainingSteps = enabledSteps.slice(job.currentStep + 1);
+
+        if (remainingSteps.length > 0) {
+          console.log(`[Recovery] Continuing pipeline for ${job.id}: ${remainingSteps.length} steps remaining`);
+          const stepOutputs = new Map<string, string>();
+
+          for (let i = 0; i < remainingSteps.length; i++) {
+            const step = remainingSteps[i];
+            const globalIdx = job.currentStep + 1 + i;
+            const stepLabel = getStepLabel(step);
+
+            await updateTemplateJob(job.id, {
+              currentStep: globalIdx,
+              step: `Step ${globalIdx + 1}/${enabledSteps.length}: ${stepLabel} (recovering)`,
+            });
+
+            const newVideoPath = await processStep(step, currentVideoPath, job.id, globalIdx, stepOutputs);
+            stepOutputs.set(step.id, newVideoPath);
+            tempFiles.push(newVideoPath);
+
+            const { url: stepUrl } = await uploadVideoFromPath(newVideoPath, `template-${job.id}-step-${globalIdx}.mp4`);
+            stepResults.push({ stepId: step.id, type: step.type, label: stepLabel, outputUrl: stepUrl });
+
+            // Persist after each step so progress survives if a later FAL step times out
+            await updateTemplateJob(job.id, {
+              currentStep: globalIdx + 1,
+              step: `Step ${globalIdx + 1}/${enabledSteps.length}: ${stepLabel} — done (recovered)`,
+              stepResults,
+            });
+
+            currentVideoPath = newVideoPath;
+          }
         }
+
+        const finalUrl = stepResults[stepResults.length - 1].outputUrl;
+        await updateTemplateJob(job.id, {
+          status: 'completed',
+          step: 'Done! (recovered)',
+          outputUrl: finalUrl,
+          stepResults,
+          completedAt: new Date().toISOString(),
+        });
+        if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
+        return { id: job.id, recovered: true, status: 'completed' };
       } finally {
-        try { fs.unlinkSync(tempPath); } catch {}
+        for (const f of tempFiles) {
+          try { fs.unlinkSync(f); } catch {}
+        }
       }
     } else if (falStatus === 'IN_QUEUE' || falStatus === 'IN_PROGRESS') {
       await updateTemplateJob(job.id, {

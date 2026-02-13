@@ -62,7 +62,7 @@ async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
 
 export async function POST(req: Request) {
   try {
-    const { modelImageUrl, frameImageUrl } = await req.json();
+    const { modelImageUrl, frameImageUrl, firstFrameModel = 'nano-banana' } = await req.json();
 
     if (!modelImageUrl || !frameImageUrl) {
       return NextResponse.json(
@@ -128,44 +128,79 @@ export async function POST(req: Request) {
       fal.storage.upload(new Blob([new Uint8Array(frameBuf)], { type: frameType.contentType })),
     ]);
 
-    // image_urls: [model/face first, scene/frame second]
-    const imageUrls = [falModelUrl, falFrameUrl];
-
     console.log('[FirstFrame] FAL URLs — model (face):', falModelUrl.slice(0, 60), '| scene:', falFrameUrl.slice(0, 60));
 
-    console.log('[FirstFrame] Calling nano-banana-pro/edit (2 variants)...');
+    // ── Branch: call the selected model ──
+    let falImageUrlA: string;
+    let falImageUrlB: string;
 
-    const [resultA, resultB] = await Promise.all([
-      fal.subscribe('fal-ai/nano-banana-pro/edit', {
+    if (firstFrameModel === 'kling-v3') {
+      // Kling V3: single call with num_images: 2
+      const KLING_PROMPT =
+        'Replace the person in this image with the face from the reference portrait. ' +
+        'Keep the exact same pose, camera angle, clothing, lighting, and background. ' +
+        'The output person must be identical to the portrait: same face, gender, age, ethnicity, skin tone, hair. ' +
+        'Photorealistic, natural lighting, high quality.';
+
+      console.log('[FirstFrame] Calling kling-image/v3/image-to-image (2 variants)...');
+
+      const klingResult = await fal.subscribe('fal-ai/kling-image/v3/image-to-image', {
         input: {
-          image_urls: imageUrls,
-          prompt: PROMPT_A,
-          limit_generations: true,
+          image_url: falFrameUrl,
+          elements: [{ frontal_image_url: falModelUrl }],
+          prompt: KLING_PROMPT,
+          num_images: 2,
         },
         logs: true,
-      }),
-      fal.subscribe('fal-ai/nano-banana-pro/edit', {
-        input: {
-          image_urls: imageUrls,
-          prompt: PROMPT_B,
-          limit_generations: true,
-        },
-        logs: true,
-      }),
-    ]);
-
-    console.log('[FirstFrame] nano-banana-pro done, downloading results...');
-
-    // Extract image URLs from results
-    const falImageUrlA = resultA.data?.images?.[0]?.url;
-    const falImageUrlB = resultB.data?.images?.[0]?.url;
-
-    if (!falImageUrlA || !falImageUrlB) {
-      console.error('[FirstFrame] Missing result URLs:', {
-        A: JSON.stringify(resultA.data).slice(0, 200),
-        B: JSON.stringify(resultB.data).slice(0, 200),
       });
-      throw new Error('No image URL returned from Nano Banana Pro');
+
+      console.log('[FirstFrame] kling-v3 done, extracting results...');
+
+      const images = klingResult.data?.images;
+      falImageUrlA = images?.[0]?.url;
+      falImageUrlB = images?.[1]?.url;
+
+      if (!falImageUrlA || !falImageUrlB) {
+        console.error('[FirstFrame] Missing Kling result URLs:', JSON.stringify(klingResult.data).slice(0, 300));
+        throw new Error('No image URLs returned from Kling V3');
+      }
+    } else {
+      // Nano Banana Pro: two separate calls with different prompts
+      const imageUrls = [falModelUrl, falFrameUrl];
+
+      console.log('[FirstFrame] Calling nano-banana-pro/edit (2 variants)...');
+
+      const [resultA, resultB] = await Promise.all([
+        fal.subscribe('fal-ai/nano-banana-pro/edit', {
+          input: {
+            image_urls: imageUrls,
+            prompt: PROMPT_A,
+            limit_generations: true,
+          },
+          logs: true,
+        }),
+        fal.subscribe('fal-ai/nano-banana-pro/edit', {
+          input: {
+            image_urls: imageUrls,
+            prompt: PROMPT_B,
+            limit_generations: true,
+          },
+          logs: true,
+        }),
+      ]);
+
+      console.log('[FirstFrame] nano-banana-pro done, extracting results...');
+
+      falImageUrlA = resultA.data?.images?.[0]?.url;
+      falImageUrlB = resultB.data?.images?.[0]?.url;
+
+      if (!falImageUrlA || !falImageUrlB) {
+        console.error('[FirstFrame] Missing result URLs:', {
+          A: JSON.stringify(resultA.data).slice(0, 200),
+          B: JSON.stringify(resultB.data).slice(0, 200),
+        });
+        throw new Error('No image URL returned from Nano Banana Pro');
+      }
     }
 
     console.log('[FirstFrame] Result URLs:', { A: falImageUrlA.slice(0, 60), B: falImageUrlB.slice(0, 60) });

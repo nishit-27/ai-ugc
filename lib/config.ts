@@ -1,4 +1,17 @@
+function getAppUrl(): string | undefined {
+  if (process.env.APP_URL) return process.env.APP_URL;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return undefined;
+}
+
+export function getFalWebhookUrl(): string | undefined {
+  const appUrl = getAppUrl();
+  if (!appUrl) return undefined;
+  return `${appUrl}/api/fal-webhook`;
+}
+
 export const config = {
+  APP_URL: getAppUrl(),
   FAL_KEY: process.env.FAL_KEY,
   RAPIDAPI_KEY: process.env.RAPIDAPI_KEY,
   LATE_API_KEY: process.env.LATE_API_KEY,

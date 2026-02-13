@@ -13,6 +13,7 @@ import {
   downloadFile,
 } from './serverUtils';
 import { rapidApiLimiter } from './rateLimiter';
+import { getFalWebhookUrl } from './config';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { uploadBuffer } = require('./upload-via-presigned.cjs');
@@ -477,25 +478,36 @@ export async function processJob(
   if (!job) return;
 
   try {
-    let falVideoUrl: string;
-
-    // Check if using uploaded video or TikTok URL
-    if (job.videoSource === 'upload' && job.videoUrl) {
-      // Handle uploaded video
-      await updateJob(jobId, { step: 'Preparing uploaded video...' });
-      console.log(`[Upload] Processing uploaded video: ${job.videoUrl.slice(0, 80)}...`);
-      falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId);
-      console.log(`[FAL] Uploaded video ready: ${falVideoUrl}`);
-    } else if (job.tiktokUrl) {
-      // Handle TikTok/Instagram URL (auto-detect)
+    // Resolve social URL once — download, store in GCS, update DB
+    // All subsequent processing (and recovery/webhook) uses the stable GCS URL
+    if (job.tiktokUrl && job.videoSource !== 'upload') {
       await updateJob(jobId, { step: 'Fetching video...' });
-
       const playUrl = await getVideoDownloadUrl(job.tiktokUrl, rapidApiKey);
       console.log(`[Video] Got play URL (${playUrl.length} chars)`);
 
-      await updateJob(jobId, { step: 'Downloading and preparing video...' });
-      falVideoUrl = await prepareVideoForFal(playUrl, job.maxSeconds || 10, jobId);
-      console.log(`[FAL] Video uploaded: ${falVideoUrl}`);
+      await updateJob(jobId, { step: 'Downloading and storing video...' });
+      const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+      const tempPath = path.join(tempDir, `source-${jobId}-${Date.now()}.mp4`);
+      try {
+        await downloadFile(playUrl, tempPath);
+        const { url: gcsUrl } = await uploadVideoFromPath(tempPath, `source-${jobId}.mp4`);
+        await updateJob(jobId, { videoUrl: gcsUrl, videoSource: 'upload' });
+        job.videoUrl = gcsUrl;
+        job.videoSource = 'upload';
+        console.log(`[Video] Stored in GCS: ${gcsUrl.slice(0, 80)}...`);
+      } finally {
+        try { fs.unlinkSync(tempPath); } catch {}
+      }
+    }
+
+    let falVideoUrl: string;
+
+    if (job.videoSource === 'upload' && job.videoUrl) {
+      await updateJob(jobId, { step: 'Preparing video for AI...' });
+      console.log(`[Upload] Processing video: ${job.videoUrl.slice(0, 80)}...`);
+      falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId);
+      console.log(`[FAL] Video ready: ${falVideoUrl}`);
     } else {
       throw new Error('No video source provided. Please provide a video URL or upload a video.');
     }
@@ -519,6 +531,7 @@ export async function processJob(
         keep_original_sound: true,
         prompt: job.customPrompt || prompt,
       },
+      webhookUrl: getFalWebhookUrl(),
     });
 
     // Save request_id to DB before waiting — critical for recovery
@@ -618,25 +631,35 @@ export async function processJobWithImage(
   if (!job) return;
 
   try {
-    let falVideoUrl: string;
-
-    // Check if using uploaded video or TikTok URL
-    if (job.videoSource === 'upload' && job.videoUrl) {
-      // Handle uploaded video
-      await updateJob(jobId, { step: 'Preparing uploaded video...' });
-      console.log(`[Upload] Processing uploaded video: ${job.videoUrl.slice(0, 80)}...`);
-      falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId);
-      console.log(`[FAL] Uploaded video ready: ${falVideoUrl}`);
-    } else if (job.tiktokUrl) {
-      // Handle TikTok/Instagram URL (auto-detect)
+    // Resolve social URL once — download, store in GCS, update DB
+    if (job.tiktokUrl && job.videoSource !== 'upload') {
       await updateJob(jobId, { step: 'Fetching video...' });
-
       const playUrl = await getVideoDownloadUrl(job.tiktokUrl, rapidApiKey);
       console.log(`[Video] Got play URL (${playUrl.length} chars)`);
 
-      await updateJob(jobId, { step: 'Downloading and preparing video...' });
-      falVideoUrl = await prepareVideoForFal(playUrl, job.maxSeconds || 10, jobId);
-      console.log(`[FAL] Video uploaded: ${falVideoUrl}`);
+      await updateJob(jobId, { step: 'Downloading and storing video...' });
+      const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+      const tempPath = path.join(tempDir, `source-${jobId}-${Date.now()}.mp4`);
+      try {
+        await downloadFile(playUrl, tempPath);
+        const { url: gcsUrl } = await uploadVideoFromPath(tempPath, `source-${jobId}.mp4`);
+        await updateJob(jobId, { videoUrl: gcsUrl, videoSource: 'upload' });
+        job.videoUrl = gcsUrl;
+        job.videoSource = 'upload';
+        console.log(`[Video] Stored in GCS: ${gcsUrl.slice(0, 80)}...`);
+      } finally {
+        try { fs.unlinkSync(tempPath); } catch {}
+      }
+    }
+
+    let falVideoUrl: string;
+
+    if (job.videoSource === 'upload' && job.videoUrl) {
+      await updateJob(jobId, { step: 'Preparing video for AI...' });
+      console.log(`[Upload] Processing video: ${job.videoUrl.slice(0, 80)}...`);
+      falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId);
+      console.log(`[FAL] Video ready: ${falVideoUrl}`);
     } else {
       throw new Error('No video source provided. Please provide a video URL or upload a video.');
     }
@@ -658,6 +681,7 @@ export async function processJobWithImage(
         keep_original_sound: true,
         prompt: job.customPrompt || prompt,
       },
+      webhookUrl: getFalWebhookUrl(),
     });
 
     await updateJob(jobId, {
