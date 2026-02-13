@@ -70,6 +70,7 @@ export default function CreatePostModal({
     setProfileSearchQuery('');
     setProfileMultiDropdownOpen(false);
     setPostTimezone('Asia/Kolkata');
+    setIsPosting(false);
   }, [open, preselectedVideoUrl]);
 
   const uploadPostVideoFile = async (file: File) => {
@@ -178,10 +179,12 @@ export default function CreatePostModal({
           : '';
         showToast(detailMsg || errorMsg, 'error');
         console.error('[Submit Post] Error:', JSON.stringify(data, null, 2));
+        try { sessionStorage.removeItem('ai-ugc-new-post'); } catch {}
       }
     } catch (err) {
       showToast('Error: ' + (err as Error).message, 'error');
       console.error('[Submit Post] Exception:', err);
+      try { sessionStorage.removeItem('ai-ugc-new-post'); } catch {}
     } finally {
       setIsPosting(false);
     }

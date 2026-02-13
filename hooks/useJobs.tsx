@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, createContext, useContext, type ReactNode } from 'react';
 import type { Job } from '@/types';
+import { useStuckJobRecovery } from './useStuckJobRecovery';
 
 const ACTIVE_POLL_INTERVAL = 1_500;  // 1.5s when jobs are running
 const IDLE_POLL_INTERVAL   = 30_000; // 30s baseline
@@ -29,6 +30,12 @@ function useJobsInternal() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const loadJobsRef = useRef<() => Promise<void>>(null);
+
+  // Auto-recover stuck jobs (processing > threshold)
+  const { checkAndRecover } = useStuckJobRecovery(() => {
+    loadJobsRef.current?.();
+  });
 
   const loadJobs = useCallback(async () => {
     abortRef.current?.abort();
@@ -52,11 +59,17 @@ function useJobsInternal() {
         setJobs(arr);
         setCachedJobs(arr);
       }
+
+      // Check for stuck jobs and trigger recovery if needed
+      checkAndRecover(arr);
     } catch {
       clearTimeout(timeout);
       // Silently ignore — cached data stays visible
     }
-  }, []);
+  }, [checkAndRecover]);
+
+  // Keep ref current for recovery callback
+  loadJobsRef.current = loadJobs;
 
   // Adaptive polling: fast when active, slow when idle
   const scheduleNext = useCallback(() => {

@@ -38,17 +38,17 @@ export default function PostList({
   const [isDeletingPost, setIsDeletingPost] = useState<string | null>(null);
   const [publishingPost, setPublishingPost] = useState<{ caption?: string; platforms?: string[] } | null>(null);
 
-  // Check for a just-submitted post
+  // Check for a just-submitted post (on mount and when posts refresh)
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem('ai-ugc-new-post');
-      if (raw) {
+      if (raw && !publishingPost) {
         setPublishingPost(JSON.parse(raw));
       }
     } catch {}
-  }, []);
+  }, [posts, publishingPost]);
 
-  // Dismiss the placeholder once a real active post appears in the list
+  // Dismiss the placeholder once a real active post appears in the list, or after timeout
   useEffect(() => {
     if (!publishingPost) return;
     const hasNewActive = posts.some((p) => {
@@ -58,7 +58,14 @@ export default function PostList({
     if (hasNewActive) {
       setPublishingPost(null);
       try { sessionStorage.removeItem('ai-ugc-new-post'); } catch {}
+      return;
     }
+    // Auto-dismiss after 30s in case the API failed silently
+    const timer = setTimeout(() => {
+      setPublishingPost(null);
+      try { sessionStorage.removeItem('ai-ugc-new-post'); } catch {}
+    }, 30000);
+    return () => clearTimeout(timer);
   }, [posts, publishingPost]);
 
   const livePost = selectedPost ? posts.find((p) => p._id === selectedPost._id) ?? selectedPost : null;
