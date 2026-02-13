@@ -74,8 +74,9 @@ export function extractRandomFrames(videoPath: string, count = 10): Array<{ time
   const minTs = Math.min(margin, duration * 0.1)
   const maxTs = Math.max(duration - margin, duration * 0.9)
 
-  const timestamps: number[] = []
-  for (let i = 0; i < count; i++) {
+  // Always include the very first frame (timestamp 0), then pick (count-1) random ones
+  const timestamps: number[] = [0]
+  for (let i = 1; i < count; i++) {
     timestamps.push(minTs + Math.random() * (maxTs - minTs))
   }
   timestamps.sort((a, b) => a - b)
