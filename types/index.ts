@@ -214,6 +214,17 @@ export type MusicTrack = {
   createdAt: string;
 };
 
+export type GeneratedImage = {
+  id: string;
+  gcsUrl: string;
+  signedUrl?: string;
+  filename: string;
+  modelImageUrl?: string;
+  sceneImageUrl?: string;
+  promptVariant?: string;
+  createdAt: string;
+};
+
 export type TemplatePreset = {
   id: string;
   name: string;

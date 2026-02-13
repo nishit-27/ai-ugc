@@ -29,6 +29,14 @@ const VEO_ASPECTS = [
 
 const CONCURRENCY_LIMIT = 3;
 
+// ── Module-level cache: survives unmount/remount when switching pipeline steps ──
+type BatchCachedStepState = {
+  extractedFrames: ExtractedFrame[];
+  firstFrameResults: [number, FirstFrameOption[]][];
+  imageSource: ImageSource;
+};
+const _batchStepCache = new Map<string, BatchCachedStepState>();
+
 function Dropdown({
   icon: Icon,
   label,
@@ -88,28 +96,58 @@ function Dropdown({
 }
 
 export default function BatchVideoGenConfig({
-  config, onChange, sourceDuration, sourceVideoUrl,
+  config, onChange, sourceDuration, sourceVideoUrl, stepId,
 }: {
   config: BVGC;
   onChange: (c: BVGC) => void;
   sourceDuration?: number;
   sourceVideoUrl?: string;
+  stepId?: string;
 }) {
   const { models, modelImages, imagesLoading, loadModelImages } = useModels();
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  // Restore from module-level cache on mount
+  const bCached = stepId ? _batchStepCache.get(stepId) : undefined;
+
   const [imageSource, setImageSource] = useState<ImageSource>(
-    () => (config.images.length > 0 && config.images.some(i => i.imageUrl && !i.imageId)) ? 'upload' : 'model'
+    () => bCached?.imageSource ?? ((config.images.length > 0 && config.images.some(i => i.imageUrl && !i.imageId)) ? 'upload' : 'model')
   );
 
   // First Frame state
-  const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
+  const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>(
+    () => bCached?.extractedFrames ?? []
+  );
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
-  const [firstFrameResults, setFirstFrameResults] = useState<Map<number, FirstFrameOption[]>>(new Map());
+  const [firstFrameResults, setFirstFrameResults] = useState<Map<number, FirstFrameOption[]>>(
+    () => new Map(bCached?.firstFrameResults ?? [])
+  );
   const [generatingIndices, setGeneratingIndices] = useState<Set<number>>(new Set());
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
   const [generateAllProgress, setGenerateAllProgress] = useState({ done: 0, total: 0 });
+
+  // Refs that track latest values for the unmount save
+  const extractedFramesRef = useRef(extractedFrames);
+  extractedFramesRef.current = extractedFrames;
+  const firstFrameResultsRef = useRef(firstFrameResults);
+  firstFrameResultsRef.current = firstFrameResults;
+  const imageSourceRef = useRef(imageSource);
+  imageSourceRef.current = imageSource;
+
+  // Persist transient UI state to module-level cache on unmount
+  useEffect(() => {
+    return () => {
+      if (!stepId) return;
+      _batchStepCache.set(stepId, {
+        extractedFrames: extractedFramesRef.current,
+        firstFrameResults: Array.from(firstFrameResultsRef.current.entries()),
+        imageSource: imageSourceRef.current,
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepId]);
 
   useEffect(() => {
     if (config.modelId) loadModelImages(config.modelId);

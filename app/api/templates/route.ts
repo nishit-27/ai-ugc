@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createTemplateJob, getAllTemplateJobs, createPipelineBatch, updatePipelineBatch, initDatabase } from '@/lib/db';
-import { processTemplateJob } from '@/lib/processTemplateJob';
+import { processTemplateJob, processPipelineBatch } from '@/lib/processTemplateJob';
 import type { MiniAppStep, BatchVideoGenConfig, VideoGenConfig } from '@/types';
 
 export const dynamic = 'force-dynamic';
@@ -124,16 +124,15 @@ export async function POST(request: NextRequest) {
       // Update batch status to processing
       await updatePipelineBatch(batch.id, { status: 'processing' });
 
-      // Schedule child jobs via after() so Vercel keeps the Lambda alive
-      for (const job of childJobs) {
-        if (job) {
-          const childId = job.id;
-          after(async () => {
-            try { await processTemplateJob(childId); }
-            catch (err) { console.error(`processTemplateJob error (batch child ${childId}):`, err); }
-          });
+      // Schedule batch processing: resolve TikTok URL ONCE, then process all child jobs
+      const childJobIds = childJobs.filter(Boolean).map((j) => j!.id);
+      after(async () => {
+        try {
+          await processPipelineBatch(childJobIds, tiktokUrl || null, videoUrl || null);
+        } catch (err) {
+          console.error(`processPipelineBatch error for batch ${batch.id}:`, err);
         }
-      }
+      });
 
       return NextResponse.json({
         ...batch,

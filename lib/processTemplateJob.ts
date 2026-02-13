@@ -182,7 +182,10 @@ async function processStep(
       if (cfg.mode === 'subtle-animation') {
         // Veo 3.1 image-to-video
         const veo = config.veoSettings;
-        const result = await fal.subscribe('fal-ai/veo3.1/image-to-video', {
+        const falEndpoint = 'fal-ai/veo3.1/image-to-video';
+
+        // Submit to queue and store request_id for recovery
+        const { request_id } = await fal.queue.submit(falEndpoint, {
           input: {
             image_url: falImageUrl,
             prompt: cfg.prompt || config.veoPrompt,
@@ -191,13 +194,17 @@ async function processStep(
             resolution: (cfg.resolution || veo.resolution) as '720p' | '1080p',
             generate_audio: cfg.generateAudio ?? veo.generateAudio,
           },
-          logs: true,
-          onQueueUpdate: (update) => {
-            if (update.status === 'IN_PROGRESS') {
-              update.logs?.map((log) => log.message).forEach(console.log);
-            }
-          },
         });
+
+        await updateTemplateJob(jobId, {
+          step: `Step ${stepIndex + 1}: Veo 3.1 — generating...`,
+          falRequestId: request_id,
+          falEndpoint,
+        });
+
+        console.log(`[FAL] Template ${jobId} step ${stepIndex}: submitted Veo 3.1, request_id=${request_id}`);
+
+        const result = await fal.queue.result(falEndpoint, { requestId: request_id });
 
         const videoData = (result.data as { video?: { url?: string } })?.video ?? (result as { video?: { url?: string } }).video;
         if (!videoData?.url) throw new Error('No video URL from Veo 3.1 image-to-video');
@@ -234,7 +241,10 @@ async function processStep(
           if (trimmedPath) try { fs.unlinkSync(trimmedPath); } catch {}
         }
 
-        const result = await fal.subscribe('fal-ai/kling-video/v2.6/standard/motion-control', {
+        const falEndpoint = 'fal-ai/kling-video/v2.6/standard/motion-control';
+
+        // Submit to queue and store request_id for recovery
+        const { request_id } = await fal.queue.submit(falEndpoint, {
           input: {
             image_url: falImageUrl,
             video_url: falVideoUrl,
@@ -242,21 +252,17 @@ async function processStep(
             keep_original_sound: cfg.generateAudio ?? true,
             prompt: cfg.prompt || config.prompt,
           },
-          logs: true,
-          onQueueUpdate: async (update) => {
-            if (update.status === 'IN_QUEUE') {
-              const pos = (update as { queue_position?: number }).queue_position;
-              await updateTemplateJob(jobId, {
-                step: `Step ${stepIndex + 1}: Motion Control — queued${pos != null ? ` (position ${pos})` : ''}`,
-              }).catch(() => {});
-            } else if (update.status === 'IN_PROGRESS') {
-              await updateTemplateJob(jobId, {
-                step: `Step ${stepIndex + 1}: Motion Control — processing...`,
-              }).catch(() => {});
-              update.logs?.map((log) => log.message).forEach(console.log);
-            }
-          },
         });
+
+        await updateTemplateJob(jobId, {
+          step: `Step ${stepIndex + 1}: Motion Control — processing...`,
+          falRequestId: request_id,
+          falEndpoint,
+        });
+
+        console.log(`[FAL] Template ${jobId} step ${stepIndex}: submitted Motion Control, request_id=${request_id}`);
+
+        const result = await fal.queue.result(falEndpoint, { requestId: request_id });
 
         const videoData = (result.data as { video?: { url?: string } })?.video ?? (result as { video?: { url?: string } }).video;
         if (!videoData?.url) throw new Error('No video URL from motion-control');
@@ -496,5 +502,58 @@ function getStepLabel(step: MiniAppStep): string {
       return 'Attaching video clip';
     default:
       return 'Processing';
+  }
+}
+
+/**
+ * Process a pipeline batch: resolve the TikTok URL ONCE, upload the video
+ * to stable storage, then process all child jobs using the stable URL.
+ * This avoids hitting RapidAPI N times for the same TikTok video.
+ */
+export async function processPipelineBatch(
+  childJobIds: string[],
+  tiktokUrl: string | null,
+  videoUrl: string | null,
+): Promise<void> {
+  const tempDir = getTempDir();
+  let sharedVideoPath: string | null = null;
+
+  try {
+    if (!videoUrl && tiktokUrl) {
+      // Resolve TikTok URL ONCE for the entire batch
+      console.log(`[PipelineBatch] Resolving TikTok URL once for ${childJobIds.length} jobs: ${tiktokUrl}`);
+      const playUrl = await getTikTokDownloadUrl(tiktokUrl);
+      if (!playUrl) throw new Error('Failed to get TikTok video URL');
+
+      // Download video to temp file
+      sharedVideoPath = path.join(tempDir, `pipeline-batch-input-${Date.now()}.mp4`);
+      await downloadFile(playUrl, sharedVideoPath);
+
+      // Upload to GCS for stable, long-lived access
+      const { url: stableUrl } = await uploadVideoFromPath(
+        sharedVideoPath,
+        `pipeline-batch-input-${Date.now()}.mp4`
+      );
+      console.log(`[PipelineBatch] Video uploaded to stable storage: ${stableUrl.slice(0, 80)}...`);
+
+      // Update all child jobs to use the stable URL instead of the TikTok URL
+      for (const jobId of childJobIds) {
+        await updateTemplateJob(jobId, { videoUrl: stableUrl, videoSource: 'upload' });
+      }
+    }
+
+    // Process all child jobs in parallel
+    // Each job now uses the stable GCS URL instead of re-resolving via RapidAPI
+    await Promise.allSettled(
+      childJobIds.map((id) =>
+        processTemplateJob(id).catch((err) => {
+          console.error(`[PipelineBatch] Child job ${id} failed:`, err);
+        })
+      )
+    );
+  } finally {
+    if (sharedVideoPath) {
+      try { fs.unlinkSync(sharedVideoPath); } catch {}
+    }
   }
 }

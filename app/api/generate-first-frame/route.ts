@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { fal } from '@fal-ai/client';
 import { config } from '@/lib/config';
-import { uploadImage, getSignedUrlFromPublicUrl } from '@/lib/storage.js';
+import { uploadImage, getSignedUrlFromPublicUrl, downloadToBuffer } from '@/lib/storage.js';
+import { initDatabase, createGeneratedImage } from '@/lib/db';
 
 export const maxDuration = 120;
 
@@ -36,6 +37,22 @@ function detectImageType(buf: Buffer): { contentType: string; ext: string } {
   return { contentType: 'image/jpeg', ext: 'jpg' };
 }
 
+// Fetch with retry for flaky connections
+async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.arrayBuffer();
+    } catch (err) {
+      console.warn(`[FirstFrame] fetch attempt ${i + 1}/${retries} failed:`, (err as Error).message);
+      if (i === retries - 1) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+  throw new Error('fetch failed after retries');
+}
+
 export async function POST(req: Request) {
   try {
     const { modelImageUrl, frameImageUrl } = await req.json();
@@ -56,13 +73,13 @@ export async function POST(req: Request) {
 
     fal.config({ credentials: config.FAL_KEY });
 
-    // Sign GCS URLs so we can fetch them (raw GCS public URLs return 403)
-    const isGcsUrl = (url: string) =>
-      url.includes('storage.googleapis.com') || url.includes('storage.cloud.google.com') || url.startsWith('gs://');
+    console.log('[FirstFrame] Input URLs:', {
+      modelImageUrl: modelImageUrl.slice(0, 80),
+      frameImageUrl: frameImageUrl.slice(0, 80),
+    });
 
-    // If a URL is already signed (has query params), strip them to get the base GCS URL for re-signing
+    // Strip signed params to get base GCS URL for SDK download
     const stripSignedParams = (url: string) => {
-      if (url.startsWith('gs://')) return url;
       try {
         const u = new URL(url);
         if (u.searchParams.has('X-Goog-Signature') || u.searchParams.has('X-Goog-Date')) {
@@ -72,46 +89,44 @@ export async function POST(req: Request) {
       return url;
     };
 
-    const signUrl = async (url: string) => {
-      if (!isGcsUrl(url)) return url;
+    const isGcsUrl = (url: string) =>
+      url.includes('storage.googleapis.com') || url.includes('storage.cloud.google.com');
+
+    const downloadImage = async (label: string, url: string): Promise<Buffer> => {
       const baseUrl = stripSignedParams(url);
-      return getSignedUrlFromPublicUrl(baseUrl);
+      if (isGcsUrl(baseUrl)) {
+        console.log(`[FirstFrame] Downloading ${label} via GCS SDK: ${baseUrl.slice(0, 80)}`);
+        return Buffer.from(await downloadToBuffer(baseUrl));
+      }
+      console.log(`[FirstFrame] Downloading ${label} via fetch: ${url.slice(0, 80)}`);
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`Failed to fetch ${label}: ${r.status}`);
+      return Buffer.from(await r.arrayBuffer());
     };
 
-    console.log('First frame request URLs:', { modelImageUrl, frameImageUrl });
-
-    const [fetchableFrameUrl, fetchableModelUrl] = await Promise.all([
-      signUrl(frameImageUrl),
-      signUrl(modelImageUrl),
+    // Download: model = face reference, frame = scene/background
+    const [modelBuf, frameBuf] = await Promise.all([
+      downloadImage('MODEL (face)', modelImageUrl),
+      downloadImage('SCENE (frame)', frameImageUrl),
     ]);
 
-    // Upload both images to FAL-accessible presigned URLs
-    const { uploadBuffer } = require('@/lib/upload-via-presigned.cjs');
+    console.log(`[FirstFrame] Downloaded — model: ${modelBuf.length} bytes, frame: ${frameBuf.length} bytes`);
 
-    const [frameBuffer, modelBuffer] = await Promise.all([
-      fetch(fetchableFrameUrl).then((r) => {
-        if (!r.ok) throw new Error(`Failed to fetch frame image: ${r.status}`);
-        return r.arrayBuffer();
-      }),
-      fetch(fetchableModelUrl).then((r) => {
-        if (!r.ok) throw new Error(`Failed to fetch model image: ${r.status}`);
-        return r.arrayBuffer();
-      }),
-    ]);
-
-    const frameBuf = Buffer.from(frameBuffer);
-    const modelBuf = Buffer.from(modelBuffer);
-    const frameType = detectImageType(frameBuf);
     const modelType = detectImageType(modelBuf);
+    const frameType = detectImageType(frameBuf);
 
-    const [falFrameUrl, falModelUrl] = await Promise.all([
-      uploadBuffer(frameBuf, frameType.contentType, `first-frame-scene-${Date.now()}.${frameType.ext}`),
-      uploadBuffer(modelBuf, modelType.contentType, `first-frame-face-${Date.now()}.${modelType.ext}`),
+    // Upload directly to FAL's CDN
+    const [falModelUrl, falFrameUrl] = await Promise.all([
+      fal.storage.upload(new Blob([new Uint8Array(modelBuf)], { type: modelType.contentType })),
+      fal.storage.upload(new Blob([new Uint8Array(frameBuf)], { type: frameType.contentType })),
     ]);
 
-    // Make 2 parallel calls with slightly different prompts
-    // image_urls: [model (the person/face), frame (the scene/background/pose)]
+    // image_urls: [model/face first, scene/frame second]
     const imageUrls = [falModelUrl, falFrameUrl];
+
+    console.log('[FirstFrame] FAL URLs — model (face):', falModelUrl.slice(0, 60), '| scene:', falFrameUrl.slice(0, 60));
+
+    console.log('[FirstFrame] Calling nano-banana-pro/edit (2 variants)...');
 
     const [resultA, resultB] = await Promise.all([
       fal.subscribe('fal-ai/nano-banana-pro/edit', {
@@ -120,11 +135,6 @@ export async function POST(req: Request) {
           prompt: PROMPT_A,
         },
         logs: true,
-        onQueueUpdate: (update) => {
-          if (update.status === 'IN_PROGRESS') {
-            update.logs?.map((log) => log.message).forEach(console.log);
-          }
-        },
       }),
       fal.subscribe('fal-ai/nano-banana-pro/edit', {
         input: {
@@ -132,32 +142,29 @@ export async function POST(req: Request) {
           prompt: PROMPT_B,
         },
         logs: true,
-        onQueueUpdate: (update) => {
-          if (update.status === 'IN_PROGRESS') {
-            update.logs?.map((log) => log.message).forEach(console.log);
-          }
-        },
       }),
     ]);
+
+    console.log('[FirstFrame] nano-banana-pro done, downloading results...');
 
     // Extract image URLs from results
     const falImageUrlA = resultA.data?.images?.[0]?.url;
     const falImageUrlB = resultB.data?.images?.[0]?.url;
 
     if (!falImageUrlA || !falImageUrlB) {
+      console.error('[FirstFrame] Missing result URLs:', {
+        A: JSON.stringify(resultA.data).slice(0, 200),
+        B: JSON.stringify(resultB.data).slice(0, 200),
+      });
       throw new Error('No image URL returned from Nano Banana Pro');
     }
 
-    // Download generated images and upload to GCS
+    console.log('[FirstFrame] Result URLs:', { A: falImageUrlA.slice(0, 60), B: falImageUrlB.slice(0, 60) });
+
+    // Download generated images with retry (FAL connections can be flaky)
     const [bufferA, bufferB] = await Promise.all([
-      fetch(falImageUrlA).then((r) => {
-        if (!r.ok) throw new Error(`Failed to download generated image A: ${r.status}`);
-        return r.arrayBuffer();
-      }),
-      fetch(falImageUrlB).then((r) => {
-        if (!r.ok) throw new Error(`Failed to download generated image B: ${r.status}`);
-        return r.arrayBuffer();
-      }),
+      fetchWithRetry(falImageUrlA),
+      fetchWithRetry(falImageUrlB),
     ]);
 
     const [uploadedA, uploadedB] = await Promise.all([
@@ -170,6 +177,30 @@ export async function POST(req: Request) {
       getSignedUrlFromPublicUrl(uploadedB.url),
     ]);
 
+    // Persist generated images to database
+    try {
+      await initDatabase();
+      await Promise.all([
+        createGeneratedImage({
+          gcsUrl: uploadedA.url,
+          filename: uploadedA.url.split('/').pop() || `first-frame-a-${Date.now()}.jpg`,
+          modelImageUrl: modelImageUrl,
+          sceneImageUrl: frameImageUrl,
+          promptVariant: 'A',
+        }),
+        createGeneratedImage({
+          gcsUrl: uploadedB.url,
+          filename: uploadedB.url.split('/').pop() || `first-frame-b-${Date.now()}.jpg`,
+          modelImageUrl: modelImageUrl,
+          sceneImageUrl: frameImageUrl,
+          promptVariant: 'B',
+        }),
+      ]);
+    } catch (dbErr) {
+      console.error('Failed to persist generated images to DB:', dbErr);
+      // Don't fail the request — images are still returned to the client
+    }
+
     return NextResponse.json({
       images: [
         { url: signedA, gcsUrl: uploadedA.url },
@@ -178,6 +209,10 @@ export async function POST(req: Request) {
     });
   } catch (error: unknown) {
     console.error('Generate first frame error:', error);
+    // Log full FAL validation error body for debugging
+    if (error && typeof error === 'object' && 'body' in error) {
+      console.error('FAL error body:', JSON.stringify((error as { body: unknown }).body, null, 2));
+    }
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
   }

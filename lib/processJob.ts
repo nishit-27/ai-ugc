@@ -506,26 +506,32 @@ export async function processJob(
     await updateJob(jobId, { step: 'Generating video with AI...' });
 
     fal.config({ credentials: falKey });
-    const result = await fal.subscribe(
-      'fal-ai/kling-video/v2.6/standard/motion-control',
-      {
-        input: {
-          image_url: falImageUrl,
-          video_url: falVideoUrl,
-          character_orientation: 'video',
-          keep_original_sound: true,
-          prompt: job.customPrompt || prompt,
-        },
-        logs: true,
-        onQueueUpdate: async (update: { status?: string; queue_position?: number }) => {
-          if (update.status === 'IN_QUEUE') {
-            await updateJob(jobId, { step: `In queue (position: ${update.queue_position ?? '...'})` });
-          } else if (update.status === 'IN_PROGRESS') {
-            await updateJob(jobId, { step: 'AI is generating your video...' });
-          }
-        },
-      }
-    );
+
+    const falEndpoint = 'fal-ai/kling-video/v2.6/standard/motion-control';
+
+    // Submit to FAL queue and store request_id IMMEDIATELY
+    // so we can recover if the Lambda times out
+    const { request_id } = await fal.queue.submit(falEndpoint, {
+      input: {
+        image_url: falImageUrl,
+        video_url: falVideoUrl,
+        character_orientation: 'video',
+        keep_original_sound: true,
+        prompt: job.customPrompt || prompt,
+      },
+    });
+
+    // Save request_id to DB before waiting — critical for recovery
+    await updateJob(jobId, {
+      step: 'AI is generating your video...',
+      falRequestId: request_id,
+      falEndpoint,
+    });
+
+    console.log(`[FAL] Job ${jobId}: submitted to FAL, request_id=${request_id}`);
+
+    // Wait for FAL to complete (may timeout if Lambda dies, but request_id is saved)
+    const result = await fal.queue.result(falEndpoint, { requestId: request_id });
 
     const videoData = (result.data as { video?: { url?: string } })?.video ?? (result as { video?: { url?: string } }).video;
     if (!videoData?.url) {
@@ -625,29 +631,31 @@ export async function processJobWithImage(
     // Use the provided imageUrl instead of job.imageUrl
     const falImageUrl = await uploadImageToFal(imageUrl, jobId);
 
-    await updateJob(jobId, { step: 'Generating video with AI...' });
-
     fal.config({ credentials: falKey });
-    const result = await fal.subscribe(
-      'fal-ai/kling-video/v2.6/standard/motion-control',
-      {
-        input: {
-          image_url: falImageUrl,
-          video_url: falVideoUrl,
-          character_orientation: 'video',
-          keep_original_sound: true,
-          prompt: job.customPrompt || prompt,
-        },
-        logs: true,
-        onQueueUpdate: async (update: { status?: string; queue_position?: number }) => {
-          if (update.status === 'IN_QUEUE') {
-            await updateJob(jobId, { step: `In queue (position: ${update.queue_position ?? '...'})` });
-          } else if (update.status === 'IN_PROGRESS') {
-            await updateJob(jobId, { step: 'AI is generating your video...' });
-          }
-        },
-      }
-    );
+
+    const falEndpoint = 'fal-ai/kling-video/v2.6/standard/motion-control';
+
+    // Submit to FAL queue and store request_id IMMEDIATELY for recovery
+    const { request_id } = await fal.queue.submit(falEndpoint, {
+      input: {
+        image_url: falImageUrl,
+        video_url: falVideoUrl,
+        character_orientation: 'video',
+        keep_original_sound: true,
+        prompt: job.customPrompt || prompt,
+      },
+    });
+
+    await updateJob(jobId, {
+      step: 'AI is generating your video...',
+      falRequestId: request_id,
+      falEndpoint,
+    });
+
+    console.log(`[FAL] Job ${jobId} (batch): submitted to FAL, request_id=${request_id}`);
+
+    // Wait for FAL to complete (request_id is saved for recovery if Lambda dies)
+    const result = await fal.queue.result(falEndpoint, { requestId: request_id });
 
     const videoData = (result.data as { video?: { url?: string } })?.video ?? (result as { video?: { url?: string } }).video;
     if (!videoData?.url) {

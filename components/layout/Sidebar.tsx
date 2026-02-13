@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList } from 'lucide-react';
+import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList, ImageIcon } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -30,6 +30,7 @@ const contentItems = [
   { href: '/queue', label: 'Queue', icon: ListVideo },
   { href: '/batches', label: 'Batches', icon: Package },
   { href: '/posts', label: 'Posts', icon: FileText },
+  { href: '/images', label: 'Images', icon: ImageIcon },
 ];
 
 const settingsItems = [

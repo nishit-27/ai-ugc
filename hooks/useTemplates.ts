@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { TemplateJob } from '@/types';
+import { useStuckJobRecovery } from './useStuckJobRecovery';
 
 const ACTIVE_POLL_INTERVAL = 1_500;  // 1.5s when jobs are running
 const IDLE_POLL_INTERVAL   = 30_000; // 30s baseline
@@ -48,6 +49,13 @@ export function useTemplates() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const loadJobsRef = useRef<() => Promise<void>>(null);
+
+  // Auto-recover stuck jobs (processing > 10 min)
+  const { checkAndRecover } = useStuckJobRecovery(() => {
+    // After recovery, force refresh to pick up updated statuses
+    loadJobsRef.current?.();
+  });
 
   const loadJobs = useCallback(async () => {
     // Cancel any in-flight request
@@ -85,13 +93,19 @@ export function useTemplates() {
           }
         } catch {}
       }
+
+      // Check for stuck jobs and trigger recovery if needed
+      checkAndRecover(arr);
     } catch {
       clearTimeout(timeout);
       // Silently ignore — cached data stays visible
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [checkAndRecover]);
+
+  // Keep ref current for recovery callback
+  loadJobsRef.current = loadJobs;
 
   // Adaptive polling: fast when active, slow when idle, stops when unmounted
   const scheduleNext = useCallback(() => {

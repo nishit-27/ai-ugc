@@ -20,6 +20,19 @@ type FirstFrameOption = {
   gcsUrl: string;
 };
 
+// ── Module-level cache: survives unmount/remount when switching pipeline steps ──
+type CachedStepState = {
+  extractedFrames: ExtractedFrame[];
+  firstFrameOptions: FirstFrameOption[];
+  dismissedOptions: string[];
+  imageSource: ImageSource;
+  sceneDisplayUrl: string | null;
+  originalModelImageUrl: string | null;
+  uploadedGcsUrl: string | null;
+  showImageGrid: boolean;
+};
+const _stepCache = new Map<string, CachedStepState>();
+
 // Duration options per mode
 const VEO_DURATIONS = ['4s', '6s', '8s'];
 
@@ -89,27 +102,40 @@ function Dropdown({
 }
 
 export default function VideoGenConfig({
-  config, onChange, sourceDuration, sourceVideoUrl,
+  config, onChange, sourceDuration, sourceVideoUrl, stepId,
 }: {
   config: VGC;
   onChange: (c: VGC) => void;
   sourceDuration?: number;
   sourceVideoUrl?: string;
+  stepId?: string;
 }) {
   const { models, modelImages, imagesLoading, loadModelImages } = useModels();
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  // Restore from module-level cache on mount
+  const cached = stepId ? _stepCache.get(stepId) : undefined;
+
   const [imageSource, setImageSource] = useState<ImageSource>(
-    () => (config.imageUrl && !config.imageId) ? 'upload' : 'model'
+    () => cached?.imageSource ?? ((config.imageUrl && !config.imageId) ? 'upload' : 'model')
   );
-  const [showImageGrid, setShowImageGrid] = useState(!config.imageId);
+  const [showImageGrid, setShowImageGrid] = useState(
+    () => cached?.showImageGrid ?? !config.imageId
+  );
 
   // First Frame state
-  const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
+  const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>(
+    () => cached?.extractedFrames ?? []
+  );
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
-  const [firstFrameOptions, setFirstFrameOptionsRaw] = useState<FirstFrameOption[]>([]);
-  const [dismissedOptions, setDismissedOptions] = useState<Set<string>>(new Set());
+  const [firstFrameOptions, setFirstFrameOptionsRaw] = useState<FirstFrameOption[]>(
+    () => cached?.firstFrameOptions ?? []
+  );
+  const [dismissedOptions, setDismissedOptions] = useState<Set<string>>(
+    () => new Set(cached?.dismissedOptions ?? [])
+  );
   const [isGeneratingFirstFrame, setIsGeneratingFirstFrame] = useState(false);
 
   // Helper: clear first frame options always resets dismissed set too
@@ -118,12 +144,46 @@ export default function VideoGenConfig({
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [showScenePicker, setShowScenePicker] = useState(false);
   const [isUploadingScene, setIsUploadingScene] = useState(false);
-  const [sceneDisplayUrl, setSceneDisplayUrl] = useState<string | null>(null); // signed URL for display when uploaded
+  const [sceneDisplayUrl, setSceneDisplayUrl] = useState<string | null>(
+    () => cached?.sceneDisplayUrl ?? null
+  );
   const sceneFileRef = useRef<HTMLInputElement>(null);
   // Track the original model image URL so we can pass it to the API even after imageUrl is overwritten
-  const originalModelImageUrlRef = useRef<string | null>(null);
+  const originalModelImageUrlRef = useRef<string | null>(cached?.originalModelImageUrl ?? null);
   // Track the persistent GCS URL for uploaded model images (for API calls)
-  const uploadedGcsUrlRef = useRef<string | null>(null);
+  const uploadedGcsUrlRef = useRef<string | null>(cached?.uploadedGcsUrl ?? null);
+
+  // Persist transient UI state to module-level cache on unmount
+  useEffect(() => {
+    return () => {
+      if (!stepId) return;
+      _stepCache.set(stepId, {
+        extractedFrames: extractedFramesRef.current,
+        firstFrameOptions: firstFrameOptionsRef.current,
+        dismissedOptions: Array.from(dismissedOptionsRef.current),
+        imageSource: imageSourceRef.current,
+        sceneDisplayUrl: sceneDisplayUrlRef.current,
+        originalModelImageUrl: originalModelImageUrlRef.current,
+        uploadedGcsUrl: uploadedGcsUrlRef.current,
+        showImageGrid: showImageGridRef.current,
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepId]);
+
+  // Refs that track latest values for the unmount save
+  const extractedFramesRef = useRef(extractedFrames);
+  extractedFramesRef.current = extractedFrames;
+  const firstFrameOptionsRef = useRef(firstFrameOptions);
+  firstFrameOptionsRef.current = firstFrameOptions;
+  const dismissedOptionsRef = useRef(dismissedOptions);
+  dismissedOptionsRef.current = dismissedOptions;
+  const imageSourceRef = useRef(imageSource);
+  imageSourceRef.current = imageSource;
+  const sceneDisplayUrlRef = useRef(sceneDisplayUrl);
+  sceneDisplayUrlRef.current = sceneDisplayUrl;
+  const showImageGridRef = useRef(showImageGrid);
+  showImageGridRef.current = showImageGrid;
 
   useEffect(() => {
     if (config.modelId) loadModelImages(config.modelId);
@@ -856,10 +916,10 @@ export default function VideoGenConfig({
                           <div key={i} className="relative">
                             <button
                               onClick={() => handleSelectFirstFrame(opt)}
-                              className={`relative w-full aspect-[3/4] overflow-hidden rounded-2xl transition-all duration-150 ${
+                              className={`relative w-full aspect-[3/4] overflow-hidden rounded-2xl border-2 transition-all duration-150 ${
                                 isSelected
-                                  ? 'ring-2 ring-[var(--primary)] ring-offset-2 ring-offset-[var(--background)]'
-                                  : 'hover:opacity-90'
+                                  ? 'border-[var(--primary)]'
+                                  : 'border-transparent hover:opacity-90'
                               }`}
                             >
                               <img src={opt.url} alt={`Option ${String.fromCharCode(65 + i)}`} className="h-full w-full object-cover" />
@@ -867,18 +927,10 @@ export default function VideoGenConfig({
                                 {String.fromCharCode(65 + i)}
                               </div>
                               {isSelected && (
-                                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-[var(--primary)] to-[var(--primary)]/80 py-1.5 text-center backdrop-blur-sm">
+                                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-[var(--primary)]/90 to-transparent py-1 text-center">
                                   <span className="text-[10px] font-semibold text-[var(--primary-foreground)]">Selected</span>
                                 </div>
                               )}
-                            </button>
-                            {/* Dismiss button */}
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDismissOption(opt); }}
-                              className="absolute -top-1.5 -right-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--text)] text-[var(--background)] shadow-md transition-transform hover:scale-110"
-                              title="Dismiss this option"
-                            >
-                              <X className="h-2.5 w-2.5" />
                             </button>
                           </div>
                         );
