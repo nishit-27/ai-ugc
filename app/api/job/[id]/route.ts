@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getJob, deleteJob, getAllMediaFiles } from '@/lib/db';
-import { deleteFile, getSignedUrlFromPublicUrl } from '@/lib/storage';
+import { deleteFile } from '@/lib/storage';
 
 export async function GET(
   _request: NextRequest,
@@ -9,22 +9,12 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const job = await getJob(id) as { outputUrl?: string; [key: string]: unknown } | null;
+    const job = await getJob(id);
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
 
-    // Add signed URL if outputUrl exists
-    let signedUrl = job.outputUrl;
-    if (job.outputUrl && job.outputUrl.includes('storage.googleapis.com')) {
-      try {
-        signedUrl = await getSignedUrlFromPublicUrl(job.outputUrl);
-      } catch {
-        // Keep original URL if signing fails
-      }
-    }
-
-    return NextResponse.json({ ...job, signedUrl });
+    return NextResponse.json(job);
   } catch (err) {
     console.error('Get job error:', err);
     return NextResponse.json({ error: 'Failed to get job' }, { status: 500 });

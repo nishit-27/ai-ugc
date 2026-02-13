@@ -1,16 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBatch, deleteBatch, getJobsByBatchId, getModel } from '@/lib/db';
-import { getSignedUrlFromPublicUrl } from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
 
 type RouteParams = { params: Promise<{ id: string }> };
-
-type Job = {
-  id: string;
-  outputUrl?: string;
-  [key: string]: unknown;
-};
 
 // GET /api/batches/[id] - Get batch with all jobs
 export async function GET(_request: NextRequest, { params }: RouteParams) {
@@ -22,31 +15,16 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: 'Batch not found' }, { status: 404 });
     }
 
-    const jobs = await getJobsByBatchId(id) as Job[];
+    const jobs = await getJobsByBatchId(id);
     let model = null;
     if (batch.modelId) {
       model = await getModel(batch.modelId);
     }
 
-    // Add signed URLs to jobs with outputUrl
-    const jobsWithSignedUrls = await Promise.all(
-      jobs.map(async (job) => {
-        if (job.outputUrl && job.outputUrl.includes('storage.googleapis.com')) {
-          try {
-            const signedUrl = await getSignedUrlFromPublicUrl(job.outputUrl);
-            return { ...job, signedUrl };
-          } catch {
-            return { ...job, signedUrl: job.outputUrl };
-          }
-        }
-        return { ...job, signedUrl: job.outputUrl };
-      })
-    );
-
     return NextResponse.json({
       ...batch,
       model: model ? { id: model.id, name: model.name, avatarUrl: model.avatarUrl } : null,
-      jobs: jobsWithSignedUrls,
+      jobs,
       progress: batch.totalJobs > 0
         ? Math.round(((batch.completedJobs + batch.failedJobs) / batch.totalJobs) * 100)
         : 0,

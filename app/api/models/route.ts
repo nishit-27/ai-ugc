@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createModel, getAllModels, getModelImages } from '@/lib/db';
-import { getSignedUrlFromPublicUrl } from '@/lib/storage';
 
 interface Model {
   id: string;
@@ -14,24 +13,12 @@ export async function GET() {
   try {
     const models = await getAllModels();
 
-    // Add image counts and signed avatar URLs to each model
+    // Add image counts to each model (no server-side signing — client signs lazily)
     const modelsWithCounts = await Promise.all(
       models.map(async (model: Model) => {
         const images = await getModelImages(model.id);
-        let signedAvatarUrl = model.avatarUrl;
-
-        // Generate signed URL for avatar if it exists
-        if (model.avatarUrl) {
-          try {
-            signedAvatarUrl = await getSignedUrlFromPublicUrl(model.avatarUrl);
-          } catch {
-            // Keep original URL if signing fails
-          }
-        }
-
         return {
           ...model,
-          avatarUrl: signedAvatarUrl,
           imageCount: images.length,
         };
       })

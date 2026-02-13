@@ -69,9 +69,6 @@ export type Batch = {
   createdAt?: string;
 };
 
-// First Frame model selector
-export type FirstFrameModelId = 'nano-banana' | 'kling-v3';
-
 // Templates / Pipeline types
 
 export type MiniAppType = 'video-generation' | 'batch-video-generation' | 'text-overlay' | 'bg-music' | 'attach-video';
@@ -95,7 +92,7 @@ export type VideoGenConfig = {
   // First Frame Generation
   firstFrameEnabled?: boolean;
   extractedFrameUrl?: string;      // GCS URL of the picked extracted frame
-  firstFrameModel?: FirstFrameModelId;
+  firstFrameResolution?: '1K' | '2K' | '4K';
 };
 
 export type TextOverlayConfig = {
@@ -159,7 +156,7 @@ export type BatchVideoGenConfig = {
   // First Frame Generation (shared across all batch entries)
   firstFrameEnabled?: boolean;
   extractedFrameUrl?: string;    // Single extracted frame, used for all
-  firstFrameModel?: FirstFrameModelId;
+  firstFrameResolution?: '1K' | '2K' | '4K';
 };
 
 export type MiniAppStep = {

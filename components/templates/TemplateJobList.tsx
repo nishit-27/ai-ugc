@@ -9,27 +9,7 @@ import StatusBadge from '@/components/ui/StatusBadge';
 import ProgressBar from '@/components/ui/ProgressBar';
 import Modal from '@/components/ui/Modal';
 
-// ── Client-side signed URL cache ──
-const _signedCache = new Map<string, string>();
-const _pendingUrls = new Set<string>();
-
-async function fetchSignedUrl(gcsUrl: string): Promise<string | null> {
-  if (_signedCache.has(gcsUrl)) return _signedCache.get(gcsUrl)!;
-  if (_pendingUrls.has(gcsUrl)) return null;
-  _pendingUrls.add(gcsUrl);
-  try {
-    const res = await fetch(`/api/signed-url?url=${encodeURIComponent(gcsUrl)}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.signedUrl) {
-      _signedCache.set(gcsUrl, data.signedUrl);
-      return data.signedUrl;
-    }
-  } catch {} finally {
-    _pendingUrls.delete(gcsUrl);
-  }
-  return null;
-}
+import { signUrls } from '@/lib/signedUrlClient';
 
 function useSignedUrls(jobs: TemplateJob[]) {
   const [signedMap, setSignedMap] = useState<Record<string, string>>({});
@@ -40,28 +20,23 @@ function useSignedUrls(jobs: TemplateJob[]) {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // Sign URLs for completed jobs that need it
+  // Batch-sign URLs for completed jobs
   useEffect(() => {
     const needSigning = jobs.filter(
-      (j) => j.status === 'completed' && j.outputUrl?.includes('storage.googleapis.com') && !j.signedUrl && !signedMap[j.id],
+      (j) => j.status === 'completed' && j.outputUrl?.includes('storage.googleapis.com') && !signedMap[j.id],
     );
     if (needSigning.length === 0) return;
 
-    // Process in parallel batches of 4
-    const batch = needSigning.slice(0, 8);
     let cancelled = false;
 
     (async () => {
-      const results = await Promise.all(
-        batch.map(async (j) => {
-          const signed = await fetchSignedUrl(j.outputUrl!);
-          return { id: j.id, url: signed };
-        }),
-      );
+      const urls = needSigning.map((j) => j.outputUrl!);
+      const signed = await signUrls(urls);
       if (cancelled || !mountedRef.current) return;
       const updates: Record<string, string> = {};
-      for (const r of results) {
-        if (r.url) updates[r.id] = r.url;
+      for (const j of needSigning) {
+        const url = signed.get(j.outputUrl!);
+        if (url) updates[j.id] = url;
       }
       if (Object.keys(updates).length > 0) {
         setSignedMap((prev) => ({ ...prev, ...updates }));
@@ -71,9 +46,8 @@ function useSignedUrls(jobs: TemplateJob[]) {
     return () => { cancelled = true; };
   }, [jobs, signedMap]);
 
-  // Merge signed URLs into jobs
   const getSignedUrl = useCallback(
-    (job: TemplateJob) => job.signedUrl || signedMap[job.id] || undefined,
+    (job: TemplateJob) => signedMap[job.id] || undefined,
     [signedMap],
   );
 

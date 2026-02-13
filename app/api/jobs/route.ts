@@ -1,44 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getAllJobs } from '@/lib/db';
-import { getCachedSignedUrl } from '@/lib/signedUrlCache';
 
 export const dynamic = 'force-dynamic';
 
-type Job = {
-  id: string;
-  status?: string;
-  outputUrl?: string;
-  [key: string]: unknown;
-};
-
 export async function GET() {
   try {
-    const jobs = await getAllJobs() as Job[];
-
-    // Only sign completed jobs. Cached — subsequent polls are nearly instant.
-    // Each signing has a 5s timeout to prevent the whole request from hanging.
-    const jobsWithSignedUrls = await Promise.all(
-      jobs.map(async (job) => {
-        if (
-          job.status === 'completed' &&
-          job.outputUrl &&
-          job.outputUrl.includes('storage.googleapis.com')
-        ) {
-          try {
-            const signedUrl = await Promise.race([
-              getCachedSignedUrl(job.outputUrl),
-              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-            ]);
-            return { ...job, signedUrl, outputUrl: job.outputUrl };
-          } catch {
-            return { ...job, signedUrl: job.outputUrl };
-          }
-        }
-        return { ...job, signedUrl: job.outputUrl };
-      })
-    );
-
-    return NextResponse.json(jobsWithSignedUrls);
+    const jobs = await getAllJobs();
+    return NextResponse.json(jobs);
   } catch (err) {
     console.error('Get jobs error:', err);
     return NextResponse.json([], { status: 500 });

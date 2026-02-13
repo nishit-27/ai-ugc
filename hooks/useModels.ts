@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { signUrls } from '@/lib/signedUrlClient';
 import type { Model, ModelImage } from '@/types';
 
 const REFRESH_INTERVAL = 60_000;
@@ -9,28 +10,6 @@ const REFRESH_INTERVAL = 60_000;
 let _cache: Model[] = [];
 let _cacheTime = 0;
 const _imageCache = new Map<string, ModelImage[]>();
-
-// Client-side signed URL cache for images
-const _signedImageCache = new Map<string, string>();
-const _pendingImageUrls = new Set<string>();
-
-async function signImageUrl(gcsUrl: string): Promise<string | null> {
-  if (_signedImageCache.has(gcsUrl)) return _signedImageCache.get(gcsUrl)!;
-  if (_pendingImageUrls.has(gcsUrl)) return null;
-  _pendingImageUrls.add(gcsUrl);
-  try {
-    const res = await fetch(`/api/signed-url?url=${encodeURIComponent(gcsUrl)}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.signedUrl) {
-      _signedImageCache.set(gcsUrl, data.signedUrl);
-      return data.signedUrl;
-    }
-  } catch {} finally {
-    _pendingImageUrls.delete(gcsUrl);
-  }
-  return null;
-}
 
 export function useModels() {
   const [models, setModels] = useState<Model[]>(_cache);
@@ -48,10 +27,28 @@ export function useModels() {
     try {
       const res = await fetch('/api/models');
       const data = await res.json();
-      const result = Array.isArray(data) ? data : [];
+      const result: Model[] = Array.isArray(data) ? data : [];
+
+      // Show data immediately
       _cache = result;
       _cacheTime = Date.now();
       setModels(result);
+      setIsLoadingPage(false);
+
+      // Batch-sign avatar URLs client-side
+      const avatarUrls = result
+        .map((m) => m.avatarUrl)
+        .filter((url): url is string => !!url && url.includes('storage.googleapis.com'));
+
+      if (avatarUrls.length > 0) {
+        const signed = await signUrls(avatarUrls);
+        const withSigned = result.map((m) => ({
+          ...m,
+          avatarUrl: m.avatarUrl ? (signed.get(m.avatarUrl) || m.avatarUrl) : m.avatarUrl,
+        }));
+        _cache = withSigned;
+        setModels(withSigned);
+      }
     } catch (e) {
       console.error('Failed to load models:', e);
     } finally {
@@ -73,18 +70,24 @@ export function useModels() {
       const data = await res.json();
       const images: ModelImage[] = Array.isArray(data) ? data : [];
 
-      // Sign URLs in parallel client-side
-      const signed = await Promise.all(
-        images.map(async (img) => {
-          if (img.signedUrl) return img;
-          if (!img.gcsUrl?.includes('storage.googleapis.com')) return img;
-          const url = await signImageUrl(img.gcsUrl);
-          return url ? { ...img, signedUrl: url } : img;
-        }),
-      );
+      // Show images immediately, then sign in batch
+      setModelImages(images);
 
-      _imageCache.set(modelId, signed);
-      setModelImages(signed);
+      const gcsUrls = images
+        .map((img) => img.gcsUrl)
+        .filter((url) => url?.includes('storage.googleapis.com'));
+
+      if (gcsUrls.length > 0) {
+        const signed = await signUrls(gcsUrls);
+        const withSigned = images.map((img) => ({
+          ...img,
+          signedUrl: signed.get(img.gcsUrl) || img.gcsUrl,
+        }));
+        _imageCache.set(modelId, withSigned);
+        setModelImages(withSigned);
+      } else {
+        _imageCache.set(modelId, images);
+      }
     } catch (e) {
       console.error('Failed to load model images:', e);
     } finally {

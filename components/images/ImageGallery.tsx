@@ -59,12 +59,16 @@ export default function ImageGallery({
           onClick={() => onImageClick(image)}
         >
           <div className="aspect-[3/4] overflow-hidden">
-            <img
-              src={image.signedUrl || image.gcsUrl}
-              alt={image.filename}
-              loading="lazy"
-              className="h-full w-full object-cover transition-transform group-hover:scale-105"
-            />
+            {image.signedUrl ? (
+              <img
+                src={image.signedUrl}
+                alt={image.filename}
+                loading="lazy"
+                className="h-full w-full object-cover transition-transform group-hover:scale-105"
+              />
+            ) : (
+              <div className="h-full w-full animate-pulse bg-[var(--accent)]" />
+            )}
           </div>
 
           {/* Hover overlay with delete button */}

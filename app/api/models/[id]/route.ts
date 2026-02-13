@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModel, updateModel, deleteModel, getModelImages } from '@/lib/db';
-import { getSignedUrlFromPublicUrl } from '@/lib/storage';
 
 type RouteParams = { params: Promise<{ id: string }> };
-
-interface ModelImage {
-  gcsUrl: string;
-  [key: string]: unknown;
-}
 
 // GET /api/models/[id] - Get model with images
 export async function GET(_request: NextRequest, { params }: RouteParams) {
@@ -21,32 +15,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     const images = await getModelImages(id);
 
-    // Generate signed URLs for all images
-    const imagesWithSignedUrls = await Promise.all(
-      images.map(async (img: ModelImage) => {
-        try {
-          const signedUrl = await getSignedUrlFromPublicUrl(img.gcsUrl);
-          return { ...img, signedUrl };
-        } catch {
-          return { ...img, signedUrl: img.gcsUrl };
-        }
-      })
-    );
-
-    // Generate signed URL for avatar
-    let signedAvatarUrl = model.avatarUrl;
-    if (model.avatarUrl) {
-      try {
-        signedAvatarUrl = await getSignedUrlFromPublicUrl(model.avatarUrl);
-      } catch {
-        // Keep original URL if signing fails
-      }
-    }
-
     return NextResponse.json({
       ...model,
-      avatarUrl: signedAvatarUrl,
-      images: imagesWithSignedUrls,
+      images,
       imageCount: images.length,
     });
   } catch (err) {

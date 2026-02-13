@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, createContext, useContext, type ReactNode } from 'react';
 import type { Job } from '@/types';
+import { signUrls, getSignedUrl } from '@/lib/signedUrlClient';
 import { useStuckJobRecovery } from './useStuckJobRecovery';
 
 const ACTIVE_POLL_INTERVAL = 1_500;  // 1.5s when jobs are running
@@ -53,11 +54,37 @@ function useJobsInternal() {
       const data = await res.json();
       const arr: Job[] = Array.isArray(data) ? data : [];
 
-      const snapshot = arr.map((j) => `${j.id}:${j.status}:${j.step}`).join('|');
+      // Attach cached signed URLs to completed jobs immediately
+      const withSigned = arr.map((j) => {
+        if (j.status === 'completed' && j.outputUrl) {
+          const cached = getSignedUrl(j.outputUrl);
+          if (cached !== j.outputUrl) return { ...j, signedUrl: cached };
+        }
+        return j;
+      });
+
+      const snapshot = withSigned.map((j) => `${j.id}:${j.status}:${j.step}`).join('|');
       if (snapshot !== lastSnapshotRef.current) {
         lastSnapshotRef.current = snapshot;
-        setJobs(arr);
-        setCachedJobs(arr);
+        setJobs(withSigned);
+        setCachedJobs(withSigned);
+      }
+
+      // Sign any new completed URLs in background (non-blocking)
+      const unsignedUrls = withSigned
+        .filter((j) => j.status === 'completed' && j.outputUrl && !j.signedUrl && j.outputUrl.includes('storage.googleapis.com'))
+        .map((j) => j.outputUrl!);
+
+      if (unsignedUrls.length > 0) {
+        signUrls(unsignedUrls).then((signed) => {
+          if (!mountedRef.current) return;
+          setJobs((prev) => prev.map((j) => {
+            if (j.outputUrl && signed.has(j.outputUrl)) {
+              return { ...j, signedUrl: signed.get(j.outputUrl) };
+            }
+            return j;
+          }));
+        });
       }
 
       // Check for stuck jobs and trigger recovery if needed

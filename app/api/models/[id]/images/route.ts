@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { getModel, getModelImages, createModelImage } from '@/lib/db';
-import { uploadImage, getSignedUrlFromPublicUrl } from '@/lib/storage';
+import { uploadImage } from '@/lib/storage';
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -106,23 +106,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Sign all URLs before returning for immediate frontend display
     const validImages = uploadedImages.filter((img): img is NonNullable<typeof img> => img !== null);
-    const imagesWithSignedUrls = await Promise.all(
-      validImages.map(async (img) => {
-        try {
-          const signedUrl = await getSignedUrlFromPublicUrl(img.gcsUrl);
-          return { ...img, signedUrl };
-        } catch {
-          return { ...img, signedUrl: img.gcsUrl };
-        }
-      })
-    );
 
     return NextResponse.json({
       success: true,
-      images: imagesWithSignedUrls,
-      count: imagesWithSignedUrls.length,
+      images: validImages,
+      count: validImages.length,
     });
   } catch (err) {
     console.error('Upload model images error:', err);

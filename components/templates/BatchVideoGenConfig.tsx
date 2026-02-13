@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useModels } from '@/hooks/useModels';
 import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, Check, RefreshCw, Expand } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
-import type { BatchVideoGenConfig as BVGC, BatchImageEntry, ModelImage, FirstFrameModelId } from '@/types';
+import type { BatchVideoGenConfig as BVGC, BatchImageEntry, ModelImage } from '@/types';
 
 type ImageSource = 'model' | 'upload';
 
@@ -285,7 +285,7 @@ export default function BatchVideoGenConfig({
       const res = await fetch('/api/generate-first-frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelImageUrl, frameImageUrl: config.extractedFrameUrl, firstFrameModel: config.firstFrameModel || 'nano-banana' }),
+        body: JSON.stringify({ modelImageUrl, frameImageUrl: config.extractedFrameUrl, resolution: config.firstFrameResolution || '1K' }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate');
@@ -601,32 +601,33 @@ export default function BatchVideoGenConfig({
 
           {config.firstFrameEnabled && (
             <div className="space-y-3 pl-5">
-              {/* Model selector */}
-              <div className="flex gap-1.5 rounded-lg bg-[var(--accent)] p-1">
-                {([
-                  { key: 'nano-banana' as FirstFrameModelId, label: 'Nano Banana' },
-                  { key: 'kling-v3' as FirstFrameModelId, label: 'Kling V3' },
-                ] as const).map((opt) => {
-                  const selected = (config.firstFrameModel || 'nano-banana') === opt.key;
-                  return (
-                    <button
-                      key={opt.key}
-                      onClick={() => {
-                        if ((config.firstFrameModel || 'nano-banana') !== opt.key) {
-                          setFirstFrameResults(new Map());
-                          onChange({ ...config, firstFrameModel: opt.key });
-                        }
-                      }}
-                      className={`flex-1 rounded-md px-3 py-1.5 text-[11px] font-semibold transition-all duration-150 ${
-                        selected
-                          ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--background)]'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
+              {/* Model + Resolution selectors */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Model</label>
+                  <select
+                    value="nano-banana"
+                    disabled
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] opacity-70"
+                  >
+                    <option value="nano-banana">Nano Banana Pro</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Resolution</label>
+                  <select
+                    value={config.firstFrameResolution || '1K'}
+                    onChange={(e) => {
+                      const val = e.target.value as '1K' | '2K' | '4K';
+                      onChange({ ...config, firstFrameResolution: val });
+                    }}
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+                  >
+                    <option value="1K">1K</option>
+                    <option value="2K">2K</option>
+                    <option value="4K">4K</option>
+                  </select>
+                </div>
               </div>
 
               {/* Step 1: Extract shared frame */}

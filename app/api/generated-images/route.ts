@@ -1,27 +1,18 @@
-import { NextResponse } from 'next/server';
-import { initDatabase, getAllGeneratedImages } from '@/lib/db';
-import { getSignedUrlFromPublicUrl } from '@/lib/storage';
+import { NextRequest, NextResponse } from 'next/server';
+import { initDatabase, getGeneratedImagesPage } from '@/lib/db';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await initDatabase();
-    const images = await getAllGeneratedImages();
 
-    const signed = await Promise.all(
-      images.map(async (img: { gcsUrl?: string; [key: string]: unknown }) => {
-        let signedUrl = img.gcsUrl;
-        if (img.gcsUrl?.includes('storage.googleapis.com')) {
-          try {
-            signedUrl = await getSignedUrlFromPublicUrl(img.gcsUrl);
-          } catch {
-            // Keep original URL if signing fails
-          }
-        }
-        return { ...img, signedUrl };
-      }),
-    );
+    const { searchParams } = request.nextUrl;
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '24', 10)));
+    const offset = (page - 1) * limit;
 
-    return NextResponse.json(signed);
+    const { images, total } = await getGeneratedImagesPage(limit, offset);
+
+    return NextResponse.json({ images, total, page, limit });
   } catch (err) {
     console.error('Get generated images error:', err);
     return NextResponse.json({ error: 'Failed to fetch generated images' }, { status: 500 });
