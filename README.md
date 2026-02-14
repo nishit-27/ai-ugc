@@ -9,7 +9,7 @@ Create AI-powered UGC videos from TikTok content: paste a TikTok URL, upload a m
 - **Connections**: Profiles, connect TikTok/Instagram/YouTube/Facebook/Twitter/LinkedIn via Late; invite links
 - **Large video uploads**: Browser uploads directly to Google Cloud Storage using resumable chunked upload sessions
 
-## Getting Started
+## Getting Startedddd
 
 ```bash
 npm install
