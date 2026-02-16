@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { X, Video, Type, Music, Film, Upload, Layers } from 'lucide-react';
+import { X, Video, Type, Music, Film, Upload, Layers, Maximize2, Minimize2, Trash2 } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
 import type { MiniAppStep, MiniAppType, VideoGenConfig as VGC, TextOverlayConfig as TOC, BgMusicConfig as BMC, AttachVideoConfig as AVC, BatchVideoGenConfig as BVGC } from '@/types';
 import VideoGenConfig from './VideoGenConfig';
@@ -37,7 +37,7 @@ type SourceConfig = {
 export type MasterModel = { modelId: string; modelName: string; primaryImageUrl: string; primaryGcsUrl: string };
 
 export default function NodeConfigPanel({
-  selectedId, steps, onUpdateStep, onRemoveStep, onClose, sourceConfig, videoUrl, sourceDuration, validationError, isLoadingVideo, masterMode, masterModels,
+  selectedId, steps, onUpdateStep, onRemoveStep, onClose, sourceConfig, videoUrl, sourceDuration, validationError, isLoadingVideo, masterMode, masterModels, isExpanded, onToggleExpand,
 }: {
   selectedId: string | null;
   steps: MiniAppStep[];
@@ -51,6 +51,8 @@ export default function NodeConfigPanel({
   isLoadingVideo?: boolean;
   masterMode?: boolean;
   masterModels?: MasterModel[];
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -68,11 +70,19 @@ export default function NodeConfigPanel({
             </div>
             <span className="text-sm font-semibold text-[var(--text)]">Video Source</span>
           </div>
-          <button onClick={onClose} className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:text-[var(--text)]">
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            {onToggleExpand && (
+              <button onClick={onToggleExpand} className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:text-[var(--text)]" title={isExpanded ? 'Minimize panel' : 'Expand panel'}>
+                {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              </button>
+            )}
+            <button onClick={onClose} className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:text-[var(--text)]">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-        <div className="p-4 space-y-4">
+        <div className={`p-4 ${isExpanded ? '' : 'space-y-4'}`}>
+          <div className={isExpanded ? 'mx-auto max-w-2xl space-y-4' : 'space-y-4'}>
           <div className="flex gap-2">
             {(['tiktok', 'upload'] as const).map((src) => (
               <button
@@ -128,7 +138,7 @@ export default function NodeConfigPanel({
               <input ref={fileRef} type="file" accept="video/*" onChange={sourceConfig.onVideoUpload} className="hidden" />
               {sourceConfig.videoUrl ? (
                 <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] p-2.5">
-                  <video src={sourceConfig.previewUrl || sourceConfig.videoUrl} className="h-16 w-12 shrink-0 rounded-lg object-cover bg-black cursor-pointer" muted playsInline preload="metadata" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }} onClick={() => setPreviewUrl(sourceConfig.previewUrl || sourceConfig.videoUrl)} />
+                  <video src={sourceConfig.previewUrl || sourceConfig.videoUrl} className="h-16 w-12 shrink-0 rounded-lg object-cover bg-black cursor-pointer" muted playsInline preload="none" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }} onClick={() => setPreviewUrl(sourceConfig.previewUrl || sourceConfig.videoUrl)} />
                   <div className="flex-1 min-w-0">
                     <p className="truncate text-xs font-medium text-[var(--text)]">{sourceConfig.uploadedFilename}</p>
                     <button onClick={sourceConfig.onVideoRemove} className="mt-0.5 flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-red-500 transition-colors">
@@ -174,6 +184,7 @@ export default function NodeConfigPanel({
           <p className="text-[10px] text-[var(--text-muted)]">
             Not needed if the first step is Video Generation with Subtle Animation mode.
           </p>
+          </div>
         </div>
         {previewUrl && <PreviewModal src={previewUrl} type="video" onClose={() => setPreviewUrl(null)} />}
       </div>
@@ -197,9 +208,19 @@ export default function NodeConfigPanel({
             </div>
             <span className="text-sm font-semibold text-[var(--text)]">{meta.label}</span>
           </div>
-          <button onClick={onClose} className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:text-[var(--text)]">
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => { onRemoveStep(step.id); onClose(); }} className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:text-red-500" title="Remove step">
+              <Trash2 className="h-4 w-4" />
+            </button>
+            {onToggleExpand && (
+              <button onClick={onToggleExpand} className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:text-[var(--text)]" title={isExpanded ? 'Minimize panel' : 'Expand panel'}>
+                {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              </button>
+            )}
+            <button onClick={onClose} className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:text-[var(--text)]">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
@@ -210,27 +231,23 @@ export default function NodeConfigPanel({
             </div>
           )}
           {step.type === 'text-overlay' && (
-            <TextOverlayPreview
-              config={step.config as TOC}
-              onChange={(c) => onUpdateStep(step.id, { ...step, config: c })}
-              videoUrl={videoUrl}
-              isLoadingVideo={isLoadingVideo}
-            />
+            <div className={isExpanded ? 'grid grid-cols-2 gap-6 h-full' : ''}>
+              <TextOverlayPreview
+                config={step.config as TOC}
+                onChange={(c) => onUpdateStep(step.id, { ...step, config: c })}
+                videoUrl={videoUrl}
+                isLoadingVideo={isLoadingVideo}
+                isExpanded={isExpanded}
+              />
+              <div className={isExpanded ? 'overflow-y-auto' : ''}>
+                <TextOverlayConfig config={step.config as TOC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} isExpanded={isExpanded} />
+              </div>
+            </div>
           )}
-          {step.type === 'video-generation' && <VideoGenConfig config={step.config as VGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} stepId={step.id} masterMode={masterMode} masterModels={masterModels} />}
-          {step.type === 'batch-video-generation' && <BatchVideoGenConfig config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} stepId={step.id} masterMode={masterMode} />}
-          {step.type === 'text-overlay' && <TextOverlayConfig config={step.config as TOC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} />}
-          {step.type === 'bg-music' && <BgMusicConfig config={step.config as BMC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} />}
-          {step.type === 'attach-video' && <AttachVideoConfig config={step.config as AVC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} />}
-        </div>
-
-        <div className="shadow-[0_-1px_2px_rgba(0,0,0,0.05)] p-4">
-          <button
-            onClick={() => { onRemoveStep(step.id); onClose(); }}
-            className="w-full rounded-lg border border-[var(--border)] py-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 dark:hover:border-red-900 dark:hover:bg-red-950"
-          >
-            Remove Step
-          </button>
+          {step.type === 'video-generation' && <VideoGenConfig config={step.config as VGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} stepId={step.id} masterMode={masterMode} masterModels={masterModels} isExpanded={isExpanded} />}
+          {step.type === 'batch-video-generation' && <BatchVideoGenConfig config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
+          {step.type === 'bg-music' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><BgMusicConfig config={step.config as BMC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
+          {step.type === 'attach-video' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><AttachVideoConfig config={step.config as AVC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
         </div>
       </div>
     );

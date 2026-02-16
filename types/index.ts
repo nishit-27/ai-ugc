@@ -62,7 +62,9 @@ export type Model = {
   name: string;
   description?: string;
   avatarUrl?: string;
+  avatarGcsUrl?: string;
   imageCount?: number;
+  accountCount?: number;
   linkedPlatforms?: string[];
   createdAt?: string;
 };

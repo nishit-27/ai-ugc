@@ -79,10 +79,11 @@ export default function BatchDetailModal({
                       >
                         <video
                           src={job.signedUrl || job.outputUrl}
+                          poster={job.imageUrl || undefined}
                           className="h-full w-full object-cover"
                           muted
                           playsInline
-                          preload="metadata"
+                          preload="none"
                           onLoadedMetadata={(e) => {
                             e.currentTarget.currentTime = 0.1;
                           }}

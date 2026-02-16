@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+import Image from 'next/image';
 import { Trash2 } from 'lucide-react';
 import type { GeneratedImage } from '@/types';
 
@@ -12,9 +14,19 @@ function formatDate(iso: string) {
   });
 }
 
+function ShimmerFill() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden bg-[var(--accent)]">
+      <div className="absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-white/70 to-transparent dark:via-white/20 animate-[shimmer_1.3s_linear_infinite]" />
+    </div>
+  );
+}
+
 function SkeletonCard() {
   return (
-    <div className="aspect-[3/4] animate-pulse rounded-lg bg-[var(--accent)]" />
+    <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+      <ShimmerFill />
+    </div>
   );
 }
 
@@ -29,6 +41,12 @@ export default function ImageGallery({
   onImageClick: (image: GeneratedImage) => void;
   onDelete: (id: string) => void;
 }) {
+  const [loadedById, setLoadedById] = useState<Record<string, true>>({});
+
+  const markLoaded = (id: string) => {
+    setLoadedById((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
+  };
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -52,22 +70,34 @@ export default function ImageGallery({
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {images.map((image) => (
+      {images.map((image, index) => {
+        const displayUrl = image.signedUrl
+          || (image.gcsUrl && !image.gcsUrl.includes('storage.googleapis.com') ? image.gcsUrl : '');
+        const isLoaded = !!loadedById[image.id];
+        return (
         <div
           key={image.id}
           className="group relative cursor-pointer overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] transition-shadow hover:shadow-lg"
           onClick={() => onImageClick(image)}
         >
-          <div className="aspect-[3/4] overflow-hidden">
-            {image.signedUrl ? (
-              <img
-                src={image.signedUrl}
-                alt={image.filename}
-                loading="lazy"
-                className="h-full w-full object-cover transition-transform group-hover:scale-105"
-              />
+          <div className="relative aspect-[3/4] overflow-hidden bg-[var(--accent)]">
+            {displayUrl ? (
+              <>
+                <Image
+                  src={displayUrl}
+                  alt={image.filename}
+                  fill
+                  priority={index < 4}
+                  quality={70}
+                  sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+                  className={`h-full w-full object-cover transition-[opacity,transform] duration-300 group-hover:scale-105 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+                  onLoad={() => markLoaded(image.id)}
+                  onError={() => markLoaded(image.id)}
+                />
+                {!isLoaded && <ShimmerFill />}
+              </>
             ) : (
-              <div className="h-full w-full animate-pulse bg-[var(--accent)]" />
+              <ShimmerFill />
             )}
           </div>
 
@@ -97,7 +127,8 @@ export default function ImageGallery({
             </p>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

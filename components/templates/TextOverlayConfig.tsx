@@ -35,10 +35,11 @@ function Section({
 }
 
 export default function TextOverlayConfig({
-  config, onChange,
+  config, onChange, isExpanded,
 }: {
   config: TOC;
   onChange: (c: TOC) => void;
+  isExpanded?: boolean;
 }) {
   const padRef = useRef<HTMLDivElement>(null);
 

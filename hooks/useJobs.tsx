@@ -4,9 +4,11 @@ import { useState, useEffect, useCallback, useRef, createContext, useContext, ty
 import type { Job } from '@/types';
 import { signUrls, getSignedUrl } from '@/lib/signedUrlClient';
 import { useStuckJobRecovery } from './useStuckJobRecovery';
+import { usePageVisibility } from './usePageVisibility';
 
 const ACTIVE_POLL_INTERVAL = 1_500;  // 1.5s when jobs are running
 const IDLE_POLL_INTERVAL   = 30_000; // 30s baseline
+const HIDDEN_POLL_INTERVAL = 120_000; // 2m when tab is hidden
 const FETCH_TIMEOUT        = 15_000; // 15s max per request
 const CACHE_KEY = 'ai-ugc-jobs';
 
@@ -26,12 +28,15 @@ function setCachedJobs(jobs: Job[]) {
 }
 
 function useJobsInternal() {
+  const isPageVisible = usePageVisibility();
   const [jobs, setJobs] = useState<Job[]>(getCachedJobs);
   const lastSnapshotRef = useRef('');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const loadJobsRef = useRef<() => Promise<void>>(null);
+  const scheduleNextRef = useRef<() => void>(() => {});
+  const wasVisibleRef = useRef(isPageVisible);
 
   // Auto-recover stuck jobs (processing > threshold)
   const { checkAndRecover } = useStuckJobRecovery(() => {
@@ -96,39 +101,70 @@ function useJobsInternal() {
   }, [checkAndRecover]);
 
   // Keep ref current for recovery callback
-  loadJobsRef.current = loadJobs;
+  useEffect(() => {
+    loadJobsRef.current = loadJobs;
+  }, [loadJobs]);
 
   // Adaptive polling: fast when active, slow when idle
   const scheduleNext = useCallback(() => {
     if (!mountedRef.current) return;
     setJobs((current) => {
-      const hasActive = current.some(
-        (j) => j.status === 'queued' || j.status === 'processing',
-      );
-      const delay = hasActive ? ACTIVE_POLL_INTERVAL : IDLE_POLL_INTERVAL;
+      let delay = HIDDEN_POLL_INTERVAL;
+      if (isPageVisible) {
+        const hasActive = current.some(
+          (j) => j.status === 'queued' || j.status === 'processing',
+        );
+        delay = hasActive ? ACTIVE_POLL_INTERVAL : IDLE_POLL_INTERVAL;
+      }
 
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(async () => {
         await loadJobs();
-        scheduleNext();
+        scheduleNextRef.current();
       }, delay);
 
       return current;
     });
-  }, [loadJobs]);
+  }, [isPageVisible, loadJobs]);
+
+  useEffect(() => {
+    scheduleNextRef.current = scheduleNext;
+  }, [scheduleNext]);
 
   useEffect(() => {
     mountedRef.current = true;
-    loadJobs().then(scheduleNext);
+    const kickoff = setTimeout(() => {
+      void loadJobs().then(scheduleNext);
+    }, 0);
 
     return () => {
+      clearTimeout(kickoff);
       mountedRef.current = false;
       abortRef.current?.abort();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [loadJobs, scheduleNext]);
 
+  useEffect(() => {
+    if (!mountedRef.current) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    scheduleNext();
+  }, [isPageVisible, scheduleNext]);
+
+  useEffect(() => {
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = isPageVisible;
+    if (!wasVisible && isPageVisible) {
+      const refreshOnReturn = setTimeout(() => {
+        void loadJobs();
+      }, 0);
+      return () => clearTimeout(refreshOnReturn);
+    }
+  }, [isPageVisible, loadJobs]);
+
   const forceRefresh = useCallback(async () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
     lastSnapshotRef.current = '';
     await loadJobs();
     scheduleNext();

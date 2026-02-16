@@ -109,7 +109,7 @@ export default function MasterJobCard({
             src={job.signedUrl || job.outputUrl}
             className="h-full w-full object-cover"
             muted
-            preload="metadata"
+            preload="none"
             onMouseEnter={(e) => { try { (e.target as HTMLVideoElement).play(); } catch {} }}
             onMouseLeave={(e) => { try { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; } catch {} }}
           />

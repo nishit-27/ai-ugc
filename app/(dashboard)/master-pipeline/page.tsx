@@ -12,8 +12,7 @@ import type { MasterModel } from '@/components/templates/NodeConfigPanel';
 import MasterCanvasPanel from '@/components/templates/MasterCanvasPanel';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
-import { signUrls } from '@/lib/signedUrlClient';
-import type { MiniAppStep, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, Model, ModelImage } from '@/types';
+import type { MiniAppStep, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, Model } from '@/types';
 
 const MASTER_DRAFT_KEY = 'ai-ugc-master-pipeline-draft';
 
@@ -47,7 +46,7 @@ export default function MasterPipelinePage() {
 
   // Pipeline state
   const [steps, setSteps] = useState<MiniAppStep[]>(() => draft.current?.steps ?? []);
-  const [name, setName] = useState(() => draft.current?.name ?? '');
+  const [name] = useState(() => draft.current?.name ?? '');
   const [videoSource, setVideoSource] = useState<'tiktok' | 'upload'>(() => draft.current?.videoSource ?? 'tiktok');
   const [tiktokUrl, setTiktokUrl] = useState(() => draft.current?.tiktokUrl ?? '');
   const [videoUrl, setVideoUrl] = useState(() => draft.current?.videoUrl ?? '');
@@ -73,65 +72,26 @@ export default function MasterPipelinePage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/models');
+        const res = await fetch('/api/models', { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
         const models: Model[] = Array.isArray(data) ? data : data.models || [];
-        if (!cancelled) setAllModels(models);
 
-        // Load primary images + account counts in parallel per model
         const counts: Record<string, number> = {};
         const images: Record<string, { signedUrl: string; gcsUrl: string }> = {};
-
-        await Promise.all(models.map(async (m) => {
-          // Images
-          try {
-            const imgRes = await fetch(`/api/models/${m.id}/images`);
-            if (imgRes.ok) {
-              const imgs: ModelImage[] = await imgRes.json();
-              const primary = imgs.find(i => i.isPrimary) || imgs[0];
-              if (primary) {
-                images[m.id] = { signedUrl: primary.gcsUrl, gcsUrl: primary.gcsUrl };
-              }
-            }
-          } catch {}
-          // Accounts
-          try {
-            const accRes = await fetch(`/api/models/${m.id}/accounts`);
-            if (accRes.ok) {
-              const mappings = await accRes.json();
-              counts[m.id] = Array.isArray(mappings) ? mappings.length : 0;
-            }
-          } catch {}
-        }));
-
-        // Collect all GCS URLs to sign in one batch (primary images + model avatars)
-        const allGcsUrls: string[] = [];
-        for (const img of Object.values(images)) {
-          if (img.gcsUrl?.includes('storage.googleapis.com')) allGcsUrls.push(img.gcsUrl);
-        }
-        for (const m of models) {
-          if (m.avatarUrl?.includes('storage.googleapis.com')) allGcsUrls.push(m.avatarUrl);
-        }
-
-        if (allGcsUrls.length > 0) {
-          const signed = await signUrls(allGcsUrls);
-          // Update primary image signed URLs
-          for (const [modelId, img] of Object.entries(images)) {
-            const s = signed.get(img.gcsUrl);
-            if (s) images[modelId] = { ...img, signedUrl: s };
-          }
-          // Update model avatarUrls in-place
-          for (const m of models) {
-            if (m.avatarUrl) {
-              const s = signed.get(m.avatarUrl);
-              if (s) m.avatarUrl = s;
-            }
+        for (const model of models) {
+          counts[model.id] = model.accountCount || 0;
+          const gcsUrl = model.avatarGcsUrl || model.avatarUrl || '';
+          if (gcsUrl) {
+            images[model.id] = {
+              signedUrl: model.avatarUrl || gcsUrl,
+              gcsUrl,
+            };
           }
         }
 
         if (!cancelled) {
-          setAllModels([...models]); // re-set with signed avatars
+          setAllModels(models);
           setAccountCounts(counts);
           setModelPrimaryImages(images);
         }
@@ -201,6 +161,7 @@ export default function MasterPipelinePage() {
   // Panel resize + responsive
   const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
@@ -468,35 +429,39 @@ export default function MasterPipelinePage() {
       {/* Main area: Canvas + Panel */}
       <div className="flex" style={{ height: 'calc(100vh - 7.5rem)' }}>
         {/* Left: Flow canvas */}
-        <div className="relative flex-1">
-          <PipelineBuilder
-            steps={steps}
-            onChange={setSteps}
-            selectedId={selectedNodeId}
-            onSelect={(id) => { setSelectedNodeId(id); if (isMobile && id) setPanelOpen(true); }}
-            videoSource={videoSource}
-            tiktokUrl={tiktokUrl}
-            videoUrl={videoUrl}
-            validationErrors={validationErrors}
-          />
-        </div>
+        {!panelExpanded && (
+          <div className="relative flex-1">
+            <PipelineBuilder
+              steps={steps}
+              onChange={setSteps}
+              selectedId={selectedNodeId}
+              onSelect={(id) => { setSelectedNodeId(id); if (isMobile && id) setPanelOpen(true); }}
+              videoSource={videoSource}
+              tiktokUrl={tiktokUrl}
+              videoUrl={videoUrl}
+              validationErrors={validationErrors}
+            />
+          </div>
+        )}
 
         {/* Right panel: MasterCanvasPanel (default) or NodeConfigPanel (when step selected) */}
         {panelOpen && (
           <>
-            {isMobile && (
+            {isMobile && !panelExpanded && (
               <div className="fixed inset-0 z-30 bg-black/30" onClick={() => setPanelOpen(false)} />
             )}
 
             <div
-              className={`relative shrink-0 ${
-                isMobile
-                  ? 'fixed right-0 top-0 z-40 h-full w-[85vw] max-w-[420px] shadow-2xl'
-                  : 'my-3 mr-3 overflow-hidden overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-lg'
+              className={`relative shrink-0 transition-all duration-200 ${
+                panelExpanded
+                  ? 'flex-1 my-3 mx-3 overflow-hidden overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-lg'
+                  : isMobile
+                    ? 'fixed right-0 top-0 z-40 h-full w-[85vw] max-w-[420px] shadow-2xl'
+                    : 'my-3 mr-3 overflow-hidden overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-lg'
               }`}
-              style={isMobile ? undefined : { width: panelWidth }}
+              style={panelExpanded || isMobile ? undefined : { width: panelWidth }}
             >
-              {!isMobile && (
+              {!isMobile && !panelExpanded && (
                 <div
                   onMouseDown={onDragStart}
                   className="absolute left-0 top-0 z-10 flex h-full w-4 cursor-col-resize items-center justify-center"
@@ -514,10 +479,12 @@ export default function MasterPipelinePage() {
                   steps={steps}
                   onUpdateStep={(id, updated) => { handleUpdateStep(id, updated); setValidationErrors((prev) => { const next = new Map(prev); next.delete(id); return next; }); }}
                   onRemoveStep={handleRemoveStep}
-                  onClose={() => { setSelectedNodeId(null); if (isMobile) setPanelOpen(false); }}
+                  onClose={() => { setSelectedNodeId(null); setPanelExpanded(false); if (isMobile) setPanelOpen(false); }}
                   validationError={selectedNodeId !== 'source' ? validationErrors.get(selectedNodeId) : undefined}
                   masterMode
                   masterModels={masterModels}
+                  isExpanded={panelExpanded}
+                  onToggleExpand={() => setPanelExpanded((p) => !p)}
                   sourceConfig={{
                     videoSource,
                     tiktokUrl,

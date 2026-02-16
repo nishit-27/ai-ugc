@@ -3,9 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { TemplateJob } from '@/types';
 import { useStuckJobRecovery } from './useStuckJobRecovery';
+import { usePageVisibility } from './usePageVisibility';
 
 const ACTIVE_POLL_INTERVAL = 1_500;  // 1.5s when jobs are running
 const IDLE_POLL_INTERVAL   = 30_000; // 30s baseline
+const HIDDEN_POLL_INTERVAL = 120_000; // 2m when tab is hidden
 const FETCH_TIMEOUT        = 15_000; // 15s max per request
 const CACHE_KEY = 'ai-ugc-template-jobs';
 
@@ -42,6 +44,7 @@ function setCachedJobs(jobs: TemplateJob[]) {
 }
 
 export function useTemplates() {
+  const isPageVisible = usePageVisibility();
   const [jobs, setJobs] = useState<TemplateJob[]>(getCachedJobs);
   const [loading, setLoading] = useState(() => getCachedJobs().length === 0);
   const [refreshing, setRefreshing] = useState(false);
@@ -50,6 +53,7 @@ export function useTemplates() {
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const loadJobsRef = useRef<() => Promise<void>>(null);
+  const wasVisibleRef = useRef(isPageVisible);
 
   // Auto-recover stuck jobs (processing > 10 min)
   const { checkAndRecover } = useStuckJobRecovery(() => {
@@ -67,7 +71,7 @@ export function useTemplates() {
     const timeout = setTimeout(() => ac.abort(), FETCH_TIMEOUT);
 
     try {
-      const res = await fetch('/api/templates', { signal: ac.signal, cache: 'no-store' });
+      const res = await fetch('/api/templates', { signal: ac.signal, cache: 'default' });
       clearTimeout(timeout);
       if (!mountedRef.current) return;
       if (!res.ok) return; // silently skip bad responses
@@ -112,10 +116,13 @@ export function useTemplates() {
     if (!mountedRef.current) return;
     // Read current jobs from ref-stable state via functional update trick
     setJobs((current) => {
-      const hasActive = current.some(
-        (j) => j.status === 'queued' || j.status === 'processing',
-      );
-      const delay = hasActive ? ACTIVE_POLL_INTERVAL : IDLE_POLL_INTERVAL;
+      let delay = HIDDEN_POLL_INTERVAL;
+      if (isPageVisible) {
+        const hasActive = current.some(
+          (j) => j.status === 'queued' || j.status === 'processing',
+        );
+        delay = hasActive ? ACTIVE_POLL_INTERVAL : IDLE_POLL_INTERVAL;
+      }
 
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(async () => {
@@ -125,7 +132,7 @@ export function useTemplates() {
 
       return current; // no state change
     });
-  }, [loadJobs]);
+  }, [isPageVisible, loadJobs]);
 
   // Mount: load immediately, start adaptive loop
   useEffect(() => {
@@ -138,6 +145,20 @@ export function useTemplates() {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [loadJobs, scheduleNext]);
+
+  useEffect(() => {
+    if (!mountedRef.current) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    scheduleNext();
+  }, [isPageVisible, scheduleNext]);
+
+  useEffect(() => {
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = isPageVisible;
+    if (!wasVisible && isPageVisible) {
+      void loadJobs();
+    }
+  }, [isPageVisible, loadJobs]);
 
   const refresh = useCallback(async () => {
     // Cancel any pending poll so it can't abort our refresh fetch

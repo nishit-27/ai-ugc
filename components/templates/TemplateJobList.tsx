@@ -155,8 +155,7 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
                     className="absolute inset-0 h-full w-full object-contain"
                     muted
                     playsInline
-                    preload="metadata"
-                    onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }}
+                    preload="none"
                   />
                 ) : hasVideo && !resolvedUrl ? (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
@@ -195,7 +194,7 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
               {/* Info bar */}
               <div className="bg-[var(--surface)] px-2.5 py-2">
                 <p className="truncate text-xs font-medium">{job.name}</p>
-                <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                <p className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">
                   {job.createdAt && (
                     <>
                       {new Date(job.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })},{' '}
@@ -203,7 +202,7 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
                     </>
                   )}
                   {job.createdBy && (
-                    <span className="ml-1 text-[var(--text-muted)]">&middot; By {job.createdBy}</span>
+                    <span className="ml-1 opacity-70">&middot; By {job.createdBy}</span>
                   )}
                 </p>
               </div>
@@ -292,7 +291,7 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
                     src={activeVideoSrc}
                     controls
                     playsInline
-                    preload="metadata"
+                    preload="none"
                     className="absolute inset-0 h-full w-full object-contain"
                   />
                 ) : (

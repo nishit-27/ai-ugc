@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { X, Loader2, RotateCcw, Check, ImageIcon, Sparkles, RefreshCw } from 'lucide-react';
+import { signUrls } from '@/lib/signedUrlClient';
 import type { TemplateJob, ModelImage, MasterConfigModel, VideoGenConfig } from '@/types';
 
 type ExtractedFrame = {
@@ -44,12 +45,30 @@ export default function RegenerateModal({
   const [selectedFirstFrame, setSelectedFirstFrame] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  // Get source video URL from the job
-  const sourceVideoUrl = job.videoUrl;
+  // Resolve source video URL (sign GCS URLs so extract-frames API can download)
+  const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Always use the raw videoUrl — job.signedUrl may be expired and
+    // passing an already-signed URL to signUrls produces a bad path (404).
+    const rawUrl = job.videoUrl;
+    if (!rawUrl) return;
+
+    if (rawUrl.includes('storage.googleapis.com')) {
+      signUrls([rawUrl]).then((signed) => {
+        setResolvedVideoUrl(signed.get(rawUrl) || rawUrl);
+      }).catch(() => {
+        setResolvedVideoUrl(rawUrl);
+      });
+    } else {
+      setResolvedVideoUrl(rawUrl);
+    }
+  }, [job.videoUrl]);
 
   // Get current pipeline config
   const videoGenStep = job.pipeline.find((s) => s.type === 'video-generation');
   const videoGenConfig = videoGenStep?.config as VideoGenConfig | undefined;
+
   // Fetch model images
   useEffect(() => {
     if (!job.modelId) {
@@ -108,7 +127,6 @@ export default function RegenerateModal({
       const img = images.find((i) => i.id === selectedImageId);
       return img?.gcsUrl || null;
     }
-    // Current image
     if (currentImageId) {
       const img = images.find((i) => i.id === currentImageId);
       return img?.gcsUrl || null;
@@ -118,23 +136,23 @@ export default function RegenerateModal({
 
   // Extract frames from source video
   const handleExtractFrames = async () => {
-    if (!sourceVideoUrl) return;
+    if (!resolvedVideoUrl) return;
     setIsExtracting(true);
     setExtractedFrames([]);
     setSelectedFrameUrl(null);
     setFirstFrameOptions([]);
     setSelectedFirstFrame(null);
+    setGenerateError(null);
     try {
       const res = await fetch('/api/extract-frames', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoUrl: sourceVideoUrl }),
+        body: JSON.stringify({ videoUrl: resolvedVideoUrl }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to extract frames');
       const frames: ExtractedFrame[] = data.frames || [];
       setExtractedFrames(frames);
-      // Auto-select best frame
       if (frames.length > 0) {
         setSelectedFrameUrl(frames[0].gcsUrl);
       }
@@ -162,6 +180,7 @@ export default function RegenerateModal({
           modelImageUrl,
           frameImageUrl: selectedFrameUrl,
           resolution: videoGenConfig?.firstFrameResolution || '1K',
+          modelId: job.modelId || modelInfo?.modelId || null,
         }),
       });
       const data = await res.json();
@@ -177,12 +196,10 @@ export default function RegenerateModal({
   const handleRegenerate = async () => {
     setSubmitting(true);
     try {
-      // If a first frame option was selected, use that as the image override
       if (selectedFirstFrame) {
         onRegenerate(job.id, { imageUrl: selectedFirstFrame });
         return;
       }
-      // If a different model image was selected, use that
       if (selectedImageId) {
         const img = images.find((i) => i.id === selectedImageId);
         if (img) {
@@ -190,7 +207,6 @@ export default function RegenerateModal({
           return;
         }
       }
-      // Regenerate with same image
       onRegenerate(job.id);
     } finally {
       setSubmitting(false);
@@ -200,20 +216,20 @@ export default function RegenerateModal({
   const hasChanges = !!selectedImageId || !!selectedFirstFrame;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-2xl border border-[var(--border)]"
+        className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-[var(--surface)] shadow-2xl border border-[var(--border)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-master-light">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-master-light">
               <RotateCcw className="h-4 w-4 text-master dark:text-master-foreground" />
             </div>
             <div>
               <h3 className="text-sm font-semibold">Edit & Regenerate</h3>
-              <p className="text-[11px] text-[var(--text-muted)]">
+              <p className="text-[11px] text-[var(--text-muted)] truncate max-w-[200px]">
                 {modelInfo?.modelName || job.name}
               </p>
             </div>
@@ -224,7 +240,7 @@ export default function RegenerateModal({
         </div>
 
         {/* Body - scrollable */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
 
           {/* ── Section 1: Model Image ── */}
           <div>
@@ -242,7 +258,7 @@ export default function RegenerateModal({
                 <p className="text-xs text-[var(--text-muted)]">No model images found</p>
               </div>
             ) : (
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-5 gap-1.5">
                 {images.map((img) => {
                   const isCurrent = isCurrentImage(img);
                   const isSelected = selectedImageId === img.id;
@@ -254,7 +270,6 @@ export default function RegenerateModal({
                       onClick={() => {
                         if (isCurrent && !selectedImageId) return;
                         setSelectedImageId(isSelected ? null : img.id);
-                        // Reset first frame when changing image
                         setFirstFrameOptions([]);
                         setSelectedFirstFrame(null);
                       }}
@@ -287,7 +302,7 @@ export default function RegenerateModal({
           </div>
 
           {/* ── Section 2: First Frame Generation ── */}
-          {sourceVideoUrl && (
+          {resolvedVideoUrl && (
             <div className="rounded-xl bg-gradient-to-b from-master-light/50 to-[var(--background)] overflow-hidden">
               <div className="px-4 py-3 flex items-center gap-2.5">
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-master">
@@ -300,6 +315,14 @@ export default function RegenerateModal({
               </div>
 
               <div className="px-4 pb-4 space-y-3">
+                {/* Error message — always visible */}
+                {generateError && (
+                  <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/50 dark:text-red-400">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+                    {generateError}
+                  </div>
+                )}
+
                 {/* Extract frames button / frame grid */}
                 {extractedFrames.length === 0 && !isExtracting ? (
                   <button
@@ -314,7 +337,7 @@ export default function RegenerateModal({
                     <span className="text-xs text-[var(--text-muted)]">Extracting frames...</span>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <p className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Pick a scene frame</p>
                       <button
@@ -334,6 +357,7 @@ export default function RegenerateModal({
                               setSelectedFrameUrl(frame.gcsUrl);
                               setFirstFrameOptions([]);
                               setSelectedFirstFrame(null);
+                              setGenerateError(null);
                             }}
                             className={`group relative aspect-square overflow-hidden rounded-lg transition-all ${
                               isSel ? 'ring-2 ring-master ring-offset-1' : 'hover:opacity-80'
@@ -425,8 +449,6 @@ export default function RegenerateModal({
                         </div>
                       </div>
                     )}
-
-                    {generateError && <p className="text-xs text-red-500">{generateError}</p>}
                   </div>
                 )}
               </div>
@@ -435,7 +457,7 @@ export default function RegenerateModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center gap-2 border-t border-[var(--border)] px-5 py-4">
+        <div className="flex items-center gap-2 border-t border-[var(--border)] px-5 py-3.5">
           <button
             onClick={onClose}
             className="flex-1 rounded-xl border border-[var(--border)] px-4 py-2.5 text-xs font-medium transition-colors hover:bg-[var(--accent)]"

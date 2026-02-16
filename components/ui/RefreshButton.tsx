@@ -8,6 +8,7 @@ export default function RefreshButton({ onClick }: { onClick: () => Promise<void
 
   return (
     <button
+      type="button"
       onClick={async () => {
         setSpinning(true);
         try {

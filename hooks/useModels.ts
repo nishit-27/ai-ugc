@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { signUrls } from '@/lib/signedUrlClient';
 import type { Model, ModelImage } from '@/types';
+import { usePageVisibility } from './usePageVisibility';
 
 const REFRESH_INTERVAL = 60_000;
 
@@ -12,10 +13,12 @@ let _cacheTime = 0;
 const _imageCache = new Map<string, ModelImage[]>();
 
 export function useModels() {
+  const isPageVisible = usePageVisibility();
   const [models, setModels] = useState<Model[]>(_cache);
   const [modelImages, setModelImages] = useState<ModelImage[]>([]);
   const [isLoadingPage, setIsLoadingPage] = useState(_cache.length === 0);
   const [imagesLoading, setImagesLoading] = useState(false);
+  const wasVisibleRef = useRef(isPageVisible);
 
   const loadModels = useCallback(async (force = false) => {
     const now = Date.now();
@@ -37,6 +40,7 @@ export function useModels() {
 
       // Batch-sign avatar URLs client-side
       const avatarUrls = result
+        .filter((m) => !m.avatarUrl?.includes('X-Goog-Signature='))
         .map((m) => m.avatarUrl)
         .filter((url): url is string => !!url && url.includes('storage.googleapis.com'));
 
@@ -74,6 +78,7 @@ export function useModels() {
       setModelImages(images);
 
       const gcsUrls = images
+        .filter((img) => !img.signedUrl)
         .map((img) => img.gcsUrl)
         .filter((url) => url?.includes('storage.googleapis.com'));
 
@@ -102,9 +107,18 @@ export function useModels() {
 
   // 60s baseline refresh
   useEffect(() => {
+    if (!isPageVisible) return;
     const id = setInterval(() => loadModels(true), REFRESH_INTERVAL);
     return () => clearInterval(id);
-  }, [loadModels]);
+  }, [isPageVisible, loadModels]);
+
+  useEffect(() => {
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = isPageVisible;
+    if (!wasVisible && isPageVisible) {
+      void loadModels(true);
+    }
+  }, [isPageVisible, loadModels]);
 
   const refresh = useCallback(() => loadModels(true), [loadModels]);
 

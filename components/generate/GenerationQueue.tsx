@@ -61,11 +61,11 @@ export default function GenerationQueue() {
                 {hasVideo ? (
                   <video
                     src={job.signedUrl || job.outputUrl}
+                    poster={job.imageUrl || undefined}
                     className="absolute inset-0 h-full w-full object-contain"
                     muted
                     playsInline
-                    preload="metadata"
-                    onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }}
+                    preload="none"
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
@@ -179,7 +179,7 @@ export default function GenerationQueue() {
                     src={videoSrc}
                     controls
                     playsInline
-                    preload="metadata"
+                    preload="none"
                     className="absolute inset-0 h-full w-full object-contain"
                   />
                 ) : (

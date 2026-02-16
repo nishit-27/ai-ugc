@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { type ReactNode } from 'react';
 import { ImageIcon, Link2 } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaFacebook, FaXTwitter, FaLinkedin } from 'react-icons/fa6';
@@ -61,7 +62,7 @@ export default function ModelGrid({
 
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-      {models.map((model) => {
+      {models.map((model, index) => {
         const platforms = model.linkedPlatforms || [];
         return (
           <div
@@ -72,9 +73,13 @@ export default function ModelGrid({
             {/* Avatar / Hero Image */}
             <div className="relative aspect-square bg-[var(--background)]">
               {model.avatarUrl ? (
-                <img
+                <Image
                   src={model.avatarUrl}
                   alt={model.name}
+                  fill
+                  priority={index < 4}
+                  quality={70}
+                  sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
                   className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                 />
               ) : (

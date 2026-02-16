@@ -78,11 +78,13 @@ export default function TextOverlayPreview({
   onChange,
   videoUrl,
   isLoadingVideo,
+  isExpanded,
 }: {
   config: TextOverlayConfig;
   onChange: (config: TextOverlayConfig) => void;
   videoUrl?: string;
   isLoadingVideo?: boolean;
+  isExpanded?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -316,7 +318,7 @@ export default function TextOverlayPreview({
       <div
         ref={containerRef}
         className="relative mx-auto overflow-hidden rounded-xl bg-[#9ca3af] dark:bg-[#2a2a2a]"
-        style={{ aspectRatio: '9/16', maxHeight: 340 }}
+        style={{ aspectRatio: '9/16', maxHeight: isExpanded ? 600 : 340 }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}

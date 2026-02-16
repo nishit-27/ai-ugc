@@ -1,120 +1,242 @@
 /**
- * Client-side signed URL cache and batch signer.
- * All components share a single in-memory cache so URLs are signed at most once.
+ * Client-side signed URL cache.
+ * Persists across reloads to avoid repeated signing for the same GCS object.
  */
 
-const _cache = new Map<string, string>();
-let _pendingBatch: string[] = [];
-let _batchTimer: ReturnType<typeof setTimeout> | null = null;
-let _batchPromise: Promise<void> | null = null;
-const _waiters = new Map<string, ((url: string) => void)[]>();
+type CacheEntry = {
+  signedUrl: string;
+  expiresAt: number;
+  updatedAt: number;
+};
 
-function isGcsUrl(url: string): boolean {
-  return url.includes('storage.googleapis.com');
+const STORAGE_KEY = 'ai-ugc-signed-url-cache-v3';
+const STORAGE_MAX_ENTRIES = 1000;
+const EXPIRY_SAFETY_MS = 60_000;
+const DEFAULT_SIGNED_TTL_MS = 6 * 60 * 60 * 1000;
+
+const cache = new Map<string, CacheEntry>();
+const inflightByUrl = new Map<string, Promise<string>>();
+let hydrated = false;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function isBrowser(): boolean {
+  return typeof window !== 'undefined';
 }
 
-/**
- * Flush pending URLs — send them to the batch signing endpoint.
- */
-async function flushBatch(): Promise<void> {
-  const urls = [..._pendingBatch];
-  _pendingBatch = [];
-  _batchTimer = null;
-  _batchPromise = null;
+function isGcsUrl(url: string): boolean {
+  return typeof url === 'string' && url.includes('storage.googleapis.com');
+}
 
-  if (urls.length === 0) return;
+function parseGoogDate(raw: string | null): number | null {
+  if (!raw || raw.length < 16) return null;
+  const year = Number(raw.slice(0, 4));
+  const month = Number(raw.slice(4, 6));
+  const day = Number(raw.slice(6, 8));
+  const hour = Number(raw.slice(9, 11));
+  const minute = Number(raw.slice(11, 13));
+  const second = Number(raw.slice(13, 15));
 
+  if ([year, month, day, hour, minute, second].some((n) => Number.isNaN(n))) {
+    return null;
+  }
+  return Date.UTC(year, month - 1, day, hour, minute, second);
+}
+
+function parseSignedUrlExpiry(signedUrl: string): number {
   try {
-    const res = await fetch('/api/signed-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls }),
-    });
+    const parsed = new URL(signedUrl);
+    const googDate = parseGoogDate(parsed.searchParams.get('X-Goog-Date'));
+    const googExpiresRaw = parsed.searchParams.get('X-Goog-Expires');
+    const googExpiresSec = googExpiresRaw ? Number(googExpiresRaw) : NaN;
 
-    if (!res.ok) throw new Error(`Sign failed: ${res.status}`);
+    if (googDate && Number.isFinite(googExpiresSec) && googExpiresSec > 0) {
+      return googDate + googExpiresSec * 1000;
+    }
+  } catch {
+    // Ignore parse failures and use default TTL.
+  }
+  return Date.now() + DEFAULT_SIGNED_TTL_MS;
+}
 
-    const { signed } = (await res.json()) as { signed: Record<string, string> };
+function isValidEntry(entry: CacheEntry | undefined): entry is CacheEntry {
+  return !!entry && entry.expiresAt - EXPIRY_SAFETY_MS > Date.now();
+}
 
-    for (const [original, signedUrl] of Object.entries(signed)) {
-      _cache.set(original, signedUrl);
-      const waiters = _waiters.get(original);
-      if (waiters) {
-        for (const resolve of waiters) resolve(signedUrl);
-        _waiters.delete(original);
+function schedulePersist() {
+  if (!isBrowser()) return;
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    try {
+      const serialized = Array.from(cache.entries())
+        .filter(([, entry]) => isValidEntry(entry))
+        .sort((a, b) => b[1].updatedAt - a[1].updatedAt)
+        .slice(0, STORAGE_MAX_ENTRIES);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
+    } catch {
+      // Ignore localStorage failures.
+    }
+  }, 50);
+}
+
+function hydrateCache() {
+  if (hydrated || !isBrowser()) return;
+  hydrated = true;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Array<[string, CacheEntry]>;
+    if (!Array.isArray(parsed)) return;
+    for (const item of parsed) {
+      if (!Array.isArray(item) || item.length !== 2) continue;
+      const [original, entry] = item;
+      if (!isGcsUrl(original)) continue;
+      if (!entry || typeof entry.signedUrl !== 'string' || typeof entry.expiresAt !== 'number') continue;
+      if (isValidEntry(entry)) {
+        cache.set(original, entry);
       }
     }
-  } catch (e) {
-    console.error('[SignedUrl] Batch sign failed:', e);
-    // Resolve waiters with original URLs so images still render
-    for (const url of urls) {
-      _cache.set(url, url);
-      const waiters = _waiters.get(url);
-      if (waiters) {
-        for (const resolve of waiters) resolve(url);
-        _waiters.delete(url);
-      }
-    }
+  } catch {
+    // Ignore localStorage failures.
   }
 }
 
+function setCacheEntry(originalUrl: string, signedUrl: string) {
+  const now = Date.now();
+  cache.set(originalUrl, {
+    signedUrl,
+    expiresAt: parseSignedUrlExpiry(signedUrl),
+    updatedAt: now,
+  });
+  schedulePersist();
+}
+
+async function signChunk(urls: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (urls.length === 0) return out;
+
+  const response = await fetch('/api/signed-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls }),
+  });
+  if (!response.ok) {
+    throw new Error(`Sign failed: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as { signed?: Record<string, string> };
+  const signed = payload.signed || {};
+  for (const url of urls) {
+    const resolved = signed[url] || url;
+    out.set(url, resolved);
+    if (isGcsUrl(url) && resolved !== url) {
+      setCacheEntry(url, resolved);
+    }
+  }
+  return out;
+}
+
 /**
- * Get a signed URL for a GCS URL. Returns from cache or queues for batch signing.
- * Non-GCS URLs are returned immediately.
+ * Returns cached signed URL immediately (or the original URL when not cached).
  */
 export function getSignedUrl(gcsUrl: string): string {
   if (!isGcsUrl(gcsUrl)) return gcsUrl;
-  return _cache.get(gcsUrl) || gcsUrl;
+  hydrateCache();
+  const entry = cache.get(gcsUrl);
+  if (!isValidEntry(entry)) {
+    if (entry) cache.delete(gcsUrl);
+    return gcsUrl;
+  }
+  return entry.signedUrl;
 }
 
 /**
- * Sign a batch of GCS URLs at once. Returns a map of original → signed.
- * Uses the cache for already-signed URLs and batch-signs the rest.
+ * Sign a batch of URLs with aggressive dedupe + persistent caching.
  */
 export async function signUrls(urls: string[]): Promise<Map<string, string>> {
+  hydrateCache();
   const result = new Map<string, string>();
-  const toSign: string[] = [];
+  const toSign = [...new Set(urls)].filter(Boolean);
 
-  for (const url of urls) {
+  for (const url of toSign) {
     if (!isGcsUrl(url)) {
       result.set(url, url);
-    } else if (_cache.has(url)) {
-      result.set(url, _cache.get(url)!);
-    } else {
-      toSign.push(url);
+      continue;
     }
+    const cached = cache.get(url);
+    if (isValidEntry(cached)) {
+      result.set(url, cached.signedUrl);
+      continue;
+    }
+    if (cached) cache.delete(url);
   }
 
-  if (toSign.length === 0) return result;
+  const unsigned = toSign.filter((url) => isGcsUrl(url) && !result.has(url));
+  if (unsigned.length === 0) return result;
 
-  // Sign in chunks of 100
-  for (let i = 0; i < toSign.length; i += 100) {
-    const chunk = toSign.slice(i, i + 100);
-    try {
-      const res = await fetch('/api/signed-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls: chunk }),
+  const immediateInflight: Promise<void>[] = [];
+  const pendingForRequest: string[] = [];
+
+  for (const url of unsigned) {
+    const inflight = inflightByUrl.get(url);
+    if (inflight) {
+      immediateInflight.push(
+        inflight
+          .then((signed) => {
+            result.set(url, signed);
+          })
+          .catch(() => {
+            result.set(url, url);
+          })
+      );
+      continue;
+    }
+    pendingForRequest.push(url);
+  }
+
+  for (let i = 0; i < pendingForRequest.length; i += 100) {
+    const chunk = pendingForRequest.slice(i, i + 100);
+    const chunkPromise = signChunk(chunk)
+      .then((chunkResult) => {
+        for (const [original, signed] of chunkResult.entries()) {
+          result.set(original, signed);
+        }
+      })
+      .catch(() => {
+        for (const original of chunk) {
+          result.set(original, original);
+        }
+      })
+      .finally(() => {
+        for (const original of chunk) {
+          inflightByUrl.delete(original);
+        }
       });
-      if (!res.ok) throw new Error(`Sign failed: ${res.status}`);
-      const { signed } = (await res.json()) as { signed: Record<string, string> };
-      for (const [original, signedUrl] of Object.entries(signed)) {
-        _cache.set(original, signedUrl);
-        result.set(original, signedUrl);
-      }
-    } catch {
-      // Fallback: use original URLs
-      for (const url of chunk) {
-        result.set(url, url);
-      }
+
+    for (const original of chunk) {
+      inflightByUrl.set(
+        original,
+        chunkPromise.then(() => result.get(original) || original)
+      );
+    }
+    immediateInflight.push(chunkPromise);
+  }
+
+  await Promise.all(immediateInflight);
+
+  for (const url of toSign) {
+    if (!result.has(url)) {
+      result.set(url, url);
     }
   }
 
   return result;
 }
 
-/**
- * Clear the signed URL cache (e.g. when URLs expire).
- */
 export function clearSignedUrlCache(): void {
-  _cache.clear();
+  cache.clear();
+  inflightByUrl.clear();
+  if (isBrowser()) {
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  }
 }

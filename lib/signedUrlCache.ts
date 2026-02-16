@@ -1,6 +1,6 @@
 import { getSignedUrlFromPublicUrl } from '@/lib/storage';
 
-const TTL = 60 * 60 * 1000; // 1 hour (URLs are valid for 7 days)
+const TTL = 6 * 24 * 60 * 60 * 1000; // 6 days (URLs are valid for 7 days)
 const cache = new Map<string, { url: string; ts: number }>();
 
 /**

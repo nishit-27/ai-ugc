@@ -4,10 +4,12 @@ import { useEffect, useState, useRef } from 'react';
 import { useModels } from '@/hooks/useModels';
 import { X, Clock, Monitor, Volume2, VolumeX, ChevronDown, ChevronUp, Check, RefreshCw, Sparkles, Upload, User, Expand } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
-import type { VideoGenConfig as VGC, ModelImage } from '@/types';
+import { signUrls } from '@/lib/signedUrlClient';
+import type { VideoGenConfig as VGC, ModelImage, GeneratedImage } from '@/types';
 import type { MasterModel } from './NodeConfigPanel';
 
 type ImageSource = 'model' | 'upload';
+type FirstFrameInputMode = 'generate' | 'direct-library';
 
 type ExtractedFrame = {
   url: string;
@@ -22,6 +24,23 @@ type FirstFrameOption = {
   gcsUrl: string;
 };
 
+async function ensureSignedGeneratedImages(images: GeneratedImage[]): Promise<GeneratedImage[]> {
+  const missing = images
+    .filter((img) => !img.signedUrl && img.gcsUrl?.includes('storage.googleapis.com'))
+    .map((img) => img.gcsUrl);
+  if (missing.length === 0) return images;
+
+  try {
+    const signed = await signUrls(missing);
+    return images.map((img) => ({
+      ...img,
+      signedUrl: img.signedUrl || signed.get(img.gcsUrl) || img.signedUrl,
+    }));
+  } catch {
+    return images;
+  }
+}
+
 // ── Module-level cache: survives unmount/remount when switching pipeline steps ──
 type CachedStepState = {
   extractedFrames: ExtractedFrame[];
@@ -32,6 +51,8 @@ type CachedStepState = {
   originalModelImageUrl: string | null;
   uploadedGcsUrl: string | null;
   showImageGrid: boolean;
+  firstFrameInputMode: FirstFrameInputMode;
+  selectedFirstFrameDisplayUrl: string | null;
   // Master mode
   masterPerModelResults: Record<string, FirstFrameOption[]>;
   masterAutoExtracted: boolean;
@@ -107,7 +128,7 @@ function Dropdown({
 }
 
 export default function VideoGenConfig({
-  config, onChange, sourceDuration, sourceVideoUrl, stepId, masterMode, masterModels,
+  config, onChange, sourceDuration, sourceVideoUrl, stepId, masterMode, masterModels, isExpanded,
 }: {
   config: VGC;
   onChange: (c: VGC) => void;
@@ -116,6 +137,7 @@ export default function VideoGenConfig({
   stepId?: string;
   masterMode?: boolean;
   masterModels?: MasterModel[];
+  isExpanded?: boolean;
 }) {
   const { models, modelImages, imagesLoading, loadModelImages } = useModels();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -130,6 +152,13 @@ export default function VideoGenConfig({
   const [showImageGrid, setShowImageGrid] = useState(
     () => cached?.showImageGrid ?? !config.imageId
   );
+  const [firstFrameInputMode, setFirstFrameInputMode] = useState<FirstFrameInputMode>(
+    () => cached?.firstFrameInputMode ?? 'generate'
+  );
+  const [selectedFirstFrameDisplayUrl, setSelectedFirstFrameDisplayUrl] = useState<string | null>(
+    () => cached?.selectedFirstFrameDisplayUrl ?? null
+  );
+  const [isResolvingSelectedFirstFrame, setIsResolvingSelectedFirstFrame] = useState(false);
 
   // First Frame state
   const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>(
@@ -150,6 +179,10 @@ export default function VideoGenConfig({
   const clearFirstFrameOptions = () => { setFirstFrameOptionsRaw([]); setDismissedOptions(new Set()); };
   const setFirstFrameOptions = (opts: FirstFrameOption[]) => { setFirstFrameOptionsRaw(opts); setDismissedOptions(new Set()); };
   const [generateError, setGenerateError] = useState<string | null>(null);
+  // Library (previously generated first-frame images)
+  const [libraryImages, setLibraryImages] = useState<GeneratedImage[]>([]);
+  const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
   const [showScenePicker, setShowScenePicker] = useState(false);
   const [isUploadingScene, setIsUploadingScene] = useState(false);
   const [sceneDisplayUrl, setSceneDisplayUrl] = useState<string | null>(
@@ -166,6 +199,9 @@ export default function VideoGenConfig({
     () => cached?.masterPerModelResults ?? {}
   );
   const [masterGeneratingIds, setMasterGeneratingIds] = useState<Set<string>>(new Set());
+  const [masterLibraryModelId, setMasterLibraryModelId] = useState<string | null>(null);
+  const [masterLibraryImages, setMasterLibraryImages] = useState<GeneratedImage[]>([]);
+  const [isLoadingMasterLibrary, setIsLoadingMasterLibrary] = useState(false);
   const [isMasterGeneratingAll, setIsMasterGeneratingAll] = useState(false);
   const [masterProgress, setMasterProgress] = useState({ done: 0, total: 0 });
   const [masterAutoExtracted, setMasterAutoExtracted] = useState(() => cached?.masterAutoExtracted ?? false);
@@ -183,6 +219,8 @@ export default function VideoGenConfig({
         originalModelImageUrl: originalModelImageUrlRef.current,
         uploadedGcsUrl: uploadedGcsUrlRef.current,
         showImageGrid: showImageGridRef.current,
+        firstFrameInputMode: firstFrameInputModeRef.current,
+        selectedFirstFrameDisplayUrl: selectedFirstFrameDisplayUrlRef.current,
         masterPerModelResults: masterPerModelResultsRef.current,
         masterAutoExtracted: masterAutoExtractedRef.current,
       });
@@ -203,6 +241,10 @@ export default function VideoGenConfig({
   sceneDisplayUrlRef.current = sceneDisplayUrl;
   const showImageGridRef = useRef(showImageGrid);
   showImageGridRef.current = showImageGrid;
+  const firstFrameInputModeRef = useRef(firstFrameInputMode);
+  firstFrameInputModeRef.current = firstFrameInputMode;
+  const selectedFirstFrameDisplayUrlRef = useRef(selectedFirstFrameDisplayUrl);
+  selectedFirstFrameDisplayUrlRef.current = selectedFirstFrameDisplayUrl;
   const masterPerModelResultsRef = useRef(masterPerModelResults);
   masterPerModelResultsRef.current = masterPerModelResults;
   const masterAutoExtractedRef = useRef(masterAutoExtracted);
@@ -238,9 +280,13 @@ export default function VideoGenConfig({
 
   const handleImageSourceChange = (src: ImageSource) => {
     setImageSource(src);
+    setFirstFrameInputMode('generate');
+    setSelectedFirstFrameDisplayUrl(null);
     // Reset first frame state when changing image source
     clearFirstFrameOptions();
     setGenerateError(null);
+    setShowLibrary(false);
+    setLibraryImages([]);
     originalModelImageUrlRef.current = null;
     uploadedGcsUrlRef.current = null;
     if (src === 'upload') {
@@ -312,6 +358,7 @@ export default function VideoGenConfig({
   const handleGenerateFirstFrame = async () => {
     const modelImageUrl = resolveModelImageUrl();
     if (!modelImageUrl || !config.extractedFrameUrl) return;
+    setFirstFrameInputMode('generate');
 
     // Preserve original model image URL before overwriting (prefer persistent GCS URL)
     if (!originalModelImageUrlRef.current) {
@@ -328,7 +375,7 @@ export default function VideoGenConfig({
       const res = await fetch('/api/generate-first-frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelImageUrl, frameImageUrl: config.extractedFrameUrl, resolution: config.firstFrameResolution || '1K' }),
+        body: JSON.stringify({ modelImageUrl, frameImageUrl: config.extractedFrameUrl, resolution: config.firstFrameResolution || '1K', modelId: config.modelId || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate first frame');
@@ -341,6 +388,7 @@ export default function VideoGenConfig({
   };
 
   const handleSelectFirstFrame = (option: FirstFrameOption) => {
+    setFirstFrameInputMode('generate');
     onChange({ ...config, imageUrl: option.gcsUrl });
   };
 
@@ -355,6 +403,9 @@ export default function VideoGenConfig({
 
   const handleToggleFirstFrame = (enabled: boolean) => {
     if (!enabled) {
+      setFirstFrameInputMode('generate');
+      setSelectedFirstFrameDisplayUrl(null);
+      setShowLibrary(false);
       // Restore original image when disabling
       const restored = originalModelImageUrlRef.current;
       clearFirstFrameOptions();
@@ -369,8 +420,41 @@ export default function VideoGenConfig({
         imageUrl: imageSource === 'upload' ? (restored || config.imageUrl) : undefined,
       });
     } else {
+      setFirstFrameInputMode('generate');
+      setSelectedFirstFrameDisplayUrl(null);
       onChange({ ...config, firstFrameEnabled: true });
     }
+  };
+
+  // ── Library: browse previously generated first-frame images ──
+  const handleBrowseLibrary = async () => {
+    if (showLibrary) { setShowLibrary(false); return; }
+    setShowLibrary(true);
+    setIsLoadingLibrary(true);
+    try {
+      const url = config.modelId
+        ? `/api/generated-images?modelId=${config.modelId}&signed=true`
+        : '/api/generated-images?limit=50&signed=true';
+      const res = await fetch(url);
+      const data = await res.json();
+      if (res.ok) {
+        const signedImages = await ensureSignedGeneratedImages(data.images || []);
+        setLibraryImages(signedImages);
+      }
+    } catch { /* silent */ }
+    finally { setIsLoadingLibrary(false); }
+  };
+
+  const handleSelectLibraryImage = (img: GeneratedImage) => {
+    setFirstFrameInputMode('direct-library');
+    setSelectedFirstFrameDisplayUrl(img.signedUrl || img.gcsUrl);
+    setIsResolvingSelectedFirstFrame(false);
+    clearFirstFrameOptions();
+    setGenerateError(null);
+    // Selecting from library should set only the first frame image.
+    // Scene frame selection must stay unchanged.
+    onChange({ ...config, imageUrl: img.gcsUrl });
+    setShowLibrary(false);
   };
 
   // ── Master mode: auto-extract best scene frame ──
@@ -411,7 +495,7 @@ export default function VideoGenConfig({
       const res = await fetch('/api/generate-first-frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelImageUrl: primaryGcsUrl, frameImageUrl: config.extractedFrameUrl, resolution: config.firstFrameResolution || '1K' }),
+        body: JSON.stringify({ modelImageUrl: primaryGcsUrl, frameImageUrl: config.extractedFrameUrl, resolution: config.firstFrameResolution || '1K', modelId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate');
@@ -447,6 +531,22 @@ export default function VideoGenConfig({
   const handleMasterSelectForModel = (modelId: string, gcsUrl: string) => {
     const updated = { ...(config.masterFirstFrames || {}), [modelId]: gcsUrl };
     onChange({ ...config, masterFirstFrames: updated });
+  };
+
+  // ── Master mode: browse library for a specific model ──
+  const handleMasterBrowseLibrary = async (modelId: string) => {
+    if (masterLibraryModelId === modelId) { setMasterLibraryModelId(null); return; }
+    setMasterLibraryModelId(modelId);
+    setIsLoadingMasterLibrary(true);
+    try {
+      const res = await fetch(`/api/generated-images?modelId=${modelId}&signed=true`);
+      const data = await res.json();
+      if (res.ok) {
+        const signedImages = await ensureSignedGeneratedImages(data.images || []);
+        setMasterLibraryImages(signedImages);
+      }
+    } catch { /* silent */ }
+    finally { setIsLoadingMasterLibrary(false); }
   };
 
   const handleImageUpload = async (file: File) => {
@@ -489,467 +589,118 @@ export default function VideoGenConfig({
 
   // Determine if a model image is selected (needed for first frame generate button)
   const hasModelImage = imageSource === 'model' ? !!config.imageId : !!config.imageUrl;
+  const canGenerateFirstFrame = !!(config.extractedFrameUrl && resolveModelImageUrl());
+  const isDirectLibraryFirstFrame = !!(
+    config.firstFrameEnabled &&
+    firstFrameInputMode === 'direct-library' &&
+    config.imageUrl
+  );
+  const selectedFirstFramePreview = selectedFirstFrameDisplayUrl || config.imageUrl || '';
 
-  return (
-    <div className="space-y-5">
-      {/* Mode */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Mode</label>
-        <div className="flex gap-2">
-          {(['motion-control', 'subtle-animation'] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => onChange({ ...config, mode })}
-              className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-150 ${
-                config.mode === mode
-                  ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
-              }`}
-            >
-              {mode === 'motion-control' ? 'Motion Control' : 'Subtle Animation'}
-            </button>
-          ))}
+  useEffect(() => {
+    if (!isDirectLibraryFirstFrame || !config.imageUrl) {
+      setIsResolvingSelectedFirstFrame(false);
+      return;
+    }
+    const imageUrl = config.imageUrl;
+
+    const match = libraryImages.find((img) => img.gcsUrl === imageUrl);
+    if (match?.signedUrl || match?.gcsUrl) {
+      const resolved = match.signedUrl || match.gcsUrl;
+      if (selectedFirstFrameDisplayUrl !== resolved) setSelectedFirstFrameDisplayUrl(resolved);
+      setIsResolvingSelectedFirstFrame(false);
+      return;
+    }
+
+    const needsSigning = imageUrl.includes('storage.googleapis.com');
+    if (!needsSigning) {
+      if (selectedFirstFrameDisplayUrl !== imageUrl) setSelectedFirstFrameDisplayUrl(imageUrl);
+      setIsResolvingSelectedFirstFrame(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsResolvingSelectedFirstFrame(true);
+    signUrls([imageUrl])
+      .then((signed) => {
+        if (cancelled) return;
+        const resolved = signed.get(imageUrl) || imageUrl;
+        if (selectedFirstFrameDisplayUrl !== resolved) setSelectedFirstFrameDisplayUrl(resolved);
+      })
+      .catch(() => {
+        if (!cancelled && selectedFirstFrameDisplayUrl !== imageUrl) {
+          setSelectedFirstFrameDisplayUrl(imageUrl);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsResolvingSelectedFirstFrame(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isDirectLibraryFirstFrame, config.imageUrl, libraryImages, selectedFirstFrameDisplayUrl]);
+
+  const libraryChooserContent = showLibrary ? (
+    <div className="rounded-xl bg-[var(--background)] p-2.5 space-y-2 border border-[var(--border)]">
+      {isLoadingLibrary ? (
+        <div className="flex items-center justify-center gap-2 py-6">
+          <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-[var(--primary)] animate-spin" />
+          <span className="text-xs text-[var(--text-muted)]">Loading library...</span>
         </div>
-        <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">
-          {isMotion ? 'Kling 2.6 — face swap onto input video' : 'Veo 3.1 — generates video from a single image'}
-        </p>
-      </div>
-
-      {/* Master mode: first frame per model */}
-      {masterMode ? (
-        <div className="rounded-2xl overflow-hidden bg-gradient-to-b from-master-light to-[var(--background)] dark:from-master-light dark:to-[var(--background)]">
-          {/* Header */}
-          <div className="px-4 py-3.5 flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-master">
-              <Sparkles className="h-4 w-4 text-white" />
-            </div>
-            <div className="flex-1">
-              <p className="text-[13px] font-semibold text-[var(--text)]">First Frame</p>
-              <p className="text-[10px] text-[var(--text-muted)]">
-                {masterModels && masterModels.length > 0
-                  ? `AI face swap for ${masterModels.length} model${masterModels.length !== 1 ? 's' : ''}`
-                  : 'Select models in the panel first'}
-              </p>
-            </div>
-          </div>
-
-          {masterModels && masterModels.length > 0 && (
-            <div className="px-4 pb-4 space-y-3.5">
-              {/* Scene frame — auto-extracted */}
-              <div>
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Scene Frame</p>
-                {isExtracting ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-4 justify-center">
-                    <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin" />
-                    <span className="text-xs text-[var(--text-muted)]">Extracting best frame...</span>
-                  </div>
-                ) : config.extractedFrameUrl ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3">
-                      {(() => {
-                        const selFrame = extractedFrames.find(f => f.gcsUrl === config.extractedFrameUrl);
-                        const displayUrl = selFrame?.url || sceneDisplayUrl || config.extractedFrameUrl;
-                        return (
-                          <div className="relative h-16 w-12 shrink-0 overflow-hidden rounded-lg border border-[var(--border)] cursor-pointer" onClick={() => setPreviewUrl(displayUrl)}>
-                            <img src={displayUrl} alt="Scene" className="h-full w-full object-cover" />
-                          </div>
-                        );
-                      })()}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-[var(--text)]">Best frame selected</p>
-                        <button
-                          onClick={() => {
-                            if (extractedFrames.length === 0 && sourceVideoUrl && !isExtracting) {
-                              handleExtractFrames();
-                            }
-                            setShowScenePicker(!showScenePicker);
-                          }}
-                          className="text-[10px] text-master dark:text-master-muted hover:underline"
-                        >
-                          Change frame
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : !sourceVideoUrl ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-4 justify-center">
-                    <span className="text-xs text-[var(--text-muted)]">Set a source video first</span>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleExtractFrames}
-                    disabled={isExtracting}
-                    className="w-full rounded-lg bg-master-light dark:bg-master-light px-3 py-2 text-xs font-medium text-master dark:text-master-muted hover:bg-master-light/80 dark:hover:bg-master-light/80 transition-colors disabled:opacity-50"
-                  >
-                    Extract frames from video
-                  </button>
-                )}
-
-                {/* Scene picker */}
-                {showScenePicker && (
-                  <div className="mt-2 rounded-xl bg-[var(--background)] p-2.5 space-y-2 border border-[var(--border)]">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-semibold text-[var(--text-muted)]">Pick a scene frame</p>
-                      <button onClick={() => setShowScenePicker(false)} className="rounded-md p-0.5 text-[var(--text-muted)] hover:text-[var(--text)]"><X className="h-3 w-3" /></button>
-                    </div>
-                    {isExtracting ? (
-                      <div className="flex items-center justify-center gap-2 py-6">
-                        <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin" />
-                        <span className="text-xs text-[var(--text-muted)]">Extracting frames...</span>
-                      </div>
-                    ) : extractedFrames.length > 0 ? (
-                      <>
-                        <div className="grid grid-cols-5 gap-1.5">
-                          {extractedFrames.map((frame, i) => {
-                            const isSel = config.extractedFrameUrl === frame.gcsUrl;
-                            return (
-                              <button
-                                key={i}
-                                onClick={() => {
-                                  setMasterPerModelResults({});
-                                  onChange({ ...config, extractedFrameUrl: frame.gcsUrl, masterFirstFrames: undefined });
-                                  setShowScenePicker(false);
-                                }}
-                                className={`group relative aspect-square overflow-hidden rounded-lg transition-all ${isSel ? 'ring-2 ring-master ring-offset-1' : 'hover:opacity-80'}`}
-                              >
-                                <img src={frame.url} alt={`Frame ${i + 1}`} className="h-full w-full object-cover rounded-lg" />
-                                {frame.hasFace && <div className="absolute left-0.5 top-0.5 rounded-md bg-green-500/80 px-1 py-0.5 text-[7px] font-bold text-white">{frame.score}</div>}
-                                {isSel && <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-lg"><Check className="h-3.5 w-3.5 text-white" /></div>}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <button onClick={handleExtractFrames} disabled={isExtracting} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text)]">
-                          Re-extract
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={handleExtractFrames}
-                        className="w-full rounded-lg bg-master-light px-3 py-2 text-xs font-medium text-master hover:bg-master-light/80 transition-colors"
-                      >
-                        Extract frames from video
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {extractError && <p className="mt-1 text-xs text-red-500">{extractError}</p>}
-              </div>
-
-              {/* Resolution */}
-              <div>
-                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Resolution</label>
-                <select
-                  value={config.firstFrameResolution || '1K'}
-                  onChange={(e) => onChange({ ...config, firstFrameResolution: e.target.value as '1K' | '2K' | '4K' })}
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:outline-none"
-                >
-                  <option value="1K">1K</option>
-                  <option value="2K">2K</option>
-                  <option value="4K">4K</option>
-                </select>
-              </div>
-
-              {/* Generate All button */}
-              {config.extractedFrameUrl && (
-                <button
-                  onClick={handleMasterGenerateAll}
-                  disabled={isMasterGeneratingAll || !masterModels || masterModels.length === 0}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-master px-4 py-2.5 text-xs font-semibold text-white transition-all hover:bg-master/90 active:scale-[0.98] disabled:opacity-50"
-                >
-                  {isMasterGeneratingAll ? (
-                    <>
-                      <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                      Generating {masterProgress.done}/{masterProgress.total}
-                    </>
-                  ) : Object.keys(masterPerModelResults).length > 0 ? (
-                    <>
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Regenerate All First Frames
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-3.5 w-3.5" />
-                      Generate First Frame for All ({masterModels.length})
-                    </>
-                  )}
-                </button>
-              )}
-
-              {/* Per-model results */}
-              {config.extractedFrameUrl && (
-                <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {masterModels.map(m => {
-                    const results = masterPerModelResults[m.modelId] || [];
-                    const selected = config.masterFirstFrames?.[m.modelId];
-                    const isGen = masterGeneratingIds.has(m.modelId);
-
-                    return (
-                      <div key={m.modelId} className="rounded-xl border border-[var(--border)] p-2.5 space-y-2">
-                        <div className="flex items-center gap-2.5">
-                          <img
-                            src={m.primaryImageUrl}
-                            alt={m.modelName}
-                            className="h-10 w-10 rounded-lg object-cover shrink-0 border border-[var(--border)] cursor-pointer"
-                            onClick={() => setPreviewUrl(m.primaryImageUrl)}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-[var(--text)] truncate">{m.modelName}</p>
-                            {selected && <p className="text-[10px] text-green-600 dark:text-green-400 font-medium">First frame selected</p>}
-                          </div>
-                          {isGen && <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin shrink-0" />}
-                          {results.length === 0 && !isGen && (
-                            <button
-                              onClick={() => masterGenerateForModel(m.modelId, m.primaryGcsUrl)}
-                              disabled={isMasterGeneratingAll}
-                              className="rounded-lg bg-master-light dark:bg-master-light px-2.5 py-1 text-[10px] font-medium text-master dark:text-master-muted transition-colors hover:bg-master-light/80 dark:hover:bg-master-light/80 disabled:opacity-50 shrink-0"
-                            >
-                              Generate
-                            </button>
-                          )}
-                          {results.length > 0 && !isGen && (
-                            <button
-                              onClick={() => masterGenerateForModel(m.modelId, m.primaryGcsUrl)}
-                              disabled={isMasterGeneratingAll}
-                              className="flex items-center gap-1 rounded-lg border border-[var(--border)] px-2 py-1 text-[10px] text-[var(--text-muted)] hover:bg-[var(--accent)] disabled:opacity-50 shrink-0"
-                            >
-                              <RefreshCw className="h-2.5 w-2.5" />
-                            </button>
-                          )}
-                        </div>
-
-                        {/* 2 generated options */}
-                        {results.length > 0 && (
-                          <div className="grid grid-cols-2 gap-2">
-                            {results.map((opt, oi) => {
-                              const isSel = selected === opt.gcsUrl;
-                              return (
-                                <button
-                                  key={oi}
-                                  onClick={() => handleMasterSelectForModel(m.modelId, opt.gcsUrl)}
-                                  className={`group relative aspect-[3/4] overflow-hidden rounded-xl border-2 transition-all duration-150 ${
-                                    isSel ? 'border-master shadow-md' : 'border-[var(--border)] hover:border-master-muted'
-                                  }`}
-                                >
-                                  <img src={opt.url} alt={`Option ${String.fromCharCode(65 + oi)}`} className="h-full w-full object-cover" />
-                                  <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(opt.url); }} className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity"><Expand className="h-2.5 w-2.5" /></div>
-                                  <div className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-[9px] font-bold text-white backdrop-blur-sm">
-                                    {String.fromCharCode(65 + oi)}
-                                  </div>
-                                  {isSel && (
-                                    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-master/90 to-transparent py-1 text-center">
-                                      <span className="text-[10px] font-semibold text-white">Selected</span>
-                                    </div>
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+      ) : libraryImages.length === 0 ? (
+        <div className="flex flex-col items-center gap-1 py-6">
+          <p className="text-xs text-[var(--text-muted)]">No previous generations found</p>
+          {config.modelId && (
+            <p className="text-[10px] text-[var(--text-muted)]">Generate first frames to build your library</p>
           )}
         </div>
       ) : (
-      /* Image Source Toggle (no Extract — moved to First Frame section) */
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Model Image (face reference)</label>
-        <div className="flex gap-2">
-          {([
-            { key: 'model' as ImageSource, label: 'From Model' },
-            { key: 'upload' as ImageSource, label: 'Upload Image' },
-          ]).map((opt) => (
-            <button
-              key={opt.key}
-              onClick={() => handleImageSourceChange(opt.key)}
-              className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-150 ${
-                imageSource === opt.key
-                  ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      )}
-
-      {/* Model + Image Picker */}
-      {!masterMode && imageSource === 'model' && (
         <>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Model</label>
-            <select
-              value={config.modelId || ''}
-              onChange={(e) => {
-                clearFirstFrameOptions();
-                originalModelImageUrlRef.current = null;
-                setShowImageGrid(true);
-                onChange({ ...config, modelId: e.target.value, imageId: undefined, imageUrl: undefined });
-              }}
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
-            >
-              <option value="">Select a model…</option>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {config.modelId && imagesLoading && modelImages.length === 0 && (
-            <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-8">
-              <div className="h-5 w-5 rounded-full border-2 border-[var(--border)] border-t-[var(--primary)] animate-spin" />
-              <span className="text-xs text-[var(--text-muted)]">Loading images...</span>
-            </div>
-          )}
-
-          {config.modelId && modelImages.length > 0 && (
-            <div>
-              {/* Selected image preview + collapse toggle */}
-              {config.imageId && !showImageGrid && (() => {
-                const selectedImg = modelImages.find((m) => m.id === config.imageId);
-                return selectedImg ? (
-                  <button
-                    onClick={() => setShowImageGrid(true)}
-                    className="flex w-full items-center gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 transition-colors hover:bg-[var(--accent)]"
+          <p className="text-[10px] font-semibold text-[var(--text-muted)]">
+            {libraryImages.length} previous generation{libraryImages.length !== 1 ? 's' : ''}
+          </p>
+          <div className="grid grid-cols-3 gap-2 max-h-[280px] overflow-y-auto">
+            {libraryImages.map((img) => {
+              const displayUrl = img.signedUrl || img.gcsUrl;
+              const isFirstFrameSelected = config.imageUrl === img.gcsUrl;
+              return (
+                <button
+                  key={img.id}
+                  onClick={() => handleSelectLibraryImage(img)}
+                  className={`group relative aspect-[3/4] overflow-hidden rounded-xl border-2 transition-all duration-150 ${
+                    isFirstFrameSelected
+                      ? 'border-[var(--primary)] shadow-md'
+                      : 'border-[var(--border)] hover:border-[var(--accent-border)]'
+                  }`}
+                >
+                  <img src={displayUrl} alt={img.filename} className="h-full w-full object-cover" />
+                  <div
+                    onClick={(e) => { e.stopPropagation(); setPreviewUrl(displayUrl); }}
+                    className="absolute bottom-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
                   >
-                    <img src={selectedImg.signedUrl || selectedImg.gcsUrl} alt={selectedImg.filename} className="h-10 w-10 rounded-lg object-cover border border-[var(--primary)] cursor-pointer" onClick={(e) => { e.stopPropagation(); setPreviewUrl(selectedImg.signedUrl || selectedImg.gcsUrl); }} />
-                    <div className="flex-1 text-left">
-                      <p className="text-xs font-medium text-[var(--text)]">{selectedImg.filename}</p>
-                      <p className="text-[10px] text-[var(--text-muted)]">Click to change</p>
+                    <Expand className="h-2.5 w-2.5" />
+                  </div>
+                  {isFirstFrameSelected && (
+                    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-[var(--primary)]/90 to-transparent py-1 text-center">
+                      <span className="text-[10px] font-semibold text-[var(--primary-foreground)]">
+                        Selected as first frame
+                      </span>
                     </div>
-                    <ChevronDown className="h-4 w-4 text-[var(--text-muted)]" />
-                  </button>
-                ) : null;
-              })()}
-
-              {/* Image grid */}
-              {(showImageGrid || !config.imageId) && (
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs font-medium text-[var(--text-muted)]">Image</label>
-                    {config.imageId && (
-                      <button
-                        onClick={() => setShowImageGrid(false)}
-                        className="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
-                      >
-                        Collapse <ChevronUp className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {modelImages.map((img: ModelImage) => (
-                      <button
-                        key={img.id}
-                        onClick={() => {
-                          clearFirstFrameOptions();
-                          originalModelImageUrlRef.current = null;
-                          setShowImageGrid(false);
-                          onChange({ ...config, imageId: img.id, imageUrl: undefined });
-                        }}
-                        className={`group relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
-                          config.imageId === img.id
-                            ? 'border-[var(--primary)] shadow-md'
-                            : 'border-[var(--border)] hover:border-[var(--accent-border)]'
-                        }`}
-                      >
-                        <img src={img.signedUrl || img.gcsUrl} alt={img.filename} className="h-full w-full object-cover" />
-                        <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(img.signedUrl || img.gcsUrl); }} className="absolute bottom-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
-                        {config.imageId === img.id && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                            <div className="h-4 w-4 rounded-full border-2 border-white bg-[var(--primary)]" />
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </>
       )}
+    </div>
+  ) : null;
 
-      {/* Direct Image Upload */}
-      {!masterMode && imageSource === 'upload' && (
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Model Image</label>
-          <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+  // ── Right-column content for expanded layout ──
 
-          {(originalModelImageUrlRef.current || config.imageUrl) && !config.firstFrameEnabled ? (
-            <div className="relative">
-              <img
-                src={config.imageUrl || ''}
-                alt="Uploaded"
-                className="max-h-36 w-full rounded-xl border border-[var(--border)] object-contain bg-[var(--background)] p-1 cursor-pointer"
-                onClick={() => { if (config.imageUrl) setPreviewUrl(config.imageUrl); }}
-              />
-              <button
-                onClick={() => {
-                  originalModelImageUrlRef.current = null;
-                  clearFirstFrameOptions();
-                  onChange({ ...config, imageUrl: undefined });
-                }}
-                className="absolute right-2 top-2 rounded-full bg-black/50 p-1 text-white transition-colors hover:bg-black/70"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ) : !config.firstFrameEnabled ? (
-            <label
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed py-8 transition-colors ${
-                isUploadingImage
-                  ? 'border-[var(--accent-border)] bg-[var(--accent)]'
-                  : 'border-[var(--border)] bg-[var(--background)] hover:border-[var(--accent-border)] hover:bg-[var(--accent)]'
-              }`}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.currentTarget.classList.add('!border-[var(--accent-border)]', '!bg-[var(--accent)]');
-              }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                e.currentTarget.classList.remove('!border-[var(--accent-border)]', '!bg-[var(--accent)]');
-              }}
-              onDrop={handleDrop}
-            >
-              {isUploadingImage ? (
-                <>
-                  <div className="h-8 w-8 rounded-full border-2 border-[var(--border)] border-t-[var(--foreground)] animate-spin" />
-                  <span className="mt-2 text-xs font-medium text-[var(--text-muted)]">Uploading…</span>
-                </>
-              ) : (
-                <>
-                  <span className="text-2xl text-[var(--text-muted)]">+</span>
-                  <span className="mt-1 text-xs text-[var(--text-muted)]">Click or drag image here</span>
-                </>
-              )}
-              <input type="file" accept="image/*" className="hidden" onChange={handleFileChange} disabled={isUploadingImage} />
-            </label>
-          ) : (
-            /* Show original image thumbnail when first frame is enabled */
-            (originalModelImageUrlRef.current || config.imageUrl) && (
-              <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)] p-2">
-                <img
-                  src={originalModelImageUrlRef.current || config.imageUrl || ''}
-                  alt="Model face"
-                  className="h-10 w-10 rounded object-cover cursor-pointer"
-                  onClick={() => setPreviewUrl(originalModelImageUrlRef.current || config.imageUrl || '')}
-                />
-                <span className="text-xs text-[var(--text-muted)]">Face reference image</span>
-              </div>
-            )
-          )}
-        </div>
-      )}
-
-      {/* ─── First Frame Generator Card ─── */}
-      {!masterMode && hasModelImage && (
+  // First Frame Generator Card (non-master mode)
+  const firstFrameCardContent = !masterMode && hasModelImage ? (
         <div className={`rounded-2xl overflow-hidden transition-all duration-200 ${
           config.firstFrameEnabled
             ? 'bg-gradient-to-b from-[var(--accent)] to-[var(--background)]'
@@ -981,6 +732,56 @@ export default function VideoGenConfig({
           {/* Body */}
           {config.firstFrameEnabled && (
             <div className="px-4 pb-4 space-y-3.5">
+              {isDirectLibraryFirstFrame ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+                      Selected First Frame
+                    </p>
+                    {isResolvingSelectedFirstFrame ? (
+                      <div className="relative mx-auto w-full max-w-[220px] aspect-[3/4] overflow-hidden rounded-2xl border-2 border-[var(--primary)]/30 bg-[var(--accent)]">
+                        <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.6s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { if (selectedFirstFramePreview) setPreviewUrl(selectedFirstFramePreview); }}
+                        className="group relative mx-auto block w-full max-w-[220px] aspect-[3/4] overflow-hidden rounded-2xl border-2 border-[var(--primary)]"
+                      >
+                        <img src={selectedFirstFramePreview} alt="Selected first frame" className="h-full w-full object-cover" />
+                        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-[var(--primary)]/90 to-transparent py-1 text-center">
+                          <span className="text-[10px] font-semibold text-[var(--primary-foreground)]">Selected from library</span>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => {
+                        setFirstFrameInputMode('generate');
+                        setShowLibrary(false);
+                      }}
+                      className="rounded-xl bg-[var(--primary)] px-3 py-2.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors hover:bg-[var(--primary-hover)]"
+                    >
+                      Generate Instead
+                    </button>
+                    <button
+                      onClick={handleBrowseLibrary}
+                      className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-medium transition-colors ${
+                        showLibrary
+                          ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                          : 'border-[var(--border)] bg-[var(--background)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      {showLibrary ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      {showLibrary ? 'Hide' : 'Change'}
+                    </button>
+                  </div>
+
+                  {libraryChooserContent}
+                </div>
+              ) : (
+                <>
               {/* Model + Resolution selectors */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -1212,11 +1013,12 @@ export default function VideoGenConfig({
                 </div>
               )}
 
-              {/* Generate button */}
-              {config.extractedFrameUrl && resolveModelImageUrl() && !isGeneratingFirstFrame && (
+              {/* Explicit two-path actions: Generate or Choose */}
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={handleGenerateFirstFrame}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-4 py-2.5 text-xs font-semibold text-[var(--primary-foreground)] transition-all hover:bg-[var(--primary-hover)] active:scale-[0.98]"
+                  disabled={!canGenerateFirstFrame || isGeneratingFirstFrame}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-3 py-2.5 text-xs font-semibold text-[var(--primary-foreground)] transition-all hover:bg-[var(--primary-hover)] disabled:opacity-50 disabled:hover:bg-[var(--primary)]"
                 >
                   {firstFrameOptions.length > 0 ? (
                     <>
@@ -1226,10 +1028,31 @@ export default function VideoGenConfig({
                   ) : (
                     <>
                       <Sparkles className="h-3.5 w-3.5" />
-                      Generate First Frame
+                      Generate
                     </>
                   )}
                 </button>
+                <button
+                  onClick={handleBrowseLibrary}
+                  className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-medium transition-colors ${
+                    showLibrary
+                      ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                      : 'border-[var(--border)] bg-[var(--background)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
+                  }`}
+                >
+                  {showLibrary ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  {showLibrary ? 'Hide' : 'Choose'}
+                </button>
+              </div>
+              {!canGenerateFirstFrame && (
+                <p className="text-[10px] text-[var(--text-muted)]">
+                  Generate needs both face + scene. Choose uses library image directly as first frame.
+                </p>
+              )}
+              {config.extractedFrameUrl && config.imageUrl === config.extractedFrameUrl && (
+                <p className="text-[10px] font-medium text-green-600">
+                  Selected scene is already set as first frame (no generation needed).
+                </p>
               )}
 
               {generateError && <p className="text-xs text-red-500">{generateError}</p>}
@@ -1315,10 +1138,536 @@ export default function VideoGenConfig({
                   </div>
                 );
               })()}
+
+              {/* ── Browse Library: pick from previous generations ── */}
+              {libraryChooserContent}
+                </>
+              )}
             </div>
           )}
         </div>
+  ) : null;
+
+  // Master mode: per-model results section
+  const masterPerModelContent = masterMode && masterModels && masterModels.length > 0 && config.extractedFrameUrl ? (
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  {masterModels.map(m => {
+                    const results = masterPerModelResults[m.modelId] || [];
+                    const selected = config.masterFirstFrames?.[m.modelId];
+                    const isGen = masterGeneratingIds.has(m.modelId);
+
+                    return (
+                      <div key={m.modelId} className="rounded-xl border border-[var(--border)] p-2.5 space-y-2">
+                        <div className="flex items-center gap-2.5">
+                          <img
+                            src={m.primaryImageUrl}
+                            alt={m.modelName}
+                            className="h-10 w-10 rounded-lg object-cover shrink-0 border border-[var(--border)] cursor-pointer"
+                            onClick={() => setPreviewUrl(m.primaryImageUrl)}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-[var(--text)] truncate">{m.modelName}</p>
+                            {selected && <p className="text-[10px] text-green-600 dark:text-green-400 font-medium">First frame selected</p>}
+                          </div>
+                          {isGen && <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin shrink-0" />}
+                          {!isGen && (
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {results.length === 0 ? (
+                                <button
+                                  onClick={() => masterGenerateForModel(m.modelId, m.primaryGcsUrl)}
+                                  disabled={isMasterGeneratingAll}
+                                  className="rounded-lg bg-master-light dark:bg-master-light px-2.5 py-1 text-[10px] font-medium text-master dark:text-master-muted transition-colors hover:bg-master-light/80 dark:hover:bg-master-light/80 disabled:opacity-50"
+                                >
+                                  Generate
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => masterGenerateForModel(m.modelId, m.primaryGcsUrl)}
+                                  disabled={isMasterGeneratingAll}
+                                  className="flex items-center gap-1 rounded-lg border border-[var(--border)] px-2 py-1 text-[10px] text-[var(--text-muted)] hover:bg-[var(--accent)] disabled:opacity-50"
+                                >
+                                  <RefreshCw className="h-2.5 w-2.5" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleMasterBrowseLibrary(m.modelId)}
+                                className={`rounded-lg px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                                  masterLibraryModelId === m.modelId
+                                    ? 'bg-master text-white'
+                                    : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
+                                }`}
+                              >
+                                {masterLibraryModelId === m.modelId ? 'Hide' : 'Choose'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 2 generated options */}
+                        {results.length > 0 && (
+                          <div className="grid grid-cols-2 gap-2">
+                            {results.map((opt, oi) => {
+                              const isSel = selected === opt.gcsUrl;
+                              return (
+                                <button
+                                  key={oi}
+                                  onClick={() => handleMasterSelectForModel(m.modelId, opt.gcsUrl)}
+                                  className={`group relative aspect-[3/4] overflow-hidden rounded-xl border-2 transition-all duration-150 ${
+                                    isSel ? 'border-master shadow-md' : 'border-[var(--border)] hover:border-master-muted'
+                                  }`}
+                                >
+                                  <img src={opt.url} alt={`Option ${String.fromCharCode(65 + oi)}`} className="h-full w-full object-cover" />
+                                  <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(opt.url); }} className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity"><Expand className="h-2.5 w-2.5" /></div>
+                                  <div className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-[9px] font-bold text-white backdrop-blur-sm">
+                                    {String.fromCharCode(65 + oi)}
+                                  </div>
+                                  {isSel && (
+                                    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-master/90 to-transparent py-1 text-center">
+                                      <span className="text-[10px] font-semibold text-white">Selected</span>
+                                    </div>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {masterLibraryModelId === m.modelId && (
+                          <div className="rounded-lg bg-[var(--background)] p-2 space-y-1.5 border border-[var(--border)]">
+                            {isLoadingMasterLibrary ? (
+                              <div className="flex items-center justify-center gap-2 py-4">
+                                <span className="h-3.5 w-3.5 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin" />
+                                <span className="text-[10px] text-[var(--text-muted)]">Loading...</span>
+                              </div>
+                            ) : masterLibraryImages.length === 0 ? (
+                              <p className="py-4 text-center text-[10px] text-[var(--text-muted)]">No previous generations</p>
+                            ) : (
+                              <div className="grid grid-cols-3 gap-1.5 max-h-[200px] overflow-y-auto">
+                                {masterLibraryImages.map((img) => {
+                                  const displayUrl = img.signedUrl || img.gcsUrl;
+                                  const isSel = selected === img.gcsUrl;
+                                  return (
+                                    <button
+                                      key={img.id}
+                                      onClick={() => {
+                                        handleMasterSelectForModel(m.modelId, img.gcsUrl);
+                                        setMasterLibraryModelId(null);
+                                      }}
+                                      className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all duration-150 ${
+                                        isSel ? 'border-master shadow-md' : 'border-[var(--border)] hover:border-master-muted'
+                                      }`}
+                                    >
+                                      <img src={displayUrl} alt={img.filename} className="h-full w-full object-cover" />
+                                      <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(displayUrl); }} className="absolute bottom-0.5 right-0.5 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity"><Expand className="h-2 w-2" /></div>
+                                      {isSel && (
+                                        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-master/90 to-transparent py-0.5 text-center">
+                                          <span className="text-[9px] font-semibold text-white">Selected</span>
+                                        </div>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+  ) : null;
+
+  const rightColumnContent = masterMode ? masterPerModelContent : firstFrameCardContent;
+  const hasRightColumn = isExpanded && rightColumnContent;
+
+  return (
+    <div className={hasRightColumn ? 'flex gap-6' : isExpanded ? 'mx-auto max-w-2xl' : ''}>
+      <div className={`space-y-5 ${hasRightColumn ? 'flex-1 min-w-0 max-h-[calc(100vh-6rem)] overflow-y-auto pr-2' : ''}`}>
+      {/* Mode */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Mode</label>
+        <div className="flex gap-2">
+          {(['motion-control', 'subtle-animation'] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => onChange({ ...config, mode })}
+              className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-150 ${
+                config.mode === mode
+                  ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
+              }`}
+            >
+              {mode === 'motion-control' ? 'Motion Control' : 'Subtle Animation'}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">
+          {isMotion ? 'Kling 2.6 — face swap onto input video' : 'Veo 3.1 — generates video from a single image'}
+        </p>
+      </div>
+
+      {/* Master mode: first frame per model */}
+      {masterMode ? (
+        <div className="rounded-2xl overflow-hidden bg-gradient-to-b from-master-light to-[var(--background)] dark:from-master-light dark:to-[var(--background)]">
+          {/* Header */}
+          <div className="px-4 py-3.5 flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-master">
+              <Sparkles className="h-4 w-4 text-white" />
+            </div>
+            <div className="flex-1">
+              <p className="text-[13px] font-semibold text-[var(--text)]">First Frame</p>
+              <p className="text-[10px] text-[var(--text-muted)]">
+                {masterModels && masterModels.length > 0
+                  ? `AI face swap for ${masterModels.length} model${masterModels.length !== 1 ? 's' : ''}`
+                  : 'Select models in the panel first'}
+              </p>
+            </div>
+          </div>
+
+          {masterModels && masterModels.length > 0 && (
+            <div className="px-4 pb-4 space-y-3.5">
+              {/* Scene frame — auto-extracted */}
+              <div>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Scene Frame</p>
+                {isExtracting ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-4 justify-center">
+                    <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin" />
+                    <span className="text-xs text-[var(--text-muted)]">Extracting best frame...</span>
+                  </div>
+                ) : config.extractedFrameUrl ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      {(() => {
+                        const selFrame = extractedFrames.find(f => f.gcsUrl === config.extractedFrameUrl);
+                        const displayUrl = selFrame?.url || sceneDisplayUrl || config.extractedFrameUrl;
+                        return (
+                          <div className="relative h-16 w-12 shrink-0 overflow-hidden rounded-lg border border-[var(--border)] cursor-pointer" onClick={() => setPreviewUrl(displayUrl)}>
+                            <img src={displayUrl} alt="Scene" className="h-full w-full object-cover" />
+                          </div>
+                        );
+                      })()}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-[var(--text)]">Best frame selected</p>
+                        <button
+                          onClick={() => {
+                            if (extractedFrames.length === 0 && sourceVideoUrl && !isExtracting) {
+                              handleExtractFrames();
+                            }
+                            setShowScenePicker(!showScenePicker);
+                          }}
+                          className="text-[10px] text-master dark:text-master-muted hover:underline"
+                        >
+                          Change frame
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : !sourceVideoUrl ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-4 justify-center">
+                    <span className="text-xs text-[var(--text-muted)]">Set a source video first</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleExtractFrames}
+                    disabled={isExtracting}
+                    className="w-full rounded-lg bg-master-light dark:bg-master-light px-3 py-2 text-xs font-medium text-master dark:text-master-muted hover:bg-master-light/80 dark:hover:bg-master-light/80 transition-colors disabled:opacity-50"
+                  >
+                    Extract frames from video
+                  </button>
+                )}
+
+                {/* Scene picker */}
+                {showScenePicker && (
+                  <div className="mt-2 rounded-xl bg-[var(--background)] p-2.5 space-y-2 border border-[var(--border)]">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-semibold text-[var(--text-muted)]">Pick a scene frame</p>
+                      <button onClick={() => setShowScenePicker(false)} className="rounded-md p-0.5 text-[var(--text-muted)] hover:text-[var(--text)]"><X className="h-3 w-3" /></button>
+                    </div>
+                    {isExtracting ? (
+                      <div className="flex items-center justify-center gap-2 py-6">
+                        <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin" />
+                        <span className="text-xs text-[var(--text-muted)]">Extracting frames...</span>
+                      </div>
+                    ) : extractedFrames.length > 0 ? (
+                      <>
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {extractedFrames.map((frame, i) => {
+                            const isSel = config.extractedFrameUrl === frame.gcsUrl;
+                            return (
+                              <button
+                                key={i}
+                                onClick={() => {
+                                  setMasterPerModelResults({});
+                                  onChange({ ...config, extractedFrameUrl: frame.gcsUrl, masterFirstFrames: undefined });
+                                  setShowScenePicker(false);
+                                }}
+                                className={`group relative aspect-square overflow-hidden rounded-lg transition-all ${isSel ? 'ring-2 ring-master ring-offset-1' : 'hover:opacity-80'}`}
+                              >
+                                <img src={frame.url} alt={`Frame ${i + 1}`} className="h-full w-full object-cover rounded-lg" />
+                                {frame.hasFace && <div className="absolute left-0.5 top-0.5 rounded-md bg-green-500/80 px-1 py-0.5 text-[7px] font-bold text-white">{frame.score}</div>}
+                                {isSel && <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-lg"><Check className="h-3.5 w-3.5 text-white" /></div>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button onClick={handleExtractFrames} disabled={isExtracting} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text)]">
+                          Re-extract
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={handleExtractFrames}
+                        className="w-full rounded-lg bg-master-light px-3 py-2 text-xs font-medium text-master hover:bg-master-light/80 transition-colors"
+                      >
+                        Extract frames from video
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {extractError && <p className="mt-1 text-xs text-red-500">{extractError}</p>}
+              </div>
+
+              {/* Resolution */}
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Resolution</label>
+                <select
+                  value={config.firstFrameResolution || '1K'}
+                  onChange={(e) => onChange({ ...config, firstFrameResolution: e.target.value as '1K' | '2K' | '4K' })}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:outline-none"
+                >
+                  <option value="1K">1K</option>
+                  <option value="2K">2K</option>
+                  <option value="4K">4K</option>
+                </select>
+              </div>
+
+              {/* Generate All button */}
+              {config.extractedFrameUrl && (
+                <button
+                  onClick={handleMasterGenerateAll}
+                  disabled={isMasterGeneratingAll || !masterModels || masterModels.length === 0}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-master px-4 py-2.5 text-xs font-semibold text-white transition-all hover:bg-master/90 active:scale-[0.98] disabled:opacity-50"
+                >
+                  {isMasterGeneratingAll ? (
+                    <>
+                      <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                      Generating {masterProgress.done}/{masterProgress.total}
+                    </>
+                  ) : Object.keys(masterPerModelResults).length > 0 ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Regenerate All First Frames
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      Generate First Frame for All ({masterModels.length})
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* Per-model results */}
+              {!isExpanded && masterPerModelContent}
+            </div>
+          )}
+        </div>
+      ) : (
+      /* Image Source Toggle (no Extract — moved to First Frame section) */
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Model Image (face reference)</label>
+        <div className="flex gap-2">
+          {([
+            { key: 'model' as ImageSource, label: 'From Model' },
+            { key: 'upload' as ImageSource, label: 'Upload Image' },
+          ]).map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => handleImageSourceChange(opt.key)}
+              className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-150 ${
+                imageSource === opt.key
+                  ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
       )}
+
+      {/* Model + Image Picker */}
+      {!masterMode && imageSource === 'model' && (
+        <>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Model</label>
+            <select
+              value={config.modelId || ''}
+              onChange={(e) => {
+                clearFirstFrameOptions();
+                originalModelImageUrlRef.current = null;
+                setShowImageGrid(true);
+                onChange({ ...config, modelId: e.target.value, imageId: undefined, imageUrl: undefined });
+              }}
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+            >
+              <option value="">Select a model…</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {config.modelId && imagesLoading && modelImages.length === 0 && (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-8">
+              <div className="h-5 w-5 rounded-full border-2 border-[var(--border)] border-t-[var(--primary)] animate-spin" />
+              <span className="text-xs text-[var(--text-muted)]">Loading images...</span>
+            </div>
+          )}
+
+          {config.modelId && modelImages.length > 0 && (
+            <div>
+              {/* Selected image preview + collapse toggle */}
+              {config.imageId && !showImageGrid && (() => {
+                const selectedImg = modelImages.find((m) => m.id === config.imageId);
+                return selectedImg ? (
+                  <button
+                    onClick={() => setShowImageGrid(true)}
+                    className="flex w-full items-center gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 transition-colors hover:bg-[var(--accent)]"
+                  >
+                    <img src={selectedImg.signedUrl || selectedImg.gcsUrl} alt={selectedImg.filename} className="h-10 w-10 rounded-lg object-cover border border-[var(--primary)] cursor-pointer" onClick={(e) => { e.stopPropagation(); setPreviewUrl(selectedImg.signedUrl || selectedImg.gcsUrl); }} />
+                    <div className="flex-1 text-left">
+                      <p className="text-xs font-medium text-[var(--text)]">{selectedImg.filename}</p>
+                      <p className="text-[10px] text-[var(--text-muted)]">Click to change</p>
+                    </div>
+                    <ChevronDown className="h-4 w-4 text-[var(--text-muted)]" />
+                  </button>
+                ) : null;
+              })()}
+
+              {/* Image grid */}
+              {(showImageGrid || !config.imageId) && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-[var(--text-muted)]">Image</label>
+                    {config.imageId && (
+                      <button
+                        onClick={() => setShowImageGrid(false)}
+                        className="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                      >
+                        Collapse <ChevronUp className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {modelImages.map((img: ModelImage) => (
+                      <button
+                        key={img.id}
+                        onClick={() => {
+                          clearFirstFrameOptions();
+                          originalModelImageUrlRef.current = null;
+                          setShowImageGrid(false);
+                          onChange({ ...config, imageId: img.id, imageUrl: undefined });
+                        }}
+                        className={`group relative aspect-square overflow-hidden rounded-lg border-2 transition-all duration-150 ${
+                          config.imageId === img.id
+                            ? 'border-[var(--primary)] shadow-md'
+                            : 'border-[var(--border)] hover:border-[var(--accent-border)]'
+                        }`}
+                      >
+                        <img src={img.signedUrl || img.gcsUrl} alt={img.filename} className="h-full w-full object-cover" />
+                        <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(img.signedUrl || img.gcsUrl); }} className="absolute bottom-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2.5 w-2.5" /></div>
+                        {config.imageId === img.id && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                            <div className="h-4 w-4 rounded-full border-2 border-white bg-[var(--primary)]" />
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Direct Image Upload */}
+      {!masterMode && imageSource === 'upload' && (
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Model Image</label>
+          <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+
+          {(originalModelImageUrlRef.current || config.imageUrl) && !config.firstFrameEnabled ? (
+            <div className="relative">
+              <img
+                src={config.imageUrl || ''}
+                alt="Uploaded"
+                className="max-h-36 w-full rounded-xl border border-[var(--border)] object-contain bg-[var(--background)] p-1 cursor-pointer"
+                onClick={() => { if (config.imageUrl) setPreviewUrl(config.imageUrl); }}
+              />
+              <button
+                onClick={() => {
+                  originalModelImageUrlRef.current = null;
+                  clearFirstFrameOptions();
+                  onChange({ ...config, imageUrl: undefined });
+                }}
+                className="absolute right-2 top-2 rounded-full bg-black/50 p-1 text-white transition-colors hover:bg-black/70"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ) : !config.firstFrameEnabled ? (
+            <label
+              className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed py-8 transition-colors ${
+                isUploadingImage
+                  ? 'border-[var(--accent-border)] bg-[var(--accent)]'
+                  : 'border-[var(--border)] bg-[var(--background)] hover:border-[var(--accent-border)] hover:bg-[var(--accent)]'
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.add('!border-[var(--accent-border)]', '!bg-[var(--accent)]');
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove('!border-[var(--accent-border)]', '!bg-[var(--accent)]');
+              }}
+              onDrop={handleDrop}
+            >
+              {isUploadingImage ? (
+                <>
+                  <div className="h-8 w-8 rounded-full border-2 border-[var(--border)] border-t-[var(--foreground)] animate-spin" />
+                  <span className="mt-2 text-xs font-medium text-[var(--text-muted)]">Uploading…</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-2xl text-[var(--text-muted)]">+</span>
+                  <span className="mt-1 text-xs text-[var(--text-muted)]">Click or drag image here</span>
+                </>
+              )}
+              <input type="file" accept="image/*" className="hidden" onChange={handleFileChange} disabled={isUploadingImage} />
+            </label>
+          ) : (
+            /* Show original image thumbnail when first frame is enabled */
+            (originalModelImageUrlRef.current || config.imageUrl) && (
+              <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)] p-2">
+                <img
+                  src={originalModelImageUrlRef.current || config.imageUrl || ''}
+                  alt="Model face"
+                  className="h-10 w-10 rounded object-cover cursor-pointer"
+                  onClick={() => setPreviewUrl(originalModelImageUrlRef.current || config.imageUrl || '')}
+                />
+                <span className="text-xs text-[var(--text-muted)]">Face reference image</span>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* ─── First Frame Generator Card (inline when not expanded) ─── */}
+      {!isExpanded && firstFrameCardContent}
 
       {/* Prompt */}
       <div>
@@ -1416,6 +1765,14 @@ export default function VideoGenConfig({
 
         </div>
       </div>
+      </div>
+
+      {/* Right column (expanded only) */}
+      {hasRightColumn && (
+        <div className="flex-1 min-w-0 max-h-[calc(100vh-6rem)] overflow-y-auto pl-2">
+          {rightColumnContent}
+        </div>
+      )}
 
       {previewUrl && <PreviewModal src={previewUrl} onClose={() => setPreviewUrl(null)} />}
     </div>

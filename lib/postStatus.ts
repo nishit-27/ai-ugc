@@ -33,6 +33,9 @@ export function derivePostStatus(post: PostLike): UiPostStatus {
   const hasFailed = platformStatuses.includes('failed');
   const hasActive = platformStatuses.some((status) => ACTIVE_PLATFORM_STATUSES.has(status));
 
+  // Active states must win so retries for partial/failed posts render as publishing.
+  if (hasActive || isActiveStatus(topLevel)) return 'publishing';
+
   if (hasPublished && hasFailed) return 'partial';
   if (hasFailed && !hasPublished) return 'failed';
   if (hasPublished && !hasFailed && !hasActive) return 'published';
@@ -43,8 +46,6 @@ export function derivePostStatus(post: PostLike): UiPostStatus {
   if (topLevel === 'failed') return 'failed';
   if (topLevel === 'published') return 'published';
   if (topLevel === 'cancelled') return 'cancelled';
-
-  if (hasActive || isActiveStatus(topLevel)) return 'publishing';
 
   if (platformStatuses.length > 0 && platformStatuses.every((status) => status === 'scheduled')) return 'scheduled';
 

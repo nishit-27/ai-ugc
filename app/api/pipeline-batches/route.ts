@@ -8,7 +8,7 @@ export async function GET() {
     await initDatabase();
     const batches = await getAllPipelineBatches();
     return NextResponse.json(batches, {
-      headers: { 'Cache-Control': 'no-store, max-age=0' },
+      headers: { 'Cache-Control': 'private, max-age=3, stale-while-revalidate=20' },
     });
   } catch (err) {
     console.error('List pipeline batches error:', err);

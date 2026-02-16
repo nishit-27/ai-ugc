@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Batch } from '@/types';
 import { useStuckJobRecovery } from './useStuckJobRecovery';
+import { usePageVisibility } from './usePageVisibility';
 
 const REFRESH_INTERVAL = 60_000;
 const ACTIVE_POLL_INTERVAL = 3_000;
@@ -12,9 +13,11 @@ let _cache: Batch[] = [];
 let _cacheTime = 0;
 
 export function useBatches() {
+  const isPageVisible = usePageVisibility();
   const [batches, setBatches] = useState<Batch[]>(_cache);
   const [isLoadingPage, setIsLoadingPage] = useState(_cache.length === 0);
   const activePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wasVisibleRef = useRef(isPageVisible);
 
   // Auto-recover stuck jobs (processing > 10 min)
   const { checkAndRecover } = useStuckJobRecovery(() => {
@@ -56,12 +59,14 @@ export function useBatches() {
 
   // 60s baseline refresh
   useEffect(() => {
+    if (!isPageVisible) return;
     const id = setInterval(() => loadBatches(true), REFRESH_INTERVAL);
     return () => clearInterval(id);
-  }, [loadBatches]);
+  }, [isPageVisible, loadBatches]);
 
   // Fast poll when batches are active
   useEffect(() => {
+    if (!isPageVisible) return;
     const hasActive = batches.some((b) => b.status === 'pending' || b.status === 'processing');
     if (hasActive && !activePollRef.current) {
       activePollRef.current = setInterval(() => loadBatches(true), ACTIVE_POLL_INTERVAL);
@@ -75,7 +80,15 @@ export function useBatches() {
         activePollRef.current = null;
       }
     };
-  }, [batches, loadBatches]);
+  }, [batches, isPageVisible, loadBatches]);
+
+  useEffect(() => {
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = isPageVisible;
+    if (!wasVisible && isPageVisible) {
+      void loadBatches(true);
+    }
+  }, [isPageVisible, loadBatches]);
 
   const refresh = useCallback(() => loadBatches(true), [loadBatches]);
 

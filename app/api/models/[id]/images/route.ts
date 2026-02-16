@@ -2,8 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { getModel, getModelImages, createModelImage } from '@/lib/db';
 import { uploadImage } from '@/lib/storage';
+import { getCachedSignedUrl } from '@/lib/signedUrlCache';
 
 type RouteParams = { params: Promise<{ id: string }> };
+type ModelImageRecord = {
+  id: string;
+  modelId: string;
+  gcsUrl: string;
+  filename: string;
+  originalName?: string;
+  fileSize?: number;
+  isPrimary?: boolean;
+  createdAt?: string;
+  signedUrl?: string;
+};
 
 // GET /api/models/[id]/images - List all images for a model
 export async function GET(_request: NextRequest, { params }: RouteParams) {
@@ -15,10 +27,18 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: 'Model not found' }, { status: 404 });
     }
 
-    const images = await getModelImages(id);
+    const images = await getModelImages(id) as ModelImageRecord[];
+    const withSigned = await Promise.all(images.map(async (image: ModelImageRecord) => {
+      if (!image.gcsUrl?.includes('storage.googleapis.com')) return image;
+      try {
+        const signedUrl = await getCachedSignedUrl(image.gcsUrl);
+        return { ...image, signedUrl };
+      } catch {
+        return image;
+      }
+    }));
 
-    // Return images immediately — signed URLs are resolved lazily on the client
-    return NextResponse.json(images, {
+    return NextResponse.json(withSigned, {
       headers: { 'Cache-Control': 'no-store, max-age=0' },
     });
   } catch (err) {

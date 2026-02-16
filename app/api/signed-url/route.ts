@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSignedUrlFromPublicUrl } from '@/lib/storage';
+import { getCachedSignedUrl } from '@/lib/signedUrlCache';
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid GCS URL' }, { status: 400 });
     }
 
-    const signedUrl = await getSignedUrlFromPublicUrl(url);
+    const signedUrl = await getCachedSignedUrl(url);
 
     return NextResponse.json({ signedUrl });
   } catch (err) {
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
       batch.map(async (url) => {
         if (!url?.includes('storage.googleapis.com')) return [url, url] as const;
         try {
-          const signed = await getSignedUrlFromPublicUrl(url);
+          const signed = await getCachedSignedUrl(url);
           return [url, signed] as const;
         } catch {
           return [url, url] as const;

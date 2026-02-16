@@ -10,6 +10,11 @@ export const maxDuration = 30;
 const MAX_LIMIT = 100;
 const LINK_HYDRATE_CONCURRENCY = 3;
 const MAX_LINK_HYDRATE_POSTS = 8;
+const RESPONSE_CACHE_TTL_MS = 4_000;
+const MAX_CACHE_ENTRIES = 30;
+
+const responseCache = new Map<string, { ts: number; payload: { posts: Post[] } }>();
+const inflightByKey = new Map<string, Promise<{ posts: Post[] }>>();
 
 type LatePlatform = {
   platform: string;
@@ -47,6 +52,27 @@ function parseLimit(rawLimit: string | null): number {
   const parsed = Number.parseInt(rawLimit || '50', 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return 50;
   return Math.min(parsed, MAX_LIMIT);
+}
+
+function getCacheKey(statusFilter: string, platformFilter: string, requestedLimit: number): string {
+  return `${statusFilter}|${platformFilter}|${requestedLimit}`;
+}
+
+function getCachedResponse(cacheKey: string): { posts: Post[] } | null {
+  const cached = responseCache.get(cacheKey);
+  if (!cached) return null;
+  if (Date.now() - cached.ts > RESPONSE_CACHE_TTL_MS) {
+    responseCache.delete(cacheKey);
+    return null;
+  }
+  return cached.payload;
+}
+
+function setCachedResponse(cacheKey: string, payload: { posts: Post[] }) {
+  responseCache.set(cacheKey, { ts: Date.now(), payload });
+  if (responseCache.size <= MAX_CACHE_ENTRIES) return;
+  const oldest = responseCache.keys().next().value;
+  if (oldest) responseCache.delete(oldest);
 }
 
 function extractPosts(payload: unknown): LatePost[] {
@@ -140,25 +166,55 @@ export async function GET(request: NextRequest) {
       : 'all';
     const platformFilter = (request.nextUrl.searchParams.get('platform') || '').toLowerCase();
     const requestedLimit = parseLimit(request.nextUrl.searchParams.get('limit'));
-    const fetchLimit = statusFilter === 'all' ? requestedLimit : Math.min(requestedLimit * 2, MAX_LIMIT);
+    const cacheKey = getCacheKey(statusFilter, platformFilter, requestedLimit);
+    const cached = getCachedResponse(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached, {
+        headers: { 'Cache-Control': 'private, max-age=4, stale-while-revalidate=20' },
+      });
+    }
 
-    const listPayload = await lateApiRequest(`/posts?limit=${fetchLimit}`, {
-      timeout: 10_000,
-      retries: 1,
+    const inflight = inflightByKey.get(cacheKey);
+    if (inflight) {
+      const shared = await inflight;
+      return NextResponse.json(shared, {
+        headers: { 'Cache-Control': 'private, max-age=4, stale-while-revalidate=20' },
+      });
+    }
+
+    const loadPromise = (async () => {
+      const fetchLimit = statusFilter === 'all' ? requestedLimit : Math.min(requestedLimit * 2, MAX_LIMIT);
+
+      const listPayload = await lateApiRequest(`/posts?limit=${fetchLimit}`, {
+        timeout: 10_000,
+        retries: 1,
+      });
+
+      const initialPosts = extractPosts(listPayload);
+      const hydratedPosts = await hydratePostLinks(initialPosts);
+
+      const normalized = hydratedPosts
+        .map(normalizePost)
+        .filter((post) => (platformFilter
+          ? post.platforms?.some((platform) => (platform.platform || '').toLowerCase() === platformFilter)
+          : true))
+        .filter((post) => postMatchesFilter(post, statusFilter))
+        .slice(0, requestedLimit);
+
+      return { posts: normalized };
+    })();
+    inflightByKey.set(cacheKey, loadPromise);
+
+    let payload: { posts: Post[] };
+    try {
+      payload = await loadPromise;
+    } finally {
+      inflightByKey.delete(cacheKey);
+    }
+    setCachedResponse(cacheKey, payload);
+    return NextResponse.json(payload, {
+      headers: { 'Cache-Control': 'private, max-age=4, stale-while-revalidate=20' },
     });
-
-    const initialPosts = extractPosts(listPayload);
-    const hydratedPosts = await hydratePostLinks(initialPosts);
-
-    const normalized = hydratedPosts
-      .map(normalizePost)
-      .filter((post) => (platformFilter
-        ? post.platforms?.some((platform) => (platform.platform || '').toLowerCase() === platformFilter)
-        : true))
-      .filter((post) => postMatchesFilter(post, statusFilter))
-      .slice(0, requestedLimit);
-
-    return NextResponse.json({ posts: normalized });
   } catch (error) {
     console.error('Late API posts error:', error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });

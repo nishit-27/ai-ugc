@@ -27,14 +27,15 @@ function PostsPageContent() {
 
   return (
     <div>
-      <div className="mb-6 flex items-start justify-between">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--primary)]">Posts</h1>
           <p className="text-[var(--text-muted)]">Manage scheduled and published content</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <RefreshButton onClick={refresh} />
           <button
+            type="button"
             onClick={() => {
               setPreselectedVideoUrl(null);
               setCreatePostModal(true);

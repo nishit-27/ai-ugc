@@ -152,7 +152,7 @@ export default function AttachVideoConfig({
               <video
                 src={config.videoUrl}
                 className="h-16 w-24 shrink-0 rounded-lg object-cover bg-black cursor-pointer"
-                muted playsInline preload="metadata"
+                muted playsInline preload="none"
                 onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }}
                 onClick={() => setPreviewUrl(config.videoUrl)}
               />

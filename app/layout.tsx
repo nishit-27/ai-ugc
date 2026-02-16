@@ -28,6 +28,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://storage.googleapis.com" />
+      </head>
       <body className={`${dmSans.variable} ${spaceGrotesk.variable} antialiased`}>
         <AuthSessionProvider>
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem>

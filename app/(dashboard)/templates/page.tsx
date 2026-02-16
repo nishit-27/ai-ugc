@@ -113,6 +113,7 @@ export default function TemplatesPage() {
   // Sidebar resize + responsive
   const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
@@ -372,23 +373,25 @@ export default function TemplatesPage() {
       {/* Main area: Canvas + Config Panel */}
       <div className="flex" style={{ height: 'calc(100vh - 7.5rem)' }}>
         {/* Left: Flow canvas */}
-        <div className="relative flex-1">
-          <PipelineBuilder
-            steps={steps}
-            onChange={setSteps}
-            selectedId={selectedNodeId}
-            onSelect={(id) => { setSelectedNodeId(id); if (isMobile && id) setPanelOpen(true); }}
-            videoSource={videoSource}
-            tiktokUrl={tiktokUrl}
-            videoUrl={videoUrl}
-            validationErrors={validationErrors}
-          />
-        </div>
+        {!panelExpanded && (
+          <div className="relative flex-1">
+            <PipelineBuilder
+              steps={steps}
+              onChange={setSteps}
+              selectedId={selectedNodeId}
+              onSelect={(id) => { setSelectedNodeId(id); if (isMobile && id) setPanelOpen(true); }}
+              videoSource={videoSource}
+              tiktokUrl={tiktokUrl}
+              videoUrl={videoUrl}
+              validationErrors={validationErrors}
+            />
+          </div>
+        )}
 
-        {/* Right: Config Panel (resizable) */}
+        {/* Right: Config Panel (resizable / expandable) */}
         {panelOpen && (
           <>
-            {isMobile && (
+            {isMobile && !panelExpanded && (
               <div
                 className="fixed inset-0 z-30 bg-black/30"
                 onClick={() => setPanelOpen(false)}
@@ -396,14 +399,16 @@ export default function TemplatesPage() {
             )}
 
             <div
-              className={`relative shrink-0 ${
-                isMobile
-                  ? 'fixed right-0 top-0 z-40 h-full w-[85vw] max-w-[420px] shadow-2xl'
-                  : 'my-3 mr-3 overflow-hidden overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-lg'
+              className={`relative shrink-0 transition-all duration-200 ${
+                panelExpanded
+                  ? 'flex-1 my-3 mx-3 overflow-hidden overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-lg'
+                  : isMobile
+                    ? 'fixed right-0 top-0 z-40 h-full w-[85vw] max-w-[420px] shadow-2xl'
+                    : 'my-3 mr-3 overflow-hidden overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-lg'
               }`}
-              style={isMobile ? undefined : { width: panelWidth }}
+              style={panelExpanded || isMobile ? undefined : { width: panelWidth }}
             >
-              {!isMobile && (
+              {!isMobile && !panelExpanded && (
                 <div
                   onMouseDown={onDragStart}
                   className="absolute left-0 top-0 z-10 flex h-full w-4 cursor-col-resize items-center justify-center"
@@ -419,8 +424,10 @@ export default function TemplatesPage() {
                 steps={steps}
                 onUpdateStep={(id, updated) => { handleUpdateStep(id, updated); setValidationErrors((prev) => { const next = new Map(prev); next.delete(id); return next; }); }}
                 onRemoveStep={handleRemoveStep}
-                onClose={() => { setSelectedNodeId(null); if (isMobile) setPanelOpen(false); }}
+                onClose={() => { setSelectedNodeId(null); setPanelExpanded(false); if (isMobile) setPanelOpen(false); }}
                 validationError={selectedNodeId && selectedNodeId !== 'source' ? validationErrors.get(selectedNodeId) : undefined}
+                isExpanded={panelExpanded}
+                onToggleExpand={() => setPanelExpanded((p) => !p)}
                 sourceConfig={{
                   videoSource,
                   tiktokUrl,

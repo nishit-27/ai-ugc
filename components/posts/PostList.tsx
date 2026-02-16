@@ -76,6 +76,17 @@ export default function PostList({
     () => posts.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE),
     [posts, safePage],
   );
+  const visiblePages = useMemo(
+    () =>
+      Array.from({ length: totalPages }, (_, i) => i + 1)
+        .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 2)
+        .reduce<(number | 'dots')[]>((acc, p, i, arr) => {
+          if (i > 0 && p - arr[i - 1] > 1) acc.push('dots');
+          acc.push(p);
+          return acc;
+        }, []),
+    [safePage, totalPages],
+  );
 
   if (isLoading) {
     return (
@@ -152,7 +163,8 @@ export default function PostList({
         )}
         {paginatedPosts.map((post) => {
           const status = postStatus(post);
-          const thumbnail = post.mediaItems?.[0]?.url || post.mediaItems?.[0]?.thumbnailUrl;
+          const thumbnailImage = post.mediaItems?.[0]?.thumbnailUrl;
+          const previewVideo = post.mediaItems?.[0]?.url || post.mediaItems?.[0]?.thumbnailUrl;
           const isActive = isActiveStatus(status);
           const isScheduled = status === 'scheduled';
 
@@ -169,14 +181,21 @@ export default function PostList({
                 className="relative w-full bg-black/90"
                 style={{ aspectRatio: '9/16' }}
               >
-                {thumbnail ? (
+                {thumbnailImage ? (
+                  <img
+                    src={thumbnailImage}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                ) : previewVideo ? (
                   <video
-                    src={thumbnail}
+                    src={previewVideo}
                     className="absolute inset-0 h-full w-full object-contain"
                     muted
                     playsInline
-                    preload="metadata"
-                    onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }}
+                    preload="none"
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
@@ -238,26 +257,35 @@ export default function PostList({
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-1.5 pt-4">
           <button
+            type="button"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={safePage <= 1}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPage(p)}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors ${
-                p === safePage
-                  ? 'bg-[var(--primary)] text-white'
-                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'
-              }`}
-            >
-              {p}
-            </button>
-          ))}
+          {visiblePages.map((item, i) =>
+            item === 'dots' ? (
+              <span key={`dots-${i}`} className="px-1 text-[var(--text-muted)]">
+                ...
+              </span>
+            ) : (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setPage(item)}
+                className={`flex h-8 min-w-[2rem] items-center justify-center rounded-lg px-2 text-xs font-medium transition-colors ${
+                  item === safePage
+                    ? 'bg-[var(--primary)] text-white'
+                    : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'
+                }`}
+              >
+                {item}
+              </button>
+            )
+          )}
           <button
+            type="button"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={safePage >= totalPages}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
@@ -293,7 +321,7 @@ export default function PostList({
                     src={videoSrc}
                     controls
                     playsInline
-                    preload="metadata"
+                    preload="none"
                     className="absolute inset-0 h-full w-full object-contain"
                   />
                 ) : (
@@ -374,12 +402,21 @@ export default function PostList({
                 <div className="flex gap-2 pt-0.5">
                   {isFailed && (
                     <button
+                      type="button"
                       onClick={async () => {
                         setIsRetrying(livePost._id);
                         try {
-                          await fetch(`/api/late/posts/${livePost._id}/retry`, { method: 'POST' });
+                          const res = await fetch(`/api/late/posts/${livePost._id}/retry`, { method: 'POST' });
+                          const data = await res.json().catch(() => ({} as { error?: string }));
+                          if (!res.ok) {
+                            throw new Error(data.error || 'Failed to retry post');
+                          }
                           showToast('Retrying publish...', 'success');
-                          refresh();
+                          await refresh();
+                          setTimeout(() => { void refresh(); }, 2000);
+                          setTimeout(() => { void refresh(); }, 5000);
+                        } catch (error) {
+                          showToast((error as Error).message || 'Failed to retry post', 'error');
                         } finally {
                           setIsRetrying(null);
                         }
@@ -392,14 +429,21 @@ export default function PostList({
                     </button>
                   )}
                   <button
+                    type="button"
                     onClick={async () => {
                       if (!confirm('Delete this post?')) return;
                       setIsDeletingPost(livePost._id);
                       try {
-                        await fetch(`/api/late/posts/${livePost._id}`, { method: 'DELETE' });
+                        const res = await fetch(`/api/late/posts/${livePost._id}`, { method: 'DELETE' });
+                        const data = await res.json().catch(() => ({} as { error?: string }));
+                        if (!res.ok) {
+                          throw new Error(data.error || 'Failed to delete post');
+                        }
                         showToast('Post deleted', 'success');
                         setSelectedPost(null);
-                        refresh();
+                        await refresh();
+                      } catch (error) {
+                        showToast((error as Error).message || 'Failed to delete post', 'error');
                       } finally {
                         setIsDeletingPost(null);
                       }

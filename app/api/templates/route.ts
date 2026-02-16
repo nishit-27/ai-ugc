@@ -16,7 +16,7 @@ export async function GET() {
     // Signed URLs are resolved lazily on the client via /api/signed-url
     // or on-demand via /api/templates/[id].
     return NextResponse.json(jobs, {
-      headers: { 'Cache-Control': 'no-store, max-age=0' },
+      headers: { 'Cache-Control': 'private, max-age=2, stale-while-revalidate=15' },
     });
   } catch (err) {
     console.error('List template jobs error:', err);

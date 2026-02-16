@@ -64,7 +64,7 @@ function JobsPageInner() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Jobs</h1>
           <p className="text-xs text-[var(--text-muted)]">
@@ -74,9 +74,9 @@ function JobsPageInner() {
             }
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           {/* Tab toggle */}
-          <div className="flex rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+          <div className="flex max-w-full overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--surface)]">
             <button
               onClick={() => setTab('single')}
               className={`px-3 py-1.5 text-xs font-medium transition-all rounded-l-lg ${
@@ -161,7 +161,7 @@ export default function JobsPage() {
   return (
     <Suspense fallback={
       <div className="mx-auto max-w-5xl space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Jobs</h1>
             <p className="text-xs text-[var(--text-muted)]">Loading...</p>

@@ -11,7 +11,7 @@ export default function BatchesPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Batches</h1>
           <p className="text-xs text-[var(--text-muted)]">
@@ -32,4 +32,3 @@ export default function BatchesPage() {
     </div>
   );
 }
-

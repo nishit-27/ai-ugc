@@ -45,14 +45,14 @@ export default function ConnectionsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Connections</h1>
           <p className="text-xs text-[var(--text-muted)]">
             {profiles.length} profile{profiles.length !== 1 ? 's' : ''} &middot; {accounts.length} account{accounts.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" onClick={refresh}>

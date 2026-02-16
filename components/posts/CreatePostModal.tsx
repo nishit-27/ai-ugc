@@ -309,9 +309,9 @@ export default function CreatePostModal({
   })();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4" onClick={onClose}>
       <div
-        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-2xl sm:max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -498,7 +498,7 @@ export default function CreatePostModal({
                       </button>
 
                       {profileMultiDropdownOpen && (
-                        <div className="absolute left-0 right-0 bottom-full z-50 mb-1 max-h-52 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--background)] shadow-lg">
+                        <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-52 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--background)] shadow-lg">
                           <div className="border-b border-[var(--border)] p-2">
                             <input
                               type="text"
@@ -574,7 +574,7 @@ export default function CreatePostModal({
                       <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
                         Accounts ({selectedAccountIds.length}/{postableAccounts.length})
                       </label>
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                         {postableAccounts.map((a) => {
                           const isSelected = selectedAccountIds.includes(a._id);
                           return (
