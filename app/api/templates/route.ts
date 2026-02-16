@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createTemplateJob, getAllTemplateJobs, createPipelineBatch, updatePipelineBatch, initDatabase } from '@/lib/db';
 import { processTemplateJob, processPipelineBatch } from '@/lib/processTemplateJob';
 import type { MiniAppStep, BatchVideoGenConfig, VideoGenConfig } from '@/types';
+import { auth } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // 5 minutes — video processing needs more than the default 10s/60s
@@ -28,6 +29,9 @@ export async function POST(request: NextRequest) {
     await initDatabase();
     const body = await request.json();
     const { name, pipeline, videoSource, tiktokUrl, videoUrl } = body;
+
+    const session = await auth();
+    const createdBy = session?.user?.name?.split(' ')[0] || null;
 
     if (!name || !pipeline || !Array.isArray(pipeline) || pipeline.length === 0) {
       return NextResponse.json({ error: 'Name and pipeline steps are required' }, { status: 400 });
@@ -77,6 +81,7 @@ export async function POST(request: NextRequest) {
         totalJobs: images.length,
         isMaster: false,
         masterConfig: null,
+        createdBy,
       });
 
       if (!batch) {
@@ -120,6 +125,7 @@ export async function POST(request: NextRequest) {
           videoUrl: videoUrl || null,
           pipelineBatchId: batch.id,
           modelId: null,
+          createdBy,
         });
         childJobs.push(job);
       }
@@ -162,6 +168,7 @@ export async function POST(request: NextRequest) {
       videoUrl: videoUrl || null,
       pipelineBatchId: null,
       modelId: null,
+      createdBy,
     });
 
     if (!job) {

@@ -3,6 +3,7 @@ import { fal } from '@fal-ai/client';
 import { config } from '@/lib/config';
 import { uploadImage, getSignedUrlFromPublicUrl, downloadToBuffer } from '@/lib/storage.js';
 import { initDatabase, createGeneratedImage } from '@/lib/db';
+import { auth } from '@/lib/auth';
 
 export const maxDuration = 120;
 
@@ -62,7 +63,7 @@ async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
 
 export async function POST(req: Request) {
   try {
-    const { modelImageUrl, frameImageUrl, resolution } = await req.json();
+    const { modelImageUrl, frameImageUrl, resolution, modelId } = await req.json();
 
     if (!modelImageUrl || !frameImageUrl) {
       return NextResponse.json(
@@ -193,6 +194,8 @@ export async function POST(req: Request) {
     // Persist generated images to database
     try {
       await initDatabase();
+      const session = await auth();
+      const createdBy = session?.user?.name?.split(' ')[0] || null;
       await Promise.all([
         createGeneratedImage({
           gcsUrl: uploadedA.url,
@@ -200,6 +203,8 @@ export async function POST(req: Request) {
           modelImageUrl: modelImageUrl,
           sceneImageUrl: frameImageUrl,
           promptVariant: 'A',
+          modelId: modelId || null,
+          createdBy,
         }),
         createGeneratedImage({
           gcsUrl: uploadedB.url,
@@ -207,6 +212,8 @@ export async function POST(req: Request) {
           modelImageUrl: modelImageUrl,
           sceneImageUrl: frameImageUrl,
           promptVariant: 'B',
+          modelId: modelId || null,
+          createdBy,
         }),
       ]);
     } catch (dbErr) {

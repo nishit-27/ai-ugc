@@ -142,6 +142,9 @@ export default function MasterJobCard({
           )}
           <div className="min-w-0 flex-1">
             <div className="truncate text-[11px] font-medium leading-tight">{modelName || job.name}</div>
+            {job.createdBy && (
+              <div className="text-[9px] text-[var(--text-muted)]">By {job.createdBy}</div>
+            )}
             <div className="flex items-center gap-1 mt-0.5">
               {job.postStatus === 'posted' ? (
                 <>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { initDatabase, createPipelineBatch, createTemplateJob, updatePipelineBatch, getModelAccountMappingsForModels, getAllModels, getModelImages } from '@/lib/db';
 import { processPipelineBatch } from '@/lib/processTemplateJob';
 import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, MasterConfig } from '@/types';
+import { auth } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -11,6 +12,9 @@ export async function POST(request: NextRequest) {
     await initDatabase();
     const body = await request.json();
     const { name, pipeline, videoSource, tiktokUrl, videoUrl, modelIds, caption, scheduledFor, timezone, publishMode } = body;
+
+    const session = await auth();
+    const createdBy = session?.user?.name?.split(' ')[0] || null;
 
     // --- Validation ---
     if (!name || !pipeline || !Array.isArray(pipeline) || pipeline.length === 0) {
@@ -98,6 +102,7 @@ export async function POST(request: NextRequest) {
       totalJobs: selectedModels.length,
       isMaster: true,
       masterConfig,
+      createdBy,
     });
 
     if (!batch) {
@@ -162,6 +167,7 @@ export async function POST(request: NextRequest) {
         videoUrl: videoUrl || null,
         pipelineBatchId: batch.id,
         modelId: model.id,
+        createdBy,
       });
       childJobs.push(job);
     }

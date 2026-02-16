@@ -9,6 +9,7 @@ import {
   getModelImages,
   getImagesByIds,
 } from '@/lib/db';
+import { auth } from '@/lib/auth';
 
 interface BatchGenerateRequest {
   // Batch info
@@ -68,6 +69,9 @@ export async function POST(request: NextRequest) {
     typeof maxSeconds === 'number' ? maxSeconds : config.defaultMaxSeconds;
 
   try {
+    const session = await auth();
+    const createdBy = session?.user?.name?.split(' ')[0] || null;
+
     // Determine image selection mode
     let imageSelectionMode: 'model' | 'specific' | 'single' = 'single';
     let selectedImageIds: string[] | null = null;
@@ -136,6 +140,7 @@ export async function POST(request: NextRequest) {
         customPrompt,
         maxSeconds: parsedMaxSeconds,
         batchId,
+        createdBy,
       });
 
       if (job) {

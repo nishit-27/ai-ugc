@@ -5,6 +5,7 @@ import { downloadToBuffer } from '@/lib/storage';
 import { config } from '@/lib/config';
 import path from 'path';
 import type { MasterConfig } from '@/types';
+import { auth } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -56,6 +57,8 @@ export async function POST(
 ) {
   const { batchId } = await params;
   const requestId = `master-post-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const session = await auth();
+  const createdBy = session?.user?.name?.split(' ')[0] || null;
 
   const log = (stage: string, ...args: unknown[]) => {
     console.log(`[Master Post][${requestId}][${stage}]`, ...args);
@@ -332,6 +335,7 @@ export async function POST(
               scheduledFor: masterConfig.scheduledFor || null,
               latePostId,
               platformPostUrl: platformResult?.platformPostUrl || null,
+              createdBy,
             });
           } catch (dbError) {
             logError('DB', `Failed to save post record for ${target.platform}/${target.accountId}:`, (dbError as Error).message);

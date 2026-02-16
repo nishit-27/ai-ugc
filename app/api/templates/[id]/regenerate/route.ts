@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { initDatabase, getTemplateJob, createTemplateJob } from '@/lib/db';
 import { processTemplateJob } from '@/lib/processTemplateJob';
 import type { MiniAppStep, VideoGenConfig } from '@/types';
+import { auth } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -50,6 +51,9 @@ export async function POST(
     }
 
     // Clone the job — keep the original intact, create a new one with the updated pipeline
+    const session = await auth();
+    const createdBy = session?.user?.name?.split(' ')[0] || null;
+
     const cloned = await createTemplateJob({
       name: original.name,
       pipeline,
@@ -59,6 +63,7 @@ export async function POST(
       pipelineBatchId: original.pipelineBatchId,
       modelId: original.modelId,
       regeneratedFrom: original.id,
+      createdBy,
     }) as { id: string };
 
     // Process the cloned job in background

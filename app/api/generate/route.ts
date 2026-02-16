@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { processJob } from '@/lib/processJob';
 import { createJob } from '@/lib/db';
+import { auth } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -46,6 +47,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const session = await auth();
+    const createdBy = session?.user?.name?.split(' ')[0] || null;
+
     // Create job in database
     const job = await createJob({
       tiktokUrl: tiktokUrl || null,
@@ -55,6 +59,7 @@ export async function POST(request: NextRequest) {
       customPrompt,
       maxSeconds: typeof maxSeconds === 'number' ? maxSeconds : config.defaultMaxSeconds,
       batchId: null,
+      createdBy,
     });
 
     if (!job) {

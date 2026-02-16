@@ -58,7 +58,11 @@ function GeneratePageContent() {
       </div>
 
       {!bulkMode ? (
-        <SingleVideoForm />
+        <SingleVideoForm
+          models={models}
+          modelImages={modelImages}
+          loadModelImages={loadModelImages}
+        />
       ) : (
         <BulkGenerateForm
           models={models}

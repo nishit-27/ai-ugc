@@ -86,6 +86,9 @@ export default function ImageGallery({
           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-2 pb-1.5 pt-4">
             <p className="text-[11px] text-white/80">
               {formatDate(image.createdAt)}
+              {image.createdBy && (
+                <span className="ml-1.5 text-white/60">By {image.createdBy}</span>
+              )}
               {image.promptVariant && (
                 <span className="ml-1.5 rounded bg-white/20 px-1 py-0.5 text-[10px]">
                   {image.promptVariant}

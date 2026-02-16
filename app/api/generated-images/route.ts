@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDatabase, getGeneratedImagesPage } from '@/lib/db';
+import { initDatabase, getGeneratedImagesPage, getGeneratedImagesByModelId } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
     await initDatabase();
 
     const { searchParams } = request.nextUrl;
+    const modelId = searchParams.get('modelId');
+
+    // If modelId is provided, return all generated images for that model (no pagination)
+    if (modelId) {
+      const images = await getGeneratedImagesByModelId(modelId);
+      return NextResponse.json({ images, total: images.length });
+    }
+
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '24', 10)));
     const offset = (page - 1) * limit;

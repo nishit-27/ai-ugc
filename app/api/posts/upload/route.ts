@@ -4,6 +4,7 @@ import { config } from '@/lib/config';
 import { lateApiRequest, LateApiError } from '@/lib/lateApi';
 import { downloadToBuffer } from '@/lib/storage';
 import { createPost, updatePost, findRecentDuplicatePost } from '@/lib/db';
+import { auth } from '@/lib/auth';
 
 export const maxDuration = 180;
 export const dynamic = 'force-dynamic';
@@ -356,6 +357,9 @@ export async function POST(request: NextRequest) {
     const latePostId = latePost._id;
     log('POST', `Post created: ${latePostId}, status: ${latePost.status}`);
 
+    const session = await auth();
+    const createdBy = session?.user?.name?.split(' ')[0] || null;
+
     // --- Step 4: Save one DB row per platform/account ---
     const dbResults: Array<{ platform: string; accountId: string; dbPostId?: string; status: string; warning?: string }> = [];
 
@@ -399,6 +403,7 @@ export async function POST(request: NextRequest) {
           scheduledFor: scheduledFor || null,
           latePostId,
           platformPostUrl,
+          createdBy,
         });
 
         if (dbStatus === 'published' && dbPost?.id) {

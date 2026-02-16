@@ -62,7 +62,7 @@ export default function MasterPipelinePage() {
   const [allModels, setAllModels] = useState<Model[]>([]);
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const [masterCaption, setMasterCaption] = useState('');
-  const [publishMode, setPublishMode] = useState<'now' | 'schedule' | 'queue' | 'draft'>('draft');
+  const [publishMode, setPublishMode] = useState<'now' | 'schedule' | 'queue' | 'draft'>('now');
   const [scheduledFor, setScheduledFor] = useState('');
   const [masterTimezone, setMasterTimezone] = useState('Asia/Kolkata');
   const [accountCounts, setAccountCounts] = useState<Record<string, number>>({});

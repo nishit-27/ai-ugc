@@ -89,10 +89,12 @@ export async function POST(req: Request) {
       })
     );
 
-    // Sort by score descending
-    scored.sort((a, b) => b.score - a.score);
+    // Keep frame at timestamp 0 in the first slot, sort the rest by score descending
+    const firstFrame = scored.find(f => f.timestamp === 0);
+    const rest = scored.filter(f => f.timestamp !== 0).sort((a, b) => b.score - a.score);
+    const sorted = firstFrame ? [firstFrame, ...rest] : scored.sort((a, b) => b.score - a.score);
 
-    return NextResponse.json({ frames: scored });
+    return NextResponse.json({ frames: sorted });
   } catch (error: unknown) {
     console.error('Extract frames error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';

@@ -4,6 +4,7 @@ import { config } from '@/lib/config';
 import { lateApiRequest, LateApiError } from '@/lib/lateApi';
 import { downloadToBuffer } from '@/lib/storage';
 import { createPost, updatePost } from '@/lib/db';
+import { auth } from '@/lib/auth';
 
 // Allow longer timeout for video uploads (3 minutes)
 export const maxDuration = 180;
@@ -270,6 +271,8 @@ export async function POST(request: NextRequest) {
     let dbPost: Awaited<ReturnType<typeof createPost>> | null = null;
     let dbWarning: string | undefined;
     try {
+      const session = await auth();
+      const createdBy = session?.user?.name?.split(' ')[0] || null;
       dbPost = await createPost({
         jobId: jobId || null,
         accountId: null, // Don't use Late account ID as local FK
@@ -281,6 +284,7 @@ export async function POST(request: NextRequest) {
         scheduledFor: scheduledFor || null,
         latePostId: latePostId,
         platformPostUrl: platformPostUrl,
+        createdBy,
       });
     } catch (dbError) {
       dbWarning = `Local DB save failed after Late post creation: ${(dbError as Error).message}`;

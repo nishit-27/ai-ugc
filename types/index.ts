@@ -9,6 +9,7 @@ export type Job = {
   step: string;
   outputUrl?: string;
   signedUrl?: string;
+  createdBy?: string;
   createdAt: string;
 };
 
@@ -214,6 +215,7 @@ export type TemplateJob = {
   postStatus?: 'pending' | 'posted' | 'rejected' | null;
   regeneratedFrom?: string | null;
   error?: string;
+  createdBy?: string;
   createdAt: string;
   completedAt?: string;
 };
@@ -228,6 +230,7 @@ export type PipelineBatch = {
   pipeline: MiniAppStep[];
   isMaster?: boolean;
   masterConfig?: MasterConfig;
+  createdBy?: string;
   createdAt: string;
   completedAt?: string;
 };
@@ -250,6 +253,8 @@ export type GeneratedImage = {
   modelImageUrl?: string;
   sceneImageUrl?: string;
   promptVariant?: string;
+  modelId?: string;
+  createdBy?: string;
   createdAt: string;
 };
 

@@ -195,12 +195,17 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
               {/* Info bar */}
               <div className="bg-[var(--surface)] px-2.5 py-2">
                 <p className="truncate text-xs font-medium">{job.name}</p>
-                {job.createdAt && (
-                  <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
-                    {new Date(job.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })},{' '}
-                    {new Date(job.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                )}
+                <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                  {job.createdAt && (
+                    <>
+                      {new Date(job.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })},{' '}
+                      {new Date(job.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                    </>
+                  )}
+                  {job.createdBy && (
+                    <span className="ml-1 text-[var(--text-muted)]">&middot; By {job.createdBy}</span>
+                  )}
+                </p>
               </div>
             </div>
           );
@@ -321,12 +326,15 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
                 {/* Status + date row */}
                 <div className="flex items-center justify-between">
                   <StatusBadge status={liveJob.status} />
-                  {liveJob.createdAt && (
-                    <span className="text-[10px] tabular-nums text-[var(--text-muted)]">
-                      {new Date(liveJob.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}{' '}
-                      {new Date(liveJob.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  )}
+                  <span className="text-[10px] tabular-nums text-[var(--text-muted)]">
+                    {liveJob.createdAt && (
+                      <>
+                        {new Date(liveJob.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}{' '}
+                        {new Date(liveJob.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                      </>
+                    )}
+                    {liveJob.createdBy && <> &middot; By {liveJob.createdBy}</>}
+                  </span>
                 </div>
 
                 {/* Progress */}

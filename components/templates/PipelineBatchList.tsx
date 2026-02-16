@@ -155,6 +155,7 @@ export default function PipelineBatchList({
                   )}
                   <span className="ml-auto text-[10px] text-[var(--text-muted)]">
                     {formatDate(batch.createdAt)}
+                    {batch.createdBy && <> &middot; By {batch.createdBy}</>}
                   </span>
                 </div>
               </div>
