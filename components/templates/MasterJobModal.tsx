@@ -1,6 +1,6 @@
 'use client';
 
-import { X, Download, ThumbsUp, XCircle, CheckCircle2, Loader2, ExternalLink, RotateCcw, Copy, Pencil, Send } from 'lucide-react';
+import { X, Download, ThumbsUp, XCircle, CheckCircle2, Loader2, ExternalLink, RotateCcw, Copy, Pencil, Send, FileEdit } from 'lucide-react';
 import type { TemplateJob, MasterConfigModel } from '@/types';
 
 type PostRecord = {
@@ -35,6 +35,8 @@ export default function MasterJobModal({
   onReject,
   onQuickRegenerate,
   onEditRegenerate,
+  onEditOverrides,
+  hasOverrides,
   posting,
   regenerating,
   postRecords,
@@ -47,6 +49,8 @@ export default function MasterJobModal({
   onReject: () => void;
   onQuickRegenerate?: () => void;
   onEditRegenerate?: () => void;
+  onEditOverrides?: () => void;
+  hasOverrides?: boolean;
   posting?: boolean;
   regenerating?: boolean;
   postRecords?: PostRecord[];
@@ -190,6 +194,21 @@ export default function MasterJobModal({
               <Pencil className="h-3.5 w-3.5" />
               Edit & Regen
             </button>
+            {isCompleted && !job.postStatus && onEditOverrides && (
+              <button
+                onClick={onEditOverrides}
+                disabled={isBusy}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
+                  hasOverrides
+                    ? 'border-master/30 bg-master/5 text-master hover:bg-master/10 dark:text-master-foreground'
+                    : 'border-[var(--border)] hover:bg-[var(--accent)]'
+                }`}
+                title="Edit caption & timing for this video"
+              >
+                <FileEdit className="h-3.5 w-3.5" />
+                {hasOverrides ? 'Custom' : 'Caption'}
+              </button>
+            )}
             <div className="flex-1" />
             {isCompleted && !job.postStatus && (
               <>

@@ -26,6 +26,8 @@ type Props = {
   onQuickRegenerate: (jobId: string) => void;
   onEditRegenerateOpen: (job: TemplateJob) => void;
   onEditRegenerateSubmit: (jobId: string, overrides?: { imageUrl?: string; imageId?: string }) => void;
+  onEditJobOverrides?: (job: TemplateJob) => void;
+  jobsWithOverrides?: Set<string>;
 };
 
 function getModelInfoWithSignedImage(
@@ -58,6 +60,8 @@ export default function MasterBatchModals({
   onQuickRegenerate,
   onEditRegenerateOpen,
   onEditRegenerateSubmit,
+  onEditJobOverrides,
+  jobsWithOverrides,
 }: Props) {
   const modalModelInfo = getModelInfoWithSignedImage(masterConfig, signedModelImages, modalJob?.modelId);
   const regenerateModelInfo = getModelInfoWithSignedImage(masterConfig, signedModelImages, regenerateJob?.modelId);
@@ -74,6 +78,8 @@ export default function MasterBatchModals({
           onReject={() => onReject(modalJob.id)}
           onQuickRegenerate={() => onQuickRegenerate(modalJob.id)}
           onEditRegenerate={() => onEditRegenerateOpen(modalJob)}
+          onEditOverrides={onEditJobOverrides ? () => onEditJobOverrides(modalJob) : undefined}
+          hasOverrides={jobsWithOverrides?.has(modalJob.id)}
           posting={busyJobIds.has(modalJob.id)}
           regenerating={false}
           postRecords={jobPosts[modalJob.id]}

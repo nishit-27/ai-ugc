@@ -9,7 +9,7 @@ import PipelineBuilder from '@/components/templates/PipelineBuilder';
 import NodeConfigPanel from '@/components/templates/NodeConfigPanel';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
-import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig } from '@/types';
+import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig, ComposeConfig } from '@/types';
 const DRAFT_KEY = 'ai-ugc-pipeline-draft';
 type PipelineDraft = {
   steps: MiniAppStep[];
@@ -194,7 +194,8 @@ export default function TemplatesPage() {
     const firstStep = enabledSteps[0];
     const needsInputVideo = !(
       (firstStep.type === 'video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation') ||
-      (firstStep.type === 'batch-video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation')
+      (firstStep.type === 'batch-video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation') ||
+      firstStep.type === 'compose'
     );
     if (needsInputVideo) {
       if (videoSource === 'tiktok' && !tiktokUrl) {
@@ -234,6 +235,11 @@ export default function TemplatesPage() {
         case 'attach-video': {
           const c = s.config as AttachVideoConfig;
           if (!c.videoUrl && !c.sourceStepId && !c.tiktokUrl) errors.set(s.id, 'Add a video source');
+          break;
+        }
+        case 'compose': {
+          const c = s.config as ComposeConfig;
+          if (!c.layers || c.layers.length === 0) errors.set(s.id, 'Add at least one layer');
           break;
         }
       }

@@ -6,10 +6,11 @@ import { getTemplateJob, updateTemplateJob, getModelImage, updatePipelineBatchPr
 import { uploadVideoFromPath, downloadToBuffer as gcsDownloadToBuffer } from '@/lib/storage';
 import { downloadFile, getVideoDuration, trimVideo } from '@/lib/serverUtils';
 import { addTextOverlay, mixAudio, concatVideos, stripAudio } from '@/lib/ffmpegOps';
+import { composeMedia } from '@/lib/ffmpegCompose';
 import { config, getFalWebhookUrl } from '@/lib/config';
 import { getVideoDownloadUrl } from '@/lib/processJob';
 import { uploadBuffer } from '@/lib/upload-via-presigned.js';
-import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig } from '@/types';
+import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, ComposeConfig, ComposeLayer } from '@/types';
 function getTempDir(): string {
   const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -258,6 +259,37 @@ export async function processStep(
       }
       return outputPath;
     }
+    case 'compose': {
+      const cfg = step.config as ComposeConfig;
+      if (!cfg.layers || cfg.layers.length === 0) {
+        throw new Error('Compose step has no layers');
+      }
+      const layerPaths = new Map<string, string>();
+      const downloadedPaths: string[] = [];
+      try {
+        for (const layer of cfg.layers) {
+          const src = layer.source;
+          let localPath: string;
+          if (src.type === 'step-output' && src.stepId && stepOutputs.has(src.stepId)) {
+            localPath = stepOutputs.get(src.stepId)!;
+          } else {
+            const url = src.gcsUrl || src.url;
+            if (!url) throw new Error(`No URL for compose layer ${layer.id}`);
+            localPath = path.join(tempDir, `tpl-compose-${layer.id}-${Date.now()}.${layer.type === 'video' ? 'mp4' : 'png'}`);
+            await downloadToLocal(url, localPath);
+            downloadedPaths.push(localPath);
+          }
+          layerPaths.set(layer.id, localPath);
+        }
+        const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-compose-${Date.now()}.mp4`);
+        composeMedia(layerPaths, cfg, outputPath);
+        return outputPath;
+      } finally {
+        for (const p of downloadedPaths) {
+          try { fs.unlinkSync(p); } catch {}
+        }
+      }
+    }
     default:
       throw new Error(`Unknown mini-app type: ${step.type}`);
   }
@@ -296,6 +328,8 @@ export async function processTemplateJob(jobId: string): Promise<void> {
     const firstStep = enabledSteps[0];
     if (firstStep?.type === 'video-generation' && (firstStep.config as VideoGenConfig).mode === 'subtle-animation') {
       currentVideoPath = '';
+    } else if (firstStep?.type === 'compose') {
+      currentVideoPath = ''; // compose step has its own inputs
     } else if (job.videoSource === 'upload' && job.videoUrl) {
       await updateTemplateJob(jobId, { step: 'Downloading video...' });
       currentVideoPath = path.join(tempDir, `tpl-input-${jobId}-${Date.now()}.mp4`);
@@ -422,6 +456,8 @@ export function getStepLabel(step: MiniAppStep): string {
       return 'Mixing background music';
     case 'attach-video':
       return 'Attaching video clip';
+    case 'compose':
+      return 'Composing media layers';
     default:
       return 'Processing';
   }

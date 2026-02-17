@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { MasterConfig, PipelineBatch } from '@/types';
-import { ArrowLeft, CheckCircle2, Clock, Crown, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Crown, Pencil, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import ProgressBar from '@/components/ui/ProgressBar';
 import Spinner from '@/components/ui/Spinner';
 
@@ -16,6 +16,7 @@ type Props = {
   isDeleting: boolean;
   onRefresh: () => void;
   onDelete: () => void;
+  onEditConfig?: () => void;
 };
 
 export default function MasterBatchHeader({
@@ -28,6 +29,7 @@ export default function MasterBatchHeader({
   isDeleting,
   onRefresh,
   onDelete,
+  onEditConfig,
 }: Props) {
   return (
     <>
@@ -72,8 +74,28 @@ export default function MasterBatchHeader({
       </div>
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-        {masterConfig?.caption && (
-          <div className="mb-3 rounded-lg bg-[var(--background)] p-3 text-sm">{masterConfig.caption}</div>
+        {masterConfig && (
+          <div className="mb-3 flex items-start gap-2">
+            <div className="flex-1 rounded-lg bg-[var(--background)] p-3 text-sm">
+              {masterConfig.caption || <span className="text-[var(--text-muted)] italic">No caption set</span>}
+              {masterConfig.publishMode && masterConfig.publishMode !== 'now' && (
+                <div className="mt-1.5 text-[10px] text-[var(--text-muted)]">
+                  {masterConfig.publishMode === 'schedule' && `Scheduled: ${masterConfig.scheduledFor || '(not set)'}`}
+                  {masterConfig.publishMode === 'queue' && 'Queued'}
+                  {masterConfig.publishMode === 'draft' && 'Draft'}
+                </div>
+              )}
+            </div>
+            {onEditConfig && (
+              <button
+                onClick={onEditConfig}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--text)]"
+                title="Edit caption & timing"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         )}
         <div className="flex flex-wrap items-center gap-3">
           <span className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--background)] px-3 py-1.5 text-xs font-medium">

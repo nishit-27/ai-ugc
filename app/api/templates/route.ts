@@ -74,8 +74,10 @@ export async function POST(request: NextRequest) {
         }
       } else if (!batchIsFirst) {
         // Batch step is not first, so we need to check if the first step needs input video
-        const needsInputVideo = !(firstEnabled.type === 'video-generation'
-          && (firstEnabled.config as { mode?: string }).mode === 'subtle-animation');
+        const needsInputVideo = !(
+          (firstEnabled.type === 'video-generation' && (firstEnabled.config as { mode?: string }).mode === 'subtle-animation') ||
+          firstEnabled.type === 'compose'
+        );
         if (needsInputVideo && !tiktokUrl && !videoUrl) {
           return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
         }
@@ -159,8 +161,10 @@ export async function POST(request: NextRequest) {
 
     // ── Single pipeline path (unchanged) ──
     const firstStep = enabledSteps[0];
-    const needsInputVideo = !(firstStep.type === 'video-generation'
-      && (firstStep.config as { mode?: string }).mode === 'subtle-animation');
+    const needsInputVideo = !(
+      (firstStep.type === 'video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation') ||
+      firstStep.type === 'compose'
+    );
     if (needsInputVideo) {
       if (!tiktokUrl && !videoUrl) {
         return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });

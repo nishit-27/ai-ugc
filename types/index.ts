@@ -95,7 +95,7 @@ export type Batch = {
 
 // Templates / Pipeline types
 
-export type MiniAppType = 'video-generation' | 'batch-video-generation' | 'text-overlay' | 'bg-music' | 'attach-video';
+export type MiniAppType = 'video-generation' | 'batch-video-generation' | 'text-overlay' | 'bg-music' | 'attach-video' | 'compose';
 
 export type VideoGenMode = 'motion-control' | 'subtle-animation';
 
@@ -185,10 +185,52 @@ export type BatchVideoGenConfig = {
   firstFrameResolution?: '1K' | '2K' | '4K';
 };
 
+// Compose types
+export type ComposeAspectRatio = '9:16' | '16:9' | '1:1' | '4:5';
+export type ComposeLayerFit = 'cover' | 'contain' | 'stretch';
+export type LayerSourceType = 'step-output' | 'gallery-video' | 'gallery-image'
+  | 'model-image' | 'upload' | 'url';
+
+export type LayerSource = {
+  type: LayerSourceType;
+  url: string;
+  gcsUrl?: string;
+  stepId?: string;
+  modelId?: string;
+  label?: string;
+};
+
+export type ComposeLayer = {
+  id: string;
+  type: 'video' | 'image';
+  source: LayerSource;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
+  fit: ComposeLayerFit;
+  borderRadius?: number;
+  opacity?: number;
+  trim?: { startSec: number; endSec: number };
+};
+
+export type ComposePresetId = '2up-vertical' | 'side-by-side' | 'pip'
+  | 'grid-2x2' | '3-panel' | 'free-canvas';
+
+export type ComposeConfig = {
+  canvasWidth: number;
+  canvasHeight: number;
+  aspectRatio: ComposeAspectRatio;
+  preset: ComposePresetId | null;
+  backgroundColor: string;
+  layers: ComposeLayer[];
+};
+
 export type MiniAppStep = {
   id: string;
   type: MiniAppType;
-  config: VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig | BatchVideoGenConfig;
+  config: VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig | BatchVideoGenConfig | ComposeConfig;
   enabled: boolean;
 };
 
@@ -218,6 +260,10 @@ export type TemplateJob = {
   modelId?: string;
   postStatus?: 'pending' | 'posted' | 'rejected' | null;
   regeneratedFrom?: string | null;
+  captionOverride?: string | null;
+  publishModeOverride?: 'now' | 'schedule' | 'queue' | 'draft' | null;
+  scheduledForOverride?: string | null;
+  timezoneOverride?: string | null;
   error?: string;
   createdBy?: string;
   createdAt: string;

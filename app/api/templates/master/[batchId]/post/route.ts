@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDatabase, getPipelineBatch, getTemplateJob, updateTemplateJobPostStatus, getModelAccountMappings, createPost } from '@/lib/db';
+import { initDatabase, getPipelineBatch, getTemplateJob, getTemplateJobsByBatchId, updateTemplateJobPostStatus, getModelAccountMappings, createPost, getPostsByJobIds } from '@/lib/db';
 import { lateApiRequest, LateApiError } from '@/lib/lateApi';
 import { downloadToBuffer } from '@/lib/storage';
 import { config } from '@/lib/config';
@@ -79,7 +79,6 @@ export async function POST(
 
     log('START', `Posting ${jobIds.length} jobs from batch ${batchId}`);
 
-    // --- Validate batch ---
     const batch = await getPipelineBatch(batchId);
     if (!batch) {
       return NextResponse.json({ error: 'Batch not found' }, { status: 404 });
@@ -97,13 +96,20 @@ export async function POST(
       return NextResponse.json({ error: 'LATE_API_KEY not configured' }, { status: 500 });
     }
 
+    const allBatchJobs = await getTemplateJobsByBatchId(batchId);
+    const postedModelIds = new Set<string>();
+    for (const j of allBatchJobs) {
+      if (j.postStatus === 'posted' && j.modelId && !jobIds.includes(j.id)) {
+        postedModelIds.add(j.modelId);
+      }
+    }
+
     const results: PostResult[] = [];
 
     for (const jobId of jobIds) {
       try {
         log('JOB', `Processing job ${jobId}`);
 
-        // --- Get the template job ---
         const job = await getTemplateJob(jobId);
         if (!job) {
           results.push({ jobId, status: 'skipped', error: 'Job not found' });
@@ -115,23 +121,47 @@ export async function POST(
           continue;
         }
 
-        // Skip jobs that have already been posted to avoid duplicate posts (unless force=true for repost)
         if (job.postStatus === 'posted' && !force) {
-          log('JOB', `Job ${jobId}: already posted, skipping to avoid duplicate`);
+          log('JOB', `Job ${jobId}: already posted, skipping`);
           results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Already posted' });
           continue;
         }
 
-        // --- Find this job's model accounts ---
-        // First try masterConfig (frozen at batch creation), then fall back to
-        // current DB mappings so accounts linked after batch creation still work.
+        if (!force && job.modelId && postedModelIds.has(job.modelId)) {
+          log('JOB', `Job ${jobId}: another job for model ${job.modelId} already posted in this batch, skipping`);
+          await updateTemplateJobPostStatus(jobId, 'posted');
+          results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Model already posted in this batch' });
+          continue;
+        }
+
+        const existingPosts = await getPostsByJobIds([jobId]);
+        if (force) {
+          const succeededAccounts = new Set(
+            existingPosts
+              .filter((p: { status: string }) => p.status === 'published' || p.status === 'scheduled' || p.status === 'publishing')
+              .map((p: { lateAccountId: string }) => p.lateAccountId)
+          );
+          if (succeededAccounts.size > 0) {
+            log('REPOST', `Job ${jobId}: ${succeededAccounts.size} platform(s) already succeeded, filtering them out`);
+          }
+        } else {
+          const hasAnyPost = existingPosts.some((p: { status: string }) =>
+            p.status === 'published' || p.status === 'scheduled' || p.status === 'publishing' || p.status === 'pending'
+          );
+          if (hasAnyPost) {
+            log('JOB', `Job ${jobId}: posts already exist, skipping`);
+            await updateTemplateJobPostStatus(jobId, 'posted');
+            results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Already posted' });
+            continue;
+          }
+        }
+
         const modelConfig = masterConfig.models.find((m) => m.modelId === job.modelId);
         const accountMappings: { lateAccountId: string; platform: string }[] = await getModelAccountMappings(job.modelId!);
 
         let platformTargets: { accountId: string; platform: string }[];
 
         if (modelConfig?.accountIds && modelConfig.accountIds.length > 0) {
-          // Use masterConfig account IDs with platform info from current mappings
           const accountPlatformMap = new Map<string, string>();
           for (const mapping of accountMappings) {
             accountPlatformMap.set(mapping.lateAccountId, mapping.platform);
@@ -143,7 +173,6 @@ export async function POST(
             }))
             .filter((t) => t.accountId);
         } else {
-          // Fall back to current DB mappings (accounts linked after batch creation)
           platformTargets = accountMappings.map((m) => ({
             accountId: m.lateAccountId,
             platform: m.platform,
@@ -155,9 +184,23 @@ export async function POST(
           continue;
         }
 
+        if (force) {
+          const succeededAccounts = new Set(
+            existingPosts
+              .filter((p: { status: string }) => p.status === 'published' || p.status === 'scheduled' || p.status === 'publishing')
+              .map((p: { lateAccountId: string }) => p.lateAccountId)
+          );
+          platformTargets = platformTargets.filter((t) => !succeededAccounts.has(t.accountId));
+          if (platformTargets.length === 0) {
+            log('JOB', `Job ${jobId}: all platforms already succeeded`);
+            results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'All platforms already succeeded' });
+            continue;
+          }
+          log('REPOST', `Job ${jobId}: retrying ${platformTargets.length} failed platform(s)`);
+        }
+
         log('PLATFORMS', `Job ${jobId}: posting to ${platformTargets.length} accounts`, platformTargets);
 
-        // --- Step 1: Get presigned upload URL from Late API ---
         const filename = path.basename(job.outputUrl.split('?')[0]);
         const presignData = await lateApiRequest<PresignResponse>('/media/presign', {
           method: 'POST',
@@ -166,7 +209,6 @@ export async function POST(
 
         log('PRESIGN', `Job ${jobId}: got presigned URL`, { publicUrl: presignData.publicUrl });
 
-        // --- Step 2: Download video and upload to Late API storage ---
         let fileBuffer: Buffer;
         if (job.outputUrl.startsWith('https://storage.googleapis.com')) {
           fileBuffer = await downloadToBuffer(job.outputUrl);
@@ -212,11 +254,12 @@ export async function POST(
           throw uploadErr;
         }
 
-        // Brief wait for Late API to process the upload
         await new Promise((r) => setTimeout(r, 2000));
 
-        // --- Step 3: Build platform-specific data ---
-        const caption = masterConfig.caption || '';
+        const caption = job.captionOverride ?? masterConfig.caption ?? '';
+        const effectivePublishMode = job.publishModeOverride ?? masterConfig.publishMode ?? 'now';
+        const effectiveScheduledFor = job.scheduledForOverride ?? masterConfig.scheduledFor;
+        const effectiveTimezone = job.timezoneOverride ?? masterConfig.timezone;
         const latePlatforms = platformTargets.map((t) => {
           if (t.platform === 'tiktok') {
             return {
@@ -260,21 +303,20 @@ export async function POST(
           };
         });
 
-        // --- Step 4: Create post via Late API ---
         const postBody: Record<string, unknown> = {
           content: caption,
           mediaItems: [{ type: 'video', url: presignData.publicUrl }],
           platforms: latePlatforms,
         };
 
-        const mode = masterConfig.publishMode || 'now';
+        const mode = effectivePublishMode;
         switch (mode) {
           case 'now':
             postBody.publishNow = true;
             break;
           case 'schedule':
-            postBody.scheduledFor = masterConfig.scheduledFor;
-            postBody.timezone = masterConfig.timezone || config.defaultTimezone;
+            postBody.scheduledFor = effectiveScheduledFor;
+            postBody.timezone = effectiveTimezone || config.defaultTimezone;
             postBody.publishNow = false;
             break;
           case 'queue':
@@ -299,7 +341,6 @@ export async function POST(
         const latePostId = latePost._id;
         log('POST', `Job ${jobId}: Late post created: ${latePostId}`);
 
-        // --- Step 5: Save DB post records per platform/account ---
         for (const target of platformTargets) {
           const platformResult = latePost.platforms?.find((p) => {
             const pAccountId = typeof p.accountId === 'object' ? p.accountId._id : p.accountId;
@@ -332,7 +373,7 @@ export async function POST(
               videoUrl: job.outputUrl,
               platform: target.platform,
               status: dbStatus,
-              scheduledFor: masterConfig.scheduledFor || null,
+              scheduledFor: effectiveScheduledFor || null,
               latePostId,
               platformPostUrl: platformResult?.platformPostUrl || null,
               createdBy,
@@ -342,8 +383,11 @@ export async function POST(
           }
         }
 
-        // --- Step 6: Update template job post status ---
         await updateTemplateJobPostStatus(jobId, 'posted');
+
+        if (job.modelId) {
+          postedModelIds.add(job.modelId);
+        }
 
         results.push({
           jobId,

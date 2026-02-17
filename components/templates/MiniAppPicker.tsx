@@ -1,7 +1,7 @@
 'use client';
 
-import { Video, Type, Music, Film, Layers } from 'lucide-react';
-import type { MiniAppType, MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig } from '@/types';
+import { Video, Type, Music, Film, Layers, LayoutGrid } from 'lucide-react';
+import type { MiniAppType, MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig, ComposeConfig } from '@/types';
 
 const miniApps: {
   type: MiniAppType;
@@ -16,15 +16,17 @@ const miniApps: {
   { type: 'bg-music',         label: 'Background Music', description: 'Mix audio with fade control',    icon: Music, iconBg: '#ecfdf5', iconColor: '#059669' },
   { type: 'attach-video',     label: 'Attach Video',     description: 'Prepend or append a clip',       icon: Film,  iconBg: '#fff7ed', iconColor: '#ea580c' },
   { type: 'batch-video-generation', label: 'Batch Video Gen', description: 'Generate videos from multiple images', icon: Layers, iconBg: '#fef3c7', iconColor: '#d97706' },
+  { type: 'compose', label: 'Compose', description: 'Arrange multiple media in one frame', icon: LayoutGrid, iconBg: '#f0fdf4', iconColor: '#16a34a' },
 ];
 
-function createDefaultConfig(type: MiniAppType): VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig | BatchVideoGenConfig {
+function createDefaultConfig(type: MiniAppType): VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig | BatchVideoGenConfig | ComposeConfig {
   switch (type) {
     case 'video-generation': return { mode: 'motion-control' } as VideoGenConfig;
     case 'batch-video-generation': return { mode: 'motion-control', images: [] } as BatchVideoGenConfig;
     case 'text-overlay':     return { text: '', position: 'bottom', textAlign: 'center', fontSize: 48, fontColor: '#FFFFFF', entireVideo: true } as TextOverlayConfig;
     case 'bg-music':         return { volume: 30 } as BgMusicConfig;
     case 'attach-video':     return { videoUrl: '', position: 'after' } as AttachVideoConfig;
+    case 'compose':          return { canvasWidth: 1080, canvasHeight: 1920, aspectRatio: '9:16', preset: null, backgroundColor: '#000000', layers: [] } as ComposeConfig;
   }
 }
 

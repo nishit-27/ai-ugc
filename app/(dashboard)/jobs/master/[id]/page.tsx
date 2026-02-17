@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { PipelineBatch, TemplateJob, MasterConfig } from '@/types';
@@ -9,6 +9,8 @@ import MasterBatchHeader from '@/components/templates/master-batch/MasterBatchHe
 import MasterBatchVideoGrid from '@/components/templates/master-batch/MasterBatchVideoGrid';
 import MasterBatchSelectionBar from '@/components/templates/master-batch/MasterBatchSelectionBar';
 import MasterBatchModals from '@/components/templates/master-batch/MasterBatchModals';
+import EditMasterConfigModal from '@/components/templates/master-batch/EditMasterConfigModal';
+import EditJobOverridesModal from '@/components/templates/master-batch/EditJobOverridesModal';
 const _cache: Record<string, PipelineBatch & { jobs?: TemplateJob[] }> = {};
 
 async function signUrls(urls: string[]): Promise<Record<string, string>> {
@@ -40,9 +42,12 @@ export default function MasterBatchDetailPage() {
   const [modalJob, setModalJob] = useState<TemplateJob | null>(null);
   const [posting, setPosting] = useState(false);
   const [busyJobIds, setBusyJobIds] = useState<Set<string>>(new Set());
-  const addBusy = (jid: string) => setBusyJobIds(prev => new Set(prev).add(jid));
-  const removeBusy = (jid: string) => setBusyJobIds(prev => { const next = new Set(prev); next.delete(jid); return next; });
+  const inflightRef = useRef(new Set<string>());
+  const addBusy = (jid: string) => { inflightRef.current.add(jid); setBusyJobIds(prev => new Set(prev).add(jid)); };
+  const removeBusy = (jid: string) => { inflightRef.current.delete(jid); setBusyJobIds(prev => { const next = new Set(prev); next.delete(jid); return next; }); };
   const [regenerateJob, setRegenerateJob] = useState<TemplateJob | null>(null);
+  const [showEditConfig, setShowEditConfig] = useState(false);
+  const [editOverridesJob, setEditOverridesJob] = useState<TemplateJob | null>(null);
 
   const [signedModelImages, setSignedModelImages] = useState<Record<string, string>>({});
   const [jobPosts, setJobPosts] = useState<Record<string, { platform: string; status: string; platformPostUrl?: string; latePostId?: string }[]>>({});
@@ -221,7 +226,7 @@ export default function MasterBatchDetailPage() {
 
   const handleSinglePost = async (jobId: string) => {
     const job = jobs.find(j => j.id === jobId);
-    if (job?.postStatus === 'posted' || busyJobIds.has(jobId)) return;
+    if (job?.postStatus === 'posted' || inflightRef.current.has(jobId)) return;
 
     addBusy(jobId);
     try {
@@ -268,7 +273,7 @@ export default function MasterBatchDetailPage() {
   };
 
   const handleRepost = async (jobId: string) => {
-    if (busyJobIds.has(jobId)) return;
+    if (inflightRef.current.has(jobId)) return;
     addBusy(jobId);
     try {
       const res = await fetch(`/api/templates/master/${id}/post`, {
@@ -318,6 +323,54 @@ export default function MasterBatchDetailPage() {
 
   const openRegenerateModal = (job: TemplateJob) => {
     setRegenerateJob(job);
+  };
+
+  // Compute which jobs have overrides
+  const jobsWithOverrides = useMemo(() => {
+    const set = new Set<string>();
+    for (const job of jobs) {
+      if (job.captionOverride || job.publishModeOverride) {
+        set.add(job.id);
+      }
+    }
+    return set;
+  }, [jobs]);
+
+  // Global config edit handler
+  const handleSaveGlobalConfig = async (updates: { caption: string; publishMode: MasterConfig['publishMode']; scheduledFor?: string; timezone?: string }) => {
+    const res = await fetch(`/api/pipeline-batches/${id}/master-config`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) {
+      showToast('Failed to update config', 'error');
+      throw new Error('Failed');
+    }
+    showToast('Global caption & timing updated', 'success');
+    await loadBatch();
+  };
+
+  // Per-job overrides handler
+  const handleSaveJobOverrides = async (jobId: string, overrides: {
+    captionOverride: string | null;
+    publishModeOverride: MasterConfig['publishMode'] | null;
+    scheduledForOverride: string | null;
+    timezoneOverride: string | null;
+  }) => {
+    const res = await fetch(`/api/templates/${jobId}/overrides`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(overrides),
+    });
+    if (!res.ok) {
+      showToast('Failed to update overrides', 'error');
+      throw new Error('Failed');
+    }
+    const isReset = !overrides.captionOverride && !overrides.publishModeOverride;
+    showToast(isReset ? 'Reset to global settings' : 'Video settings updated', 'success');
+    setModalJob(null);
+    await loadBatch();
   };
 
   const handleEditRegenerate = async (jobId: string, overrides?: { imageUrl?: string; imageId?: string }) => {
@@ -450,6 +503,7 @@ export default function MasterBatchDetailPage() {
           loadBatch();
         }}
         onDelete={handleDeleteBatch}
+        onEditConfig={() => setShowEditConfig(true)}
       />
 
       <MasterBatchVideoGrid
@@ -470,6 +524,8 @@ export default function MasterBatchDetailPage() {
         onRepostJob={handleRepost}
         onQuickRegenerateJob={handleQuickRegenerate}
         onEditRegenerateJob={openRegenerateModal}
+        onEditJobOverrides={setEditOverridesJob}
+        jobsWithOverrides={jobsWithOverrides}
       />
 
       <MasterBatchSelectionBar
@@ -494,7 +550,26 @@ export default function MasterBatchDetailPage() {
         onQuickRegenerate={handleQuickRegenerate}
         onEditRegenerateOpen={openRegenerateModal}
         onEditRegenerateSubmit={handleEditRegenerate}
+        onEditJobOverrides={setEditOverridesJob}
+        jobsWithOverrides={jobsWithOverrides}
       />
+      {showEditConfig && masterConfig && (
+        <EditMasterConfigModal
+          masterConfig={masterConfig}
+          onClose={() => setShowEditConfig(false)}
+          onSave={handleSaveGlobalConfig}
+        />
+      )}
+
+      {editOverridesJob && masterConfig && (
+        <EditJobOverridesModal
+          job={editOverridesJob}
+          masterConfig={masterConfig}
+          modelName={editOverridesJob.modelId ? modelNameMap[editOverridesJob.modelId] : undefined}
+          onClose={() => setEditOverridesJob(null)}
+          onSave={handleSaveJobOverrides}
+        />
+      )}
     </div>
   );
 }

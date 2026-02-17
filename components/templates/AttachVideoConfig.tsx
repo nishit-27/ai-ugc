@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { Upload, X, Video, Type, Music, Film, Link, Layers } from 'lucide-react';
+import { Upload, X, Video, Type, Music, Film, Link, Layers, LayoutGrid } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
 import { useVideoUpload } from '@/hooks/useVideoUpload';
 import type { AttachVideoConfig as AVC, MiniAppStep, MiniAppType } from '@/types';
@@ -12,6 +12,7 @@ const stepIcons: Record<MiniAppType, typeof Video> = {
   'text-overlay': Type,
   'bg-music': Music,
   'attach-video': Film,
+  'compose': LayoutGrid,
 };
 
 const stepLabels: Record<MiniAppType, string> = {
@@ -20,6 +21,7 @@ const stepLabels: Record<MiniAppType, string> = {
   'text-overlay': 'Text Overlay',
   'bg-music': 'Background Music',
   'attach-video': 'Attach Video',
+  'compose': 'Compose',
 };
 
 type VideoSource = 'tiktok' | 'upload' | 'pipeline';

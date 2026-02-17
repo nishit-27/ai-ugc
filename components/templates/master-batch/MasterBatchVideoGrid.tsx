@@ -22,6 +22,8 @@ type Props = {
   onRepostJob: (jobId: string) => void;
   onQuickRegenerateJob: (jobId: string) => void;
   onEditRegenerateJob: (job: TemplateJob) => void;
+  onEditJobOverrides?: (job: TemplateJob) => void;
+  jobsWithOverrides?: Set<string>;
 };
 
 export default function MasterBatchVideoGrid({
@@ -42,6 +44,8 @@ export default function MasterBatchVideoGrid({
   onRepostJob,
   onQuickRegenerateJob,
   onEditRegenerateJob,
+  onEditJobOverrides,
+  jobsWithOverrides,
 }: Props) {
   return (
     <div>
@@ -85,6 +89,8 @@ export default function MasterBatchVideoGrid({
             onRepost={() => onRepostJob(job.id)}
             onQuickRegenerate={() => onQuickRegenerateJob(job.id)}
             onEditRegenerate={() => onEditRegenerateJob(job)}
+            onEditOverrides={onEditJobOverrides ? () => onEditJobOverrides(job) : undefined}
+            hasOverrides={jobsWithOverrides?.has(job.id)}
             isApproving={busyJobIds.has(job.id)}
             isRejecting={false}
             isRegenerating={false}

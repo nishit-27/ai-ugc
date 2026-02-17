@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList, ImageIcon, Crown, LogOut, Video } from 'lucide-react';
+import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList, ImageIcon, Crown, LogOut, Video, LayoutGrid } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 import {
   Sidebar,
@@ -23,6 +23,7 @@ import ThemeToggle from '@/components/ui/ThemeToggle';
 const createItems = [
   { href: '/templates', label: 'Pipelines', icon: LayoutTemplate },
   { href: '/master-pipeline', label: 'Master Pipeline', icon: Crown },
+  { href: '/compose', label: 'Compose', icon: LayoutGrid },
   // { href: '/generate', label: 'Generate', icon: Sparkles },
 ];
 

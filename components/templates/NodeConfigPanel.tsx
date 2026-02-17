@@ -1,15 +1,16 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { X, Video, Type, Music, Film, Upload, Layers, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import { X, Video, Type, Music, Film, Upload, Layers, LayoutGrid, Maximize2, Minimize2, Trash2 } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
-import type { MiniAppStep, MiniAppType, VideoGenConfig as VGC, TextOverlayConfig as TOC, BgMusicConfig as BMC, AttachVideoConfig as AVC, BatchVideoGenConfig as BVGC } from '@/types';
+import type { MiniAppStep, MiniAppType, VideoGenConfig as VGC, TextOverlayConfig as TOC, BgMusicConfig as BMC, AttachVideoConfig as AVC, BatchVideoGenConfig as BVGC, ComposeConfig as CC } from '@/types';
 import VideoGenConfig from './VideoGenConfig';
 import TextOverlayConfig from './TextOverlayConfig';
 import BgMusicConfig from './BgMusicConfig';
 import AttachVideoConfig from './AttachVideoConfig';
 import BatchVideoGenConfig from './BatchVideoGenConfig';
 import TextOverlayPreview from './TextOverlayPreview';
+import ComposeStepConfig from './ComposeStepConfig';
 
 const nodeMeta: Record<MiniAppType, { label: string; icon: typeof Video; iconBg: string; iconColor: string }> = {
   'video-generation': { label: 'Video Generation', icon: Video, iconBg: '#f3f0ff', iconColor: '#7c3aed' },
@@ -17,6 +18,7 @@ const nodeMeta: Record<MiniAppType, { label: string; icon: typeof Video; iconBg:
   'bg-music':         { label: 'Background Music', icon: Music, iconBg: '#ecfdf5', iconColor: '#059669' },
   'attach-video':     { label: 'Attach Video',     icon: Film,  iconBg: '#fff7ed', iconColor: '#ea580c' },
   'batch-video-generation': { label: 'Batch Video Gen', icon: Layers, iconBg: '#fef3c7', iconColor: '#d97706' },
+  'compose':               { label: 'Compose',         icon: LayoutGrid, iconBg: '#f0fdf4', iconColor: '#16a34a' },
 };
 
 type SourceConfig = {
@@ -248,6 +250,7 @@ export default function NodeConfigPanel({
           {step.type === 'batch-video-generation' && <BatchVideoGenConfig config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
           {step.type === 'bg-music' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><BgMusicConfig config={step.config as BMC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
           {step.type === 'attach-video' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><AttachVideoConfig config={step.config as AVC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
+          {step.type === 'compose' && <ComposeStepConfig config={step.config as CC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} isExpanded={isExpanded} />}
         </div>
       </div>
     );

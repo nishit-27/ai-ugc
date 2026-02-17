@@ -1,6 +1,6 @@
 'use client';
 
-import { Loader2, CheckCircle2, XCircle, AlertCircle, Check, ThumbsUp, ThumbsDown, RotateCcw, Copy, Pencil, Send } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, AlertCircle, Check, ThumbsUp, ThumbsDown, RotateCcw, Copy, Pencil, Send, FileEdit } from 'lucide-react';
 import type { TemplateJob } from '@/types';
 
 export default function MasterJobCard({
@@ -15,6 +15,8 @@ export default function MasterJobCard({
   onRepost,
   onQuickRegenerate,
   onEditRegenerate,
+  onEditOverrides,
+  hasOverrides,
   isApproving,
   isRejecting,
   isRegenerating,
@@ -30,6 +32,8 @@ export default function MasterJobCard({
   onRepost?: () => void;
   onQuickRegenerate?: () => void;
   onEditRegenerate?: () => void;
+  onEditOverrides?: () => void;
+  hasOverrides?: boolean;
   isApproving?: boolean;
   isRejecting?: boolean;
   isRegenerating?: boolean;
@@ -76,6 +80,14 @@ export default function MasterJobCard({
         }`}>
           {job.postStatus === 'posted' ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
           {job.postStatus === 'posted' ? 'Approved' : 'Rejected'}
+        </div>
+      )}
+
+      {/* Custom overrides badge */}
+      {hasOverrides && !job.postStatus && (
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full bg-master/90 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+          <FileEdit className="h-2.5 w-2.5" />
+          Custom
         </div>
       )}
 
@@ -170,6 +182,19 @@ export default function MasterJobCard({
         {/* Action buttons row */}
         {(canAct || canRepost || canRegenerate) && !isBusy && (
           <div className="flex items-center gap-1 mt-1.5 pt-1.5 border-t border-[var(--border)]">
+            {isCompleted && !job.postStatus && onEditOverrides && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onEditOverrides(); }}
+                className={`flex h-6 items-center justify-center gap-1 rounded-md transition-colors text-[10px] font-medium px-2 ${
+                  hasOverrides
+                    ? 'bg-master/10 text-master dark:text-master-foreground hover:bg-master/20'
+                    : 'bg-[var(--accent)] text-[var(--text-muted)] hover:bg-master/10 hover:text-master dark:hover:text-master-foreground'
+                }`}
+                title="Edit caption & timing for this video"
+              >
+                <FileEdit className="h-3 w-3" />
+              </button>
+            )}
             {canRegenerate && (
               <>
                 <button
