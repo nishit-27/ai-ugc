@@ -134,13 +134,52 @@ export default function ModelDetailModal({
 
   if (!open || !model) return null;
 
+  const MAX_SIZE = 2 * 1024 * 1024; // 2MB threshold
+  const MAX_DIM = 2048;
+
+  const compressToWebp = (file: File): Promise<File> => {
+    return new Promise((resolve) => {
+      if (file.size <= MAX_SIZE) { resolve(file); return; }
+      const img = new window.Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        if (w > MAX_DIM || h > MAX_DIM) {
+          const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) { resolve(file); return; }
+            const name = file.name.replace(/\.[^.]+$/, '') + '.webp';
+            resolve(new File([blob], name, { type: 'image/webp' }));
+          },
+          'image/webp',
+          0.82,
+        );
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  };
+
   const uploadImages = async (files: FileList | File[]) => {
     setModelImagesUploading(true);
     let successCount = 0;
     try {
       for (let i = 0; i < files.length; i++) {
+        const raw = files instanceof FileList ? files[i] : files[i];
+        const file = await compressToWebp(raw);
         const formData = new FormData();
-        formData.append('images', files instanceof FileList ? files[i] : files[i]);
+        formData.append('images', file);
         const res = await fetch(`/api/models/${model.id}/images`, {
           method: 'POST',
           body: formData,
