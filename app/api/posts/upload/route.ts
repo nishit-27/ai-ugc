@@ -76,6 +76,8 @@ export async function POST(request: NextRequest) {
       timezone,
       jobId,
       dedupeKey,
+      forceRepost,
+      forceToken,
     } = body as {
       videoUrl?: string;
       caption?: string;
@@ -85,6 +87,8 @@ export async function POST(request: NextRequest) {
       timezone?: string;
       jobId?: string;
       dedupeKey?: string;
+      forceRepost?: boolean;
+      forceToken?: string;
     };
     log('PARSE', 'Parsed request body', {
       hasVideoUrl: !!videoUrl,
@@ -111,7 +115,13 @@ export async function POST(request: NextRequest) {
       logError('VALIDATE', 'Schedule mode requires scheduledFor');
       return NextResponse.json({ error: 'scheduledFor is required for schedule mode' }, { status: 400 });
     }
-    dedupeKeyValue = typeof dedupeKey === 'string' && dedupeKey.trim() ? dedupeKey.trim() : null;
+    const isForceRepost = !!forceRepost;
+    const normalizedForceToken = typeof forceToken === 'string' && forceToken.trim() ? forceToken.trim() : null;
+    if (isForceRepost && !normalizedForceToken) {
+      logError('VALIDATE', 'forceRepost requires forceToken');
+      return NextResponse.json({ error: 'forceToken is required when forceRepost is true' }, { status: 400 });
+    }
+    dedupeKeyValue = !isForceRepost && typeof dedupeKey === 'string' && dedupeKey.trim() ? dedupeKey.trim() : null;
     const platformFingerprint = [...new Set((platforms || [])
       .map((platform) => `${platform.platform}:${platform.accountId}`)
       .filter(Boolean))]
@@ -126,12 +136,17 @@ export async function POST(request: NextRequest) {
         platforms: platformFingerprint,
       }))
       .digest('hex');
-    idempotencyKey = dedupeKeyValue
-      ? `post-upload:${dedupeKeyValue}`
-      : `post-upload:fingerprint:${computedFingerprint}`;
+    const idempotencyRequestHash = isForceRepost
+      ? createHash('sha256').update(`${computedFingerprint}:${normalizedForceToken}`).digest('hex')
+      : computedFingerprint;
+    idempotencyKey = isForceRepost
+      ? `post-upload:force:${normalizedForceToken}`
+      : dedupeKeyValue
+        ? `post-upload:${dedupeKeyValue}`
+        : `post-upload:fingerprint:${computedFingerprint}`;
 
     pruneDedupeMaps();
-    if (dedupeKeyValue) {
+    if (!isForceRepost && dedupeKeyValue) {
       const recentSuccess = recentSuccessByKey.get(dedupeKeyValue);
       if (recentSuccess && Date.now() - recentSuccess.timestamp <= DEDUPE_WINDOW_MS) {
         log('DEDUPE', 'Suppressing duplicate request from recent success');
@@ -160,7 +175,7 @@ export async function POST(request: NextRequest) {
 
     const idemState = await beginPostIdempotency({
       key: idempotencyKey,
-      requestHash: computedFingerprint,
+      requestHash: idempotencyRequestHash,
     });
 
     if (idemState.state === 'processing') {
@@ -197,45 +212,47 @@ export async function POST(request: NextRequest) {
     }
     idempotencyAcquired = true;
 
-    log('MODE', `Publish mode: ${mode}`);
-    const lateAccountIds = [...new Set(platforms.map((platform) => platform.accountId).filter(Boolean))];
-    try {
-      const recentDuplicate = await findRecentDuplicatePost({
-        caption: caption || '',
-        videoUrl,
-        lateAccountIds,
-        mode,
-        scheduledFor: scheduledFor || null,
-        withinSeconds: Math.floor(DEDUPE_WINDOW_MS / 1000),
-      });
-      if (recentDuplicate?.latePostId) {
-        log('DEDUPE', `Suppressing duplicate using DB match: ${recentDuplicate.latePostId}`);
-        if (dedupeKeyValue) {
-          recentSuccessByKey.set(dedupeKeyValue, {
-            timestamp: Date.now(),
-            latePostId: recentDuplicate.latePostId,
-          });
+    log('MODE', `Publish mode: ${mode}${isForceRepost ? ' (force repost)' : ''}`);
+    if (!isForceRepost) {
+      const lateAccountIds = [...new Set(platforms.map((platform) => platform.accountId).filter(Boolean))];
+      try {
+        const recentDuplicate = await findRecentDuplicatePost({
+          caption: caption || '',
+          videoUrl,
+          lateAccountIds,
+          mode,
+          scheduledFor: scheduledFor || null,
+          withinSeconds: Math.floor(DEDUPE_WINDOW_MS / 1000),
+        });
+        if (recentDuplicate?.latePostId) {
+          log('DEDUPE', `Suppressing duplicate using DB match: ${recentDuplicate.latePostId}`);
+          if (dedupeKeyValue) {
+            recentSuccessByKey.set(dedupeKeyValue, {
+              timestamp: Date.now(),
+              latePostId: recentDuplicate.latePostId,
+            });
+          }
+          const duplicatePayload = {
+            success: true,
+            deduped: true,
+            message: 'Duplicate request suppressed. A matching post was already created.',
+            post: {
+              latePostId: recentDuplicate.latePostId,
+              platforms: [],
+            },
+          };
+          if (idempotencyAcquired && idempotencyKey) {
+            await completePostIdempotency({
+              key: idempotencyKey,
+              latePostId: recentDuplicate.latePostId,
+              response: duplicatePayload,
+            });
+          }
+          return NextResponse.json(duplicatePayload);
         }
-        const duplicatePayload = {
-          success: true,
-          deduped: true,
-          message: 'Duplicate request suppressed. A matching post was already created.',
-          post: {
-            latePostId: recentDuplicate.latePostId,
-            platforms: [],
-          },
-        };
-        if (idempotencyAcquired && idempotencyKey) {
-          await completePostIdempotency({
-            key: idempotencyKey,
-            latePostId: recentDuplicate.latePostId,
-            response: duplicatePayload,
-          });
-        }
-        return NextResponse.json(duplicatePayload);
+      } catch (dedupeError) {
+        logError('DEDUPE', 'Recent duplicate DB check failed:', (dedupeError as Error).message);
       }
-    } catch (dedupeError) {
-      logError('DEDUPE', 'Recent duplicate DB check failed:', (dedupeError as Error).message);
     }
     log('PRESIGN', 'Requesting presigned URL from Late API...');
     const filename = path.basename(videoUrl.split('?')[0]);
@@ -471,6 +488,7 @@ export async function POST(request: NextRequest) {
     }
     const successPayload = {
       success: failedCount < dbResults.length,
+      forced: isForceRepost,
       post: {
         latePostId,
         platforms: latePost.platforms,

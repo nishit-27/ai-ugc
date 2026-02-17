@@ -18,6 +18,24 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await initDatabase();
+    const contentType = request.headers.get('content-type') || '';
+
+    // JSON body — create library track from existing GCS URL (e.g. from trending)
+    if (contentType.includes('application/json')) {
+      const { name, gcsUrl, duration } = await request.json();
+      if (!gcsUrl) {
+        return NextResponse.json({ error: 'gcsUrl is required' }, { status: 400 });
+      }
+      const track = await createMusicTrack({
+        name: name || 'Imported Track',
+        gcsUrl,
+        duration: duration ?? null,
+        isDefault: false,
+      });
+      return NextResponse.json(track);
+    }
+
+    // FormData — file upload
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
     const name = (formData.get('name') as string) || 'Custom Track';

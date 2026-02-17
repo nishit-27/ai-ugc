@@ -70,6 +70,8 @@ export async function POST(request: NextRequest) {
       timezone,
       publishNow,
       jobId,
+      forceRepost,
+      forceToken,
     } = body as {
       videoPath?: string;
       videoUrl?: string;
@@ -79,6 +81,8 @@ export async function POST(request: NextRequest) {
       timezone?: string;
       publishNow?: boolean;
       jobId?: string;
+      forceRepost?: boolean;
+      forceToken?: string;
     };
 
     log('PARSE', 'Parsed request body', {
@@ -110,7 +114,13 @@ export async function POST(request: NextRequest) {
     // Determine publish mode
     const isImmediate = publishNow || !scheduledFor;
     const mode = isImmediate ? 'immediate' : 'scheduled';
-    log('MODE', `Publish mode: ${mode}`);
+    const isForceRepost = !!forceRepost;
+    const normalizedForceToken = typeof forceToken === 'string' && forceToken.trim() ? forceToken.trim() : null;
+    if (isForceRepost && !normalizedForceToken) {
+      logError('VALIDATE', 'forceRepost requires forceToken');
+      return NextResponse.json({ error: 'forceToken is required when forceRepost is true' }, { status: 400 });
+    }
+    log('MODE', `Publish mode: ${mode}${isForceRepost ? ' (force repost)' : ''}`);
 
     const lockFingerprint = createHash('sha256')
       .update(JSON.stringify({
@@ -122,11 +132,16 @@ export async function POST(request: NextRequest) {
         timezone: timezone || config.defaultTimezone,
       }))
       .digest('hex');
-    idempotencyKey = `tiktok-upload:${lockFingerprint}`;
+    const idempotencyRequestHash = isForceRepost
+      ? createHash('sha256').update(`${lockFingerprint}:${normalizedForceToken}`).digest('hex')
+      : lockFingerprint;
+    idempotencyKey = isForceRepost
+      ? `tiktok-upload:force:${normalizedForceToken}`
+      : `tiktok-upload:${lockFingerprint}`;
 
     const idemState = await beginPostIdempotency({
       key: idempotencyKey,
-      requestHash: lockFingerprint,
+      requestHash: idempotencyRequestHash,
     });
     if (idemState.state === 'processing') {
       log('DEDUPE', 'Suppressing duplicate request due to persistent idempotency lock');
@@ -162,37 +177,39 @@ export async function POST(request: NextRequest) {
     }
     idempotencyAcquired = true;
 
-    try {
-      const recentDuplicate = await findRecentDuplicatePost({
-        caption: caption || '',
-        videoUrl: finalVideoUrl,
-        lateAccountIds: [accountId],
-        mode: isImmediate ? 'now' : 'schedule',
-        scheduledFor: isImmediate ? null : (scheduledFor || null),
-        withinSeconds: 30,
-      });
-      if (recentDuplicate?.latePostId) {
-        log('DEDUPE', `Suppressing duplicate using DB match: ${recentDuplicate.latePostId}`);
-        const duplicatePayload = {
-          success: true,
-          deduped: true,
-          message: 'Duplicate request suppressed. A matching post was already created.',
-          post: {
-            latePostId: recentDuplicate.latePostId,
-            platforms: [],
-          },
-        };
-        if (idempotencyAcquired && idempotencyKey) {
-          await completePostIdempotency({
-            key: idempotencyKey,
-            latePostId: recentDuplicate.latePostId,
-            response: duplicatePayload,
-          });
+    if (!isForceRepost) {
+      try {
+        const recentDuplicate = await findRecentDuplicatePost({
+          caption: caption || '',
+          videoUrl: finalVideoUrl,
+          lateAccountIds: [accountId],
+          mode: isImmediate ? 'now' : 'schedule',
+          scheduledFor: isImmediate ? null : (scheduledFor || null),
+          withinSeconds: 30,
+        });
+        if (recentDuplicate?.latePostId) {
+          log('DEDUPE', `Suppressing duplicate using DB match: ${recentDuplicate.latePostId}`);
+          const duplicatePayload = {
+            success: true,
+            deduped: true,
+            message: 'Duplicate request suppressed. A matching post was already created.',
+            post: {
+              latePostId: recentDuplicate.latePostId,
+              platforms: [],
+            },
+          };
+          if (idempotencyAcquired && idempotencyKey) {
+            await completePostIdempotency({
+              key: idempotencyKey,
+              latePostId: recentDuplicate.latePostId,
+              response: duplicatePayload,
+            });
+          }
+          return NextResponse.json(duplicatePayload);
         }
-        return NextResponse.json(duplicatePayload);
+      } catch (dedupeError) {
+        logError('DEDUPE', 'Recent duplicate DB check failed:', (dedupeError as Error).message);
       }
-    } catch (dedupeError) {
-      logError('DEDUPE', 'Recent duplicate DB check failed:', (dedupeError as Error).message);
     }
 
     // --- Step 1: Get presigned upload URL from Late API ---
@@ -412,6 +429,7 @@ export async function POST(request: NextRequest) {
 
     const successPayload = {
       success: dbStatus !== 'failed',
+      forced: isForceRepost,
       post: {
         id: dbPost?.id,
         latePostId,

@@ -22,6 +22,7 @@ type Props = {
   profileSearchQuery: string;
   profileMultiDropdownOpen: boolean;
   postTimezone: string;
+  forceRepost: boolean;
   postableAccounts: Account[];
   isPosting: boolean;
   isUploadingVideo: boolean;
@@ -37,6 +38,7 @@ type Props = {
   setProfileMultiDropdownOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setPublishMode: (mode: 'now' | 'schedule' | 'queue' | 'draft') => void;
   setPostTimezone: (value: string) => void;
+  setForceRepost: React.Dispatch<React.SetStateAction<boolean>>;
   handleVideoUpload: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
   uploadPostVideoFile: (file: File) => Promise<void>;
   submitPost: () => Promise<void>;
@@ -60,6 +62,7 @@ export default function CreatePostModalContent({
   profileSearchQuery,
   profileMultiDropdownOpen,
   postTimezone,
+  forceRepost,
   postableAccounts,
   isPosting,
   isUploadingVideo,
@@ -75,6 +78,7 @@ export default function CreatePostModalContent({
   setProfileMultiDropdownOpen,
   setPublishMode,
   setPostTimezone,
+  setForceRepost,
   handleVideoUpload,
   uploadPostVideoFile,
   submitPost,
@@ -83,7 +87,7 @@ export default function CreatePostModalContent({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4" onClick={onClose}>
       <div
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-2xl sm:max-h-[85vh]"
+        className="flex h-[calc(100dvh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-2xl sm:h-auto sm:max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -397,7 +401,7 @@ export default function CreatePostModalContent({
                   {/* Publishing */}
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Publishing</label>
-                    <div className="mb-2 grid grid-cols-4 gap-1 rounded-lg border border-[var(--border)] bg-[var(--accent)] p-1">
+                    <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg border border-[var(--border)] bg-[var(--accent)] p-1 sm:grid-cols-4">
                       {(['now', 'schedule', 'queue', 'draft'] as const).map((mode) => (
                         <button
                           key={mode}
@@ -415,7 +419,7 @@ export default function CreatePostModalContent({
                     </div>
                     {publishMode === 'schedule' && (
                       <div className="mt-2 space-y-2">
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           <div>
                             <label className="block text-[10px] font-medium text-[var(--text-muted)]">Date</label>
                             <input
@@ -454,11 +458,44 @@ export default function CreatePostModalContent({
                         </div>
                       </div>
                     )}
+
+                    <div className="mt-2 rounded-lg border border-[var(--border)] bg-[var(--accent)] p-2.5">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-[var(--text)]">Force Repost</div>
+                          <div className="text-[11px] leading-relaxed text-[var(--text-muted)]">
+                            Allow intentionally posting the same content again.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={forceRepost}
+                          onClick={() => setForceRepost((prev) => !prev)}
+                          className={`inline-flex h-7 w-14 shrink-0 items-center rounded-full border transition-all ${
+                            forceRepost
+                              ? 'border-amber-400 bg-amber-100'
+                              : 'border-[var(--border)] bg-[var(--background)]'
+                          }`}
+                        >
+                          <span
+                            className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                              forceRepost ? 'translate-x-8' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      {forceRepost && (
+                        <div className="mt-2 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                          Duplicate prevention is bypassed for this submit only.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {/* Footer with submit */}
-                <div className="shrink-0 border-t border-[var(--border)] p-4">
+                <div className="shrink-0 border-t border-[var(--border)] p-3 sm:p-4">
                   <button
                     onClick={submitPost}
                     disabled={isPosting || selectedAccountIds.length === 0}

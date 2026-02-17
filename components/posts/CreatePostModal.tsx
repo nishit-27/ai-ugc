@@ -41,6 +41,7 @@ function createPostSubmitFingerprint(payload: {
   selectedAccountIds: string[];
   scheduledFor?: string;
   timezone?: string;
+  forceRepost?: boolean;
 }) {
   return JSON.stringify({
     videoUrl: payload.videoUrl,
@@ -49,6 +50,7 @@ function createPostSubmitFingerprint(payload: {
     selectedAccountIds: [...payload.selectedAccountIds].sort(),
     scheduledFor: payload.scheduledFor || null,
     timezone: payload.timezone || null,
+    forceRepost: !!payload.forceRepost,
   });
 }
 
@@ -98,6 +100,7 @@ export default function CreatePostModal({
   const [profileSearchQuery, setProfileSearchQuery] = useState('');
   const [profileMultiDropdownOpen, setProfileMultiDropdownOpen] = useState(false);
   const [postTimezone, setPostTimezone] = useState('Asia/Kolkata');
+  const [forceRepost, setForceRepost] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
   const [postVideoUploadProgress, setPostVideoUploadProgress] = useState<number>(0);
@@ -139,6 +142,7 @@ export default function CreatePostModal({
     setProfileSearchQuery('');
     setProfileMultiDropdownOpen(false);
     setPostTimezone('Asia/Kolkata');
+    setForceRepost(false);
     setIsPosting(false);
     submitGuardRef.current = false;
   }, [open, preselectedVideoUrl]);
@@ -206,14 +210,18 @@ export default function CreatePostModal({
       selectedAccountIds,
       scheduledFor,
       timezone: publishMode === 'schedule' ? postTimezone : undefined,
+      forceRepost,
     });
+    const shouldUseClientDedupe = !forceRepost;
 
-    if (hasRecentSubmitFingerprint(dedupeKey)) {
+    if (shouldUseClientDedupe && hasRecentSubmitFingerprint(dedupeKey)) {
       showToast('An identical post request was already submitted recently. Please wait a few seconds.', 'error');
       return;
     }
 
-    markSubmitFingerprint(dedupeKey);
+    if (shouldUseClientDedupe) {
+      markSubmitFingerprint(dedupeKey);
+    }
     submitGuardRef.current = true;
     setIsPosting(true);
     try {
@@ -227,8 +235,14 @@ export default function CreatePostModal({
         caption: postForm.caption,
         platforms: platformTargets,
         publishMode,
-        dedupeKey,
+        forceRepost,
       };
+      if (shouldUseClientDedupe) {
+        body.dedupeKey = dedupeKey;
+      }
+      if (forceRepost) {
+        body.forceToken = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+      }
       if (scheduledFor) {
         body.scheduledFor = scheduledFor;
         body.timezone = postTimezone;
@@ -272,13 +286,17 @@ export default function CreatePostModal({
         showToast(detailMsg || errorMsg, 'error');
         console.error('[Submit Post] Error:', JSON.stringify(data, null, 2));
         try { sessionStorage.removeItem('ai-ugc-new-post'); } catch {}
-        clearSubmitFingerprint(dedupeKey);
+        if (shouldUseClientDedupe) {
+          clearSubmitFingerprint(dedupeKey);
+        }
       }
     } catch (err) {
       showToast('Error: ' + (err as Error).message, 'error');
       console.error('[Submit Post] Exception:', err);
       try { sessionStorage.removeItem('ai-ugc-new-post'); } catch {}
-      clearSubmitFingerprint(dedupeKey);
+      if (shouldUseClientDedupe) {
+        clearSubmitFingerprint(dedupeKey);
+      }
     } finally {
       submitGuardRef.current = false;
       setIsPosting(false);
@@ -295,6 +313,13 @@ export default function CreatePostModal({
       : null;
 
   const submitLabel = (() => {
+    if (forceRepost) {
+      if (publishMode === 'draft') return 'Force Save Draft';
+      if (publishMode === 'schedule') return 'Force Schedule Post';
+      if (publishMode === 'queue') return 'Force Add to Queue';
+      if (selectedAccountIds.length === 0) return 'Select accounts to force repost';
+      return `Force Repost to ${selectedAccountIds.length} account${selectedAccountIds.length > 1 ? 's' : ''}`;
+    }
     if (publishMode === 'draft') return 'Save Draft';
     if (publishMode === 'schedule') return 'Schedule Post';
     if (publishMode === 'queue') return 'Add to Queue';
@@ -326,6 +351,7 @@ export default function CreatePostModal({
       profileSearchQuery={profileSearchQuery}
       profileMultiDropdownOpen={profileMultiDropdownOpen}
       postTimezone={postTimezone}
+      forceRepost={forceRepost}
       postableAccounts={postableAccounts}
       isPosting={isPosting}
       isUploadingVideo={isUploadingVideo}
@@ -341,6 +367,7 @@ export default function CreatePostModal({
       setProfileMultiDropdownOpen={setProfileMultiDropdownOpen}
       setPublishMode={setPublishMode}
       setPostTimezone={setPostTimezone}
+      setForceRepost={setForceRepost}
       handleVideoUpload={handleVideoUpload}
       uploadPostVideoFile={uploadPostVideoFile}
       submitPost={submitPost}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initDatabase, getPipelineBatch, getTemplateJob, getTemplateJobsByBatchId, updateTemplateJobPostStatus, getModelAccountMappings, createPost, getPostsByJobIds, acquireTemplateJobPostLock, releaseTemplateJobPostLock } from '@/lib/db';
+import { createHash } from 'crypto';
+import { initDatabase, getPipelineBatch, getTemplateJob, getTemplateJobsByBatchId, updateTemplateJobPostStatus, getModelAccountMappings, createPost, getPostsByJobIds, acquireTemplateJobPostLock, releaseTemplateJobPostLock, beginPostIdempotency, completePostIdempotency, clearPostIdempotency } from '@/lib/db';
 import { lateApiRequest, LateApiError } from '@/lib/lateApi';
 import { downloadToBuffer } from '@/lib/storage';
 import { config } from '@/lib/config';
@@ -117,6 +118,9 @@ export async function POST(
 
     for (const jobId of jobIds) {
       let hasDbLock = false;
+      let jobIdempotencyKey: string | null = null;
+      let jobIdempotencyAcquired = false;
+      let createdLatePostId: string | null = null;
       try {
         // Skip if another request is already posting this job
         if (inflightJobs.has(jobId)) {
@@ -172,7 +176,12 @@ export async function POST(
           }
         } else {
           const hasAnyPost = existingPosts.some((p: { status: string }) =>
-            p.status === 'published' || p.status === 'scheduled' || p.status === 'publishing' || p.status === 'pending'
+            p.status === 'published' ||
+            p.status === 'scheduled' ||
+            p.status === 'publishing' ||
+            p.status === 'pending' ||
+            p.status === 'partial' ||
+            p.status === 'failed'
           );
           if (hasAnyPost) {
             log('JOB', `Job ${jobId}: posts already exist, skipping`);
@@ -212,6 +221,11 @@ export async function POST(
           continue;
         }
 
+        const caption = job.captionOverride ?? masterConfig.caption ?? '';
+        const effectivePublishMode = job.publishModeOverride ?? masterConfig.publishMode ?? 'now';
+        const effectiveScheduledFor = job.scheduledForOverride ?? masterConfig.scheduledFor;
+        const effectiveTimezone = job.timezoneOverride ?? masterConfig.timezone;
+
         if (force) {
           const succeededAccounts = new Set(
             existingPosts
@@ -225,6 +239,64 @@ export async function POST(
             continue;
           }
           log('REPOST', `Job ${jobId}: retrying ${platformTargets.length} failed platform(s)`);
+        } else {
+          const normalizedMode = effectivePublishMode || 'now';
+          const normalizedScheduledFor = normalizedMode === 'schedule' ? (effectiveScheduledFor || null) : null;
+          const normalizedTimezone = normalizedMode === 'schedule'
+            ? (effectiveTimezone || config.defaultTimezone)
+            : null;
+          const platformFingerprint = [...new Set(
+            platformTargets
+              .map((t) => `${t.platform}:${t.accountId}`)
+              .filter(Boolean)
+          )].sort();
+          const idempotencyRequestHash = createHash('sha256')
+            .update(JSON.stringify({
+              batchId,
+              jobId,
+              outputUrl: job.outputUrl,
+              caption,
+              mode: normalizedMode,
+              scheduledFor: normalizedScheduledFor,
+              timezone: normalizedTimezone,
+              platforms: platformFingerprint,
+            }))
+            .digest('hex');
+          jobIdempotencyKey = `master-post:${jobId}`;
+
+          const idemState = await beginPostIdempotency({
+            key: jobIdempotencyKey,
+            requestHash: idempotencyRequestHash,
+          });
+
+          if (idemState.state === 'processing') {
+            log('DEDUPE', `Job ${jobId}: suppressing duplicate request (idempotency processing lock)`);
+            results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Already being posted' });
+            continue;
+          }
+
+          if (idemState.state === 'completed') {
+            log('DEDUPE', `Job ${jobId}: suppressing duplicate request (idempotency completed)`);
+            try {
+              await updateTemplateJobPostStatus(jobId, 'posted');
+            } catch {}
+            results.push({
+              jobId,
+              modelId: job.modelId,
+              latePostId: idemState.latePostId || undefined,
+              status: 'skipped',
+              error: 'Already posted',
+            });
+            continue;
+          }
+
+          if (idemState.state === 'mismatch') {
+            log('DEDUPE', `Job ${jobId}: suppressing duplicate request (idempotency mismatch)`);
+            results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Already posted' });
+            continue;
+          }
+
+          jobIdempotencyAcquired = true;
         }
 
         log('PLATFORMS', `Job ${jobId}: posting to ${platformTargets.length} accounts`, platformTargets);
@@ -283,11 +355,6 @@ export async function POST(
         }
 
         await new Promise((r) => setTimeout(r, 2000));
-
-        const caption = job.captionOverride ?? masterConfig.caption ?? '';
-        const effectivePublishMode = job.publishModeOverride ?? masterConfig.publishMode ?? 'now';
-        const effectiveScheduledFor = job.scheduledForOverride ?? masterConfig.scheduledFor;
-        const effectiveTimezone = job.timezoneOverride ?? masterConfig.timezone;
         const latePlatforms = platformTargets.map((t) => {
           if (t.platform === 'tiktok') {
             return {
@@ -367,6 +434,7 @@ export async function POST(
 
         const latePost = postData.post;
         const latePostId = latePost._id;
+        createdLatePostId = latePostId;
         log('POST', `Job ${jobId}: Late post created: ${latePostId}`);
 
         for (const target of platformTargets) {
@@ -425,6 +493,20 @@ export async function POST(
           platforms: platformTargets.map((t) => t.platform),
         });
 
+        if (jobIdempotencyAcquired && jobIdempotencyKey) {
+          await completePostIdempotency({
+            key: jobIdempotencyKey,
+            latePostId,
+            response: {
+              jobId,
+              modelId: job.modelId,
+              latePostId,
+              status: 'posted',
+              platforms: platformTargets.map((t) => t.platform),
+            },
+          });
+        }
+
         log('JOB', `Job ${jobId}: successfully posted`);
       } catch (jobError) {
         const errorMessage = jobError instanceof LateApiError
@@ -438,6 +520,26 @@ export async function POST(
           status: 'failed',
           error: errorMessage,
         });
+
+        if (jobIdempotencyAcquired && jobIdempotencyKey) {
+          try {
+            if (createdLatePostId) {
+              await completePostIdempotency({
+                key: jobIdempotencyKey,
+                latePostId: createdLatePostId,
+                response: {
+                  jobId,
+                  latePostId: createdLatePostId,
+                  status: 'posted',
+                },
+              });
+            } else {
+              await clearPostIdempotency(jobIdempotencyKey);
+            }
+          } catch (idemError) {
+            logError('DEDUPE', `Job ${jobId}: failed to finalize idempotency state`, (idemError as Error).message);
+          }
+        }
       } finally {
         if (hasDbLock) {
           try {

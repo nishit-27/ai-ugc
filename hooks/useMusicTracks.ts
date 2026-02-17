@@ -86,7 +86,24 @@ export function useMusicTracks() {
     }
   }, []);
 
+  // Add an existing GCS track to library (e.g. from trending)
+  const addToLibrary = useCallback(async (name: string, gcsUrl: string, duration?: number): Promise<MusicTrack> => {
+    const res = await fetch('/api/music-tracks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, gcsUrl, duration }),
+    });
+    if (!res.ok) throw new Error('Failed to add track to library');
+    const track: MusicTrack = await res.json();
+    setTracks((prev) => {
+      const next = [track, ...prev];
+      saveCache(next);
+      return next;
+    });
+    return track;
+  }, []);
+
   const refresh = useCallback(() => loadTracks(), [loadTracks]);
 
-  return { tracks, refresh, uploadTrack, getSignedUrl };
+  return { tracks, refresh, uploadTrack, addToLibrary, getSignedUrl };
 }

@@ -142,6 +142,7 @@ export type TextOverlayConfig = {
 
 export type BgMusicConfig = {
   trackId?: string;
+  trendingTrackId?: string;
   customTrackUrl?: string;
   volume: number;
   fadeIn?: number;
@@ -293,6 +294,19 @@ export type MusicTrack = {
   duration?: number;
   isDefault: boolean;
   createdAt: string;
+};
+
+export type TrendingTrack = {
+  id: string;
+  tiktokId: string;
+  title: string;
+  author?: string;
+  album?: string;
+  playUrl?: string;
+  coverUrl?: string;
+  duration?: number;
+  gcsUrl?: string;
+  fetchedAt?: string;
 };
 
 export type GeneratedImage = {
