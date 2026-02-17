@@ -51,6 +51,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 // POST /api/models/[id]/images - Upload image(s) to model
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
+    await ensureDatabaseReady();
     const { id } = await params;
     const model = await getModel(id);
 

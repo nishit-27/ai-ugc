@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { X, Plus, Loader2, ExternalLink, Search } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaFacebook, FaXTwitter, FaLinkedin } from 'react-icons/fa6';
@@ -51,6 +52,15 @@ export default function ModelAccountMapper({
   const [showDropdown, setShowDropdown] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [search, setSearch] = useState('');
+  const addBtnRef = useRef<HTMLButtonElement>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    if (showDropdown && addBtnRef.current) {
+      const rect = addBtnRef.current.getBoundingClientRect();
+      setDropdownPos({ top: rect.bottom + 4, left: rect.left });
+    }
+  }, [showDropdown]);
 
   // Accounts not yet mapped to this model
   const availableAccounts = allAccounts.filter(
@@ -155,8 +165,9 @@ export default function ModelAccountMapper({
 
       {/* Add button — only show if there are accounts to add */}
       {!noAccountsConnected && (
-        <div className="relative mt-2">
+        <div className="mt-2">
           <button
+            ref={addBtnRef}
             onClick={() => { setShowDropdown(!showDropdown); setSearch(''); }}
             disabled={isSaving || availableAccounts.length === 0}
             className="flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] disabled:opacity-40 disabled:pointer-events-none"
@@ -165,36 +176,33 @@ export default function ModelAccountMapper({
             {availableAccounts.length === 0 ? 'All accounts linked' : 'Add Account'}
           </button>
 
-          {showDropdown && (
+          {showDropdown && dropdownPos && createPortal(
             <>
-              <div className="fixed inset-0 z-40" onClick={() => { setShowDropdown(false); setSearch(''); }} />
-              <div className="absolute bottom-full left-0 z-50 mb-1 w-72 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl">
-                {/* Search input */}
+              <div className="fixed inset-0 z-[60]" onClick={() => { setShowDropdown(false); setSearch(''); }} />
+              <div className="fixed z-[70] w-72 overflow-hidden rounded-xl border border-[var(--border)] bg-white shadow-2xl dark:bg-neutral-800" style={{ top: dropdownPos.top, left: dropdownPos.left }}>
                 {availableAccounts.length > 3 && (
                   <div className="border-b border-[var(--border)] px-3 py-2">
-                    <div className="flex items-center gap-2 rounded-lg bg-[var(--background)] px-2.5 py-1.5">
-                      <Search className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
+                    <div className="flex items-center gap-2 rounded-lg bg-neutral-100 px-2.5 py-1.5 dark:bg-neutral-700">
+                      <Search className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                       <input
                         type="text"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Search accounts..."
-                        className="w-full bg-transparent text-xs outline-none placeholder:text-[var(--text-muted)]"
+                        className="w-full bg-transparent text-xs text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-100"
                         autoFocus
                       />
                     </div>
                   </div>
                 )}
 
-                {/* Account list grouped by platform */}
                 <div className="max-h-60 overflow-y-auto p-1">
                   {filteredAccounts.length === 0 ? (
-                    <div className="px-3 py-3 text-center text-xs text-[var(--text-muted)]">
+                    <div className="px-3 py-3 text-center text-xs text-neutral-500">
                       {search ? 'No matching accounts' : 'No available accounts'}
                     </div>
                   ) : (
                     (() => {
-                      // Group by platform, maintain order: tiktok, instagram, youtube, then rest
                       const platformOrder = ['tiktok', 'instagram', 'youtube', 'facebook', 'twitter', 'linkedin'];
                       const grouped = new Map<string, Account[]>();
                       for (const account of filteredAccounts) {
@@ -213,10 +221,10 @@ export default function ModelAccountMapper({
                         const meta = PLATFORM_META[platform];
                         return (
                           <div key={platform}>
-                            {gi > 0 && <div className="mx-2 my-1 border-t border-[var(--border)]" />}
+                            {gi > 0 && <div className="mx-2 my-1 border-t border-neutral-200 dark:border-neutral-700" />}
                             <div className="flex items-center gap-1.5 px-3 py-1.5">
                               <PlatformIcon platform={platform} size="sm" />
-                              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
                                 {meta?.label || platform}
                               </span>
                             </div>
@@ -224,17 +232,17 @@ export default function ModelAccountMapper({
                               <button
                                 key={account._id}
                                 onClick={() => handleAdd(account)}
-                                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-[var(--accent)]"
+                                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-700"
                               >
                                 {account.profilePicture ? (
                                   <img src={account.profilePicture} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover" />
                                 ) : (
-                                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--background)] text-[10px] font-bold text-[var(--text-muted)]">
+                                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[10px] font-bold text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300">
                                     {(account.username || account.displayName || '?').charAt(0).toUpperCase()}
                                   </div>
                                 )}
                                 <div className="min-w-0 flex-1">
-                                  <div className="truncate text-xs font-medium">{account.username || account.displayName || account._id}</div>
+                                  <div className="truncate text-xs font-medium text-neutral-900 dark:text-neutral-100">{account.username || account.displayName || account._id}</div>
                                 </div>
                               </button>
                             ))}
@@ -245,7 +253,8 @@ export default function ModelAccountMapper({
                   )}
                 </div>
               </div>
-            </>
+            </>,
+            document.body,
           )}
         </div>
       )}

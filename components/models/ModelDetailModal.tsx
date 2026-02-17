@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, type ReactNode } from 'react';
-import { X, Upload, Star, Trash2, Loader2, ImageIcon, Link2 } from 'lucide-react';
+import { X, Upload, Star, Trash2, Loader2, ImageIcon, Link2, Pencil, Check } from 'lucide-react';
 import type { Model, ModelImage, ModelAccountMapping, Account } from '@/types';
 import { useToast } from '@/hooks/useToast';
 import { Skeleton } from '@/components/ui/skeleton';
 import ModelAccountMapper from '@/components/models/ModelAccountMapper';
+import PreviewModal from '@/components/ui/PreviewModal';
 
 function SkeletonImage({
   src,
@@ -97,27 +98,66 @@ export default function ModelDetailModal({
   const [isDeletingModel, setIsDeletingModel] = useState(false);
   const [isSettingPrimary, setIsSettingPrimary] = useState<string | null>(null);
   const [isDeletingImage, setIsDeletingImage] = useState<string | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [isSavingName, setIsSavingName] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const handleSaveName = async () => {
+    const trimmed = editName.trim();
+    if (!trimmed || !model || trimmed === model.name) {
+      setIsEditingName(false);
+      return;
+    }
+    setIsSavingName(true);
+    try {
+      const res = await fetch(`/api/models/${model!.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (res.ok) {
+        showToast('Name updated', 'success');
+        loadModels();
+      } else {
+        let errMsg = 'Failed to update name';
+        try { const d = await res.json(); errMsg = d.error || errMsg; } catch { /* non-JSON */ }
+        showToast(errMsg, 'error');
+      }
+    } catch {
+      showToast('Failed to update name', 'error');
+    } finally {
+      setIsSavingName(false);
+      setIsEditingName(false);
+    }
+  };
 
   if (!open || !model) return null;
 
   const uploadImages = async (files: FileList | File[]) => {
     setModelImagesUploading(true);
-    const formData = new FormData();
-    for (let i = 0; i < files.length; i++) {
-      formData.append('images', files instanceof FileList ? files[i] : files[i]);
-    }
+    let successCount = 0;
     try {
-      const res = await fetch(`/api/models/${model.id}/images`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(`Uploaded ${data.count} image${data.count > 1 ? 's' : ''}`, 'success');
+      for (let i = 0; i < files.length; i++) {
+        const formData = new FormData();
+        formData.append('images', files instanceof FileList ? files[i] : files[i]);
+        const res = await fetch(`/api/models/${model.id}/images`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (!res.ok) {
+          let errMsg = `Upload failed (${res.status})`;
+          try { const d = await res.json(); errMsg = d.error || errMsg; } catch { /* non-JSON response */ }
+          showToast(errMsg, 'error');
+          continue;
+        }
+        const data = await res.json();
+        successCount += data.count || 1;
+      }
+      if (successCount > 0) {
+        showToast(`Uploaded ${successCount} image${successCount > 1 ? 's' : ''}`, 'success');
         await loadModelImages(model.id);
         loadModels();
-      } else {
-        showToast(data.error || 'Upload failed', 'error');
       }
     } catch (err) {
       console.error('Upload error:', err);
@@ -150,7 +190,38 @@ export default function ModelDetailModal({
               )}
             />
             <div>
-              <h3 className="text-sm font-bold tracking-tight">{model.name}</h3>
+              {isEditingName ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') setIsEditingName(false); }}
+                    autoFocus
+                    className="rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-0.5 text-sm font-bold tracking-tight text-[var(--text)] focus:border-[var(--primary)] focus:outline-none"
+                  />
+                  <button
+                    onClick={handleSaveName}
+                    disabled={isSavingName}
+                    className="rounded-md p-1 text-[var(--primary)] transition-colors hover:bg-[var(--accent)]"
+                  >
+                    {isSavingName ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  </button>
+                  <button onClick={() => setIsEditingName(false)} className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <h3 className="text-sm font-bold tracking-tight">{model.name}</h3>
+                  <button
+                    onClick={() => { setEditName(model.name); setIsEditingName(true); }}
+                    className="rounded-md p-0.5 text-[var(--text-muted)] transition-colors hover:text-[var(--text)] hover:bg-[var(--accent)]"
+                    title="Edit name"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
               {model.description && (
                 <p className="text-[11px] text-[var(--text-muted)]">{model.description}</p>
               )}
@@ -230,12 +301,13 @@ export default function ModelDetailModal({
             {/* Images Grid */}
             {imagesLoading ? (
               <ImageSkeletonGrid />
-            ) : modelImages.length > 0 ? (
+            ) : (modelImages.length > 0 || modelImagesUploading) ? (
               <div className="grid grid-cols-4 gap-2.5">
                 {modelImages.map((img) => (
                   <div
                     key={`${img.id}-${img.signedUrl || img.gcsUrl}`}
-                    className="group relative overflow-hidden rounded-lg border border-[var(--border)]"
+                    className="group relative cursor-pointer overflow-hidden rounded-lg border border-[var(--border)]"
+                    onClick={() => setPreviewUrl(img.signedUrl || img.gcsUrl)}
                   >
                     <SkeletonImage
                       src={img.signedUrl || img.gcsUrl}
@@ -254,8 +326,13 @@ export default function ModelDetailModal({
                         Primary
                       </span>
                     )}
+                    {isDeletingImage === img.id && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                        <Loader2 className="h-5 w-5 animate-spin text-white" />
+                      </div>
+                    )}
                     {/* Hover actions */}
-                    <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-t from-black/70 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
+                    <div onClick={(e) => e.stopPropagation()} className={`absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-t from-black/70 to-transparent p-2 transition-opacity ${isDeletingImage === img.id ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'}`}>
                       {!img.isPrimary && (
                         <button
                           onClick={async () => {
@@ -303,6 +380,15 @@ export default function ModelDetailModal({
                     </div>
                   </div>
                 ))}
+                {modelImagesUploading && (
+                  <div className="relative overflow-hidden rounded-lg border border-dashed border-[var(--primary)]/40">
+                    <Skeleton className="aspect-[3/4] w-full rounded-none" />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                      <Loader2 className="h-4 w-4 animate-spin text-[var(--primary)]" />
+                      <span className="text-[9px] font-medium text-[var(--primary)]">Uploading</span>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : null}
           </div>
@@ -363,6 +449,11 @@ export default function ModelDetailModal({
           </button>
         </div>
       </div>
+      {previewUrl && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <PreviewModal src={previewUrl} type="image" onClose={() => setPreviewUrl(null)} />
+        </div>
+      )}
     </div>
   );
 }

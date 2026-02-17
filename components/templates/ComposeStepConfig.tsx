@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { LayoutGrid } from 'lucide-react';
 import ComposeCanvas from '@/components/compose/ComposeCanvas';
 import ComposeToolbar from '@/components/compose/ComposeToolbar';
@@ -9,7 +9,8 @@ import ComposeLayerPanel from '@/components/compose/ComposeLayerPanel';
 import ComposeLayerConfig from '@/components/compose/ComposeLayerConfig';
 import ComposePresetPicker from '@/components/compose/ComposePresetPicker';
 import { useComposeCanvas } from '@/hooks/useComposeCanvas';
-import type { ComposeConfig, MiniAppStep, LayerSource } from '@/types';
+import type { ComposeConfig, MiniAppStep, LayerSource, VideoGenConfig as VGC, BatchVideoGenConfig as BVGC } from '@/types';
+import type { MasterModel } from './NodeConfigPanel';
 
 type ComposeStepConfigProps = {
   config: ComposeConfig;
@@ -17,6 +18,7 @@ type ComposeStepConfigProps = {
   steps: MiniAppStep[];
   currentStepId: string;
   isExpanded?: boolean;
+  masterModels?: MasterModel[];
 };
 
 export default function ComposeStepConfig({
@@ -25,6 +27,7 @@ export default function ComposeStepConfig({
   steps,
   currentStepId,
   isExpanded,
+  masterModels,
 }: ComposeStepConfigProps) {
   const [showPresets, setShowPresets] = useState(false);
 
@@ -45,6 +48,38 @@ export default function ComposeStepConfig({
   const handleAddLayer = async (source: LayerSource, type: 'video' | 'image') => {
     await compose.addLayer(source, type);
   };
+
+  const pipelineSteps = useMemo(() => {
+    const currentIdx = steps.findIndex((s) => s.id === currentStepId);
+    const prevSteps = steps.slice(0, currentIdx).filter((s) => s.enabled);
+    const videoGenSteps = prevSteps.filter((s) => s.type === 'video-generation' || s.type === 'batch-video-generation');
+
+    const result: { stepId: string; type: string; label: string; previewUrl?: string; modelRefs?: { modelId: string; modelName: string; imageUrl: string }[] }[] = [];
+
+    for (const s of videoGenSteps) {
+      const label = s.type === 'video-generation' ? 'Video Gen Output' : 'Batch Video Gen Output';
+      const cfg = s.config as VGC | BVGC;
+      const previewUrl = (cfg as VGC).imageUrl || undefined;
+
+      if (masterModels && masterModels.length > 0) {
+        result.push({
+          stepId: s.id,
+          type: s.type,
+          label,
+          previewUrl,
+          modelRefs: masterModels.map((m) => ({
+            modelId: m.modelId,
+            modelName: m.modelName,
+            imageUrl: m.primaryImageUrl,
+          })),
+        });
+      } else {
+        result.push({ stepId: s.id, type: s.type, label, previewUrl });
+      }
+    }
+
+    return result;
+  }, [steps, currentStepId, masterModels]);
 
   const selectedLayer = compose.config.layers.find((l) => l.id === compose.selectedLayerId);
 
@@ -89,6 +124,7 @@ export default function ComposeStepConfig({
           <ComposeAssetPanel
             mode="pipeline"
             onAddLayer={handleAddLayer}
+            pipelineSteps={pipelineSteps}
           />
         </div>
 

@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Canvas as FabricCanvas, Rect } from 'fabric';
+import { Canvas as FabricCanvas, Rect, FabricText } from 'fabric';
 import { createFabricVideo, createFabricImage } from '@/lib/fabricVideoElement';
 import { ASPECT_RATIO_DIMENSIONS, PRESETS } from '@/components/compose/presets';
 import type {
   ComposeConfig, ComposeLayer, ComposeAspectRatio, ComposePresetId,
   ComposeLayerFit, LayerSource,
 } from '@/types';
-import type { FabricImage } from 'fabric';
+import type { FabricImage, FabricObject } from 'fabric';
 
 function makeLayerId(): string {
   return `layer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -183,38 +183,96 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       opacity: 1,
     };
 
-    try {
-      let fabricObj: FabricImage;
+    const createPlaceholder = (): FabricObject => {
+      const pw = layerW * cw;
+      const ph = layerH * ch;
+      const rect = new Rect({
+        left: layerX * cw,
+        top: layerY * ch,
+        width: pw,
+        height: ph,
+        fill: '#1a1a2e',
+        stroke: '#7c3aed',
+        strokeWidth: 2,
+        strokeDashArray: [6, 4],
+        rx: 4,
+        ry: 4,
+      });
+      const label = new FabricText(source.label || 'Pending', {
+        fontSize: Math.max(10, pw * 0.08),
+        fill: '#a78bfa',
+        originX: 'center',
+        originY: 'center',
+        left: layerX * cw + pw / 2,
+        top: layerY * ch + ph / 2,
+        selectable: false,
+        evented: false,
+      });
+      canvas.add(rect);
+      canvas.add(label);
+      (rect as FabricObject & { layerId?: string; _placeholderLabel?: FabricObject }).layerId = id;
+      (rect as FabricObject & { layerId?: string; _placeholderLabel?: FabricObject })._placeholderLabel = label;
+      return rect;
+    };
 
-      if (type === 'video') {
-        const { fabricObj: obj, videoEl } = await createFabricVideo(source.url, {
-          left: layerX * cw,
-          top: layerY * ch,
-          scaleX: 1,
-          scaleY: 1,
-        });
-        const vw = videoEl.videoWidth || 640;
-        const vh = videoEl.videoHeight || 360;
-        applyFit(obj, vw, vh, layerW * cw, layerH * ch, 'cover');
-        fabricObj = obj;
-        videoElementsRef.current.set(id, videoEl);
-        if (isPlayingRef.current) videoEl.play();
+    try {
+      let fabricObj: FabricObject;
+
+      if (!source.url) {
+        fabricObj = createPlaceholder();
+      } else if (type === 'video') {
+        try {
+          const { fabricObj: obj, videoEl } = await createFabricVideo(source.url, {
+            left: layerX * cw,
+            top: layerY * ch,
+            scaleX: 1,
+            scaleY: 1,
+          });
+          const vw = videoEl.videoWidth || 640;
+          const vh = videoEl.videoHeight || 360;
+          applyFit(obj, vw, vh, layerW * cw, layerH * ch, 'cover');
+          fabricObj = obj;
+          videoElementsRef.current.set(id, videoEl);
+          if (isPlayingRef.current) videoEl.play();
+        } catch {
+          try {
+            const imgObj = await createFabricImage(source.url, {
+              left: layerX * cw,
+              top: layerY * ch,
+              scaleX: 1,
+              scaleY: 1,
+            });
+            const ow = imgObj.width || 100;
+            const oh = imgObj.height || 100;
+            applyFit(imgObj, ow, oh, layerW * cw, layerH * ch, 'cover');
+            fabricObj = imgObj;
+          } catch {
+            fabricObj = createPlaceholder();
+          }
+        }
       } else {
-        fabricObj = await createFabricImage(source.url, {
-          left: layerX * cw,
-          top: layerY * ch,
-          scaleX: 1,
-          scaleY: 1,
-        });
-        const ow = fabricObj.width || 100;
-        const oh = fabricObj.height || 100;
-        applyFit(fabricObj, ow, oh, layerW * cw, layerH * ch, 'cover');
+        try {
+          const imgObj = await createFabricImage(source.url, {
+            left: layerX * cw,
+            top: layerY * ch,
+            scaleX: 1,
+            scaleY: 1,
+          });
+          const ow = imgObj.width || 100;
+          const oh = imgObj.height || 100;
+          applyFit(imgObj, ow, oh, layerW * cw, layerH * ch, 'cover');
+          fabricObj = imgObj;
+        } catch {
+          fabricObj = createPlaceholder();
+        }
       }
 
-      (fabricObj as FabricImage & { layerId?: string }).layerId = id;
+      (fabricObj as FabricObject & { layerId?: string }).layerId = id;
       fabricObj.set({ opacity: layer.opacity ?? 1 });
-      fabricObjectsRef.current.set(id, fabricObj);
-      canvas.add(fabricObj);
+      fabricObjectsRef.current.set(id, fabricObj as FabricImage);
+      if (source.url) {
+        canvas.add(fabricObj);
+      }
       canvas.setActiveObject(fabricObj);
       canvas.renderAll();
 
@@ -231,6 +289,8 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
 
     const obj = fabricObjectsRef.current.get(id);
     if (obj) {
+      const label = (obj as FabricObject & { _placeholderLabel?: FabricObject })._placeholderLabel;
+      if (label) canvas.remove(label);
       canvas.remove(obj);
       fabricObjectsRef.current.delete(id);
     }

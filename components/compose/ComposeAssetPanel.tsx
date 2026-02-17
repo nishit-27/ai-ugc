@@ -11,16 +11,26 @@ type VideoItem = { url: string; gcsUrl: string; name: string };
 type ImageItem = { url: string; gcsUrl: string; name: string };
 type ModelItem = { id: string; name: string; avatarUrl?: string; images: { gcsUrl: string; signedUrl?: string; filename: string }[] };
 
+type PipelineStepSource = {
+  stepId: string;
+  type: string;
+  label: string;
+  previewUrl?: string;
+  modelRefs?: { modelId: string; modelName: string; imageUrl: string }[];
+};
+
 type ComposeAssetPanelProps = {
   mode: 'pipeline' | 'standalone';
   onAddLayer: (source: LayerSource, type: 'video' | 'image') => void;
   stepResults?: StepResult[];
+  pipelineSteps?: PipelineStepSource[];
 };
 
 export default function ComposeAssetPanel({
   mode,
   onAddLayer,
   stepResults,
+  pipelineSteps,
 }: ComposeAssetPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>(mode === 'pipeline' ? 'pipeline' : 'videos');
   const [videos, setVideos] = useState<VideoItem[]>([]);
@@ -249,25 +259,72 @@ export default function ComposeAssetPanel({
       <div className="flex-1 overflow-y-auto p-3">
         {activeTab === 'pipeline' && (
           <div className="space-y-2">
-            {(!stepResults || stepResults.length === 0) ? (
-              <p className="text-xs text-[var(--text-muted)]">No step outputs available yet.</p>
-            ) : (
-              stepResults.map((sr) => (
+            {stepResults && stepResults.length > 0 && stepResults.map((sr) => (
+              <button
+                key={sr.stepId}
+                onClick={() => onAddLayer(
+                  { type: 'step-output', url: sr.signedUrl || sr.outputUrl, gcsUrl: sr.outputUrl, stepId: sr.stepId, label: sr.label },
+                  'video',
+                )}
+                className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] p-2 text-left transition-colors hover:bg-[var(--accent)]"
+              >
+                <Film className="h-4 w-4 text-[var(--text-muted)]" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-medium text-[var(--text)]">{sr.label}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">Step output</div>
+                </div>
+              </button>
+            ))}
+            {pipelineSteps && pipelineSteps.length > 0 && pipelineSteps.map((ps) => (
+              <div key={ps.stepId} className="space-y-1.5">
                 <button
-                  key={sr.stepId}
                   onClick={() => onAddLayer(
-                    { type: 'step-output', url: sr.signedUrl || sr.outputUrl, gcsUrl: sr.outputUrl, stepId: sr.stepId, label: sr.label },
+                    { type: 'step-output', url: ps.previewUrl || '', stepId: ps.stepId, label: ps.label },
                     'video',
                   )}
-                  className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] p-2 text-left transition-colors hover:bg-[var(--accent)]"
+                  className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 text-left transition-colors hover:bg-[var(--primary)]/10"
                 >
-                  <Film className="h-4 w-4 text-[var(--text-muted)]" />
+                  {ps.previewUrl ? (
+                    <img src={ps.previewUrl} alt="" className="h-10 w-10 shrink-0 rounded-md object-cover" />
+                  ) : (
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[var(--accent)]">
+                      <Film className="h-4 w-4 text-[var(--text-muted)]" />
+                    </div>
+                  )}
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-medium text-[var(--text)]">{sr.label}</div>
-                    <div className="text-[10px] text-[var(--text-muted)]">Step output</div>
+                    <div className="truncate text-xs font-medium text-[var(--text)]">{ps.label}</div>
+                    <div className="text-[10px] text-[var(--primary)]">Will be generated on run</div>
                   </div>
                 </button>
-              ))
+                {ps.modelRefs && ps.modelRefs.length > 0 && (
+                  <div className="ml-1 pl-2 border-l-2 border-[var(--primary)]/20">
+                    <div className="text-[10px] font-medium text-[var(--text-muted)] mb-1">
+                      {ps.modelRefs.length} model{ps.modelRefs.length !== 1 ? 's' : ''} — same layout for all
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {ps.modelRefs.map((ref) => (
+                        <div
+                          key={ref.modelId}
+                          className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)]"
+                          title={ref.modelName}
+                        >
+                          <img
+                            src={ref.imageUrl}
+                            alt={ref.modelName}
+                            className="aspect-square w-full object-cover"
+                          />
+                          <div className="absolute inset-x-0 bottom-0 bg-black/60 px-0.5 py-0.5">
+                            <span className="block truncate text-[8px] text-white leading-tight">{ref.modelName}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {(!stepResults || stepResults.length === 0) && (!pipelineSteps || pipelineSteps.length === 0) && (
+              <p className="text-xs text-[var(--text-muted)]">Add a Video Generation step before Compose to use its output here.</p>
             )}
           </div>
         )}
