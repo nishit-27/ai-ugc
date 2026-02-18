@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { fal } from '@fal-ai/client';
+import { GoogleGenAI } from '@google/genai';
+import sharp from 'sharp';
 import { config } from '@/lib/config';
 import { uploadImage, getSignedUrlFromPublicUrl, downloadToBuffer } from '@/lib/storage.js';
 import { initDatabase, createGeneratedImage } from '@/lib/db';
@@ -64,9 +66,59 @@ async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
   throw new Error('fetch failed after retries');
 }
 
+// --- Gemini generation path ---
+async function generateWithGemini(
+  modelBuf: Buffer,
+  frameBuf: Buffer,
+  modelType: { contentType: string; ext: string },
+  frameType: { contentType: string; ext: string },
+  prompt: string,
+): Promise<Buffer> {
+  const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY! });
+
+  const modelB64 = modelBuf.toString('base64');
+  const frameB64 = frameBuf.toString('base64');
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-pro-image-preview',
+    contents: [
+      { text: prompt },
+      {
+        inlineData: {
+          mimeType: modelType.contentType,
+          data: modelB64,
+        },
+      },
+      {
+        inlineData: {
+          mimeType: frameType.contentType,
+          data: frameB64,
+        },
+      },
+    ],
+    config: {
+      responseModalities: ['TEXT', 'IMAGE'],
+    },
+  });
+
+  // Extract the generated image from response
+  const parts = response.candidates?.[0]?.content?.parts;
+  if (!parts) {
+    throw new Error('Gemini returned no content parts');
+  }
+
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return Buffer.from(part.inlineData.data, 'base64');
+    }
+  }
+
+  throw new Error('Gemini response contained no image data');
+}
+
 export async function POST(req: Request) {
   try {
-    const { modelImageUrl, frameImageUrl, resolution, modelId } = await req.json();
+    const { modelImageUrl, frameImageUrl, resolution, modelId, provider = 'gemini' } = await req.json();
 
     if (!modelImageUrl || !frameImageUrl) {
       return NextResponse.json(
@@ -75,15 +127,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!config.FAL_KEY) {
-      return NextResponse.json(
-        { error: 'FAL API key not configured' },
-        { status: 500 },
-      );
-    }
-
-    fal.config({ credentials: config.FAL_KEY });
-
+    console.log(`[FirstFrame] Provider: ${provider}`);
     console.log('[FirstFrame] Input URLs:', {
       modelImageUrl: modelImageUrl.slice(0, 80),
       frameImageUrl: frameImageUrl.slice(0, 80),
@@ -126,67 +170,105 @@ export async function POST(req: Request) {
     const modelType = detectImageType(modelBuf);
     const frameType = detectImageType(frameBuf);
 
-    // Upload directly to FAL's CDN
-    const [falModelUrl, falFrameUrl] = await Promise.all([
-      fal.storage.upload(new Blob([new Uint8Array(modelBuf)], { type: modelType.contentType })),
-      fal.storage.upload(new Blob([new Uint8Array(frameBuf)], { type: frameType.contentType })),
-    ]);
+    let bufferA: Buffer | ArrayBuffer;
+    let bufferB: Buffer | ArrayBuffer;
 
-    // image_urls: [model/face first, scene/frame second]
-    const imageUrls = [falModelUrl, falFrameUrl];
+    if (provider === 'gemini') {
+      // --- Gemini path ---
+      if (!config.GEMINI_API_KEY) {
+        return NextResponse.json(
+          { error: 'Gemini API key not configured' },
+          { status: 500 },
+        );
+      }
 
-    console.log('[FirstFrame] FAL URLs — model (face):', falModelUrl.slice(0, 60), '| scene:', falFrameUrl.slice(0, 60));
+      console.log('[FirstFrame] Calling Gemini gemini-3-pro-image-preview (2 variants)...');
 
-    console.log('[FirstFrame] Calling nano-banana-pro/edit (2 variants)...');
+      const [geminiA, geminiB] = await Promise.all([
+        generateWithGemini(modelBuf, frameBuf, modelType, frameType, PROMPT_A),
+        generateWithGemini(modelBuf, frameBuf, modelType, frameType, PROMPT_B),
+      ]);
 
-    const falResolution = resolution || '1K'; // '1K' | '2K' | '4K'
+      console.log('[FirstFrame] Gemini done, uploading results...');
+      bufferA = geminiA;
+      bufferB = geminiB;
+    } else {
+      // --- FAL path (original) ---
+      if (!config.FAL_KEY) {
+        return NextResponse.json(
+          { error: 'FAL API key not configured' },
+          { status: 500 },
+        );
+      }
 
-    const [resultA, resultB] = await Promise.all([
-      fal.subscribe('fal-ai/nano-banana-pro/edit', {
-        input: {
-          image_urls: imageUrls,
-          prompt: PROMPT_A,
-          limit_generations: true,
-          resolution: falResolution,
-        },
-        logs: true,
-      }),
-      fal.subscribe('fal-ai/nano-banana-pro/edit', {
-        input: {
-          image_urls: imageUrls,
-          prompt: PROMPT_B,
-          limit_generations: true,
-          resolution: falResolution,
-        },
-        logs: true,
-      }),
-    ]);
+      fal.config({ credentials: config.FAL_KEY });
 
-    console.log('[FirstFrame] nano-banana-pro done, downloading results...');
+      // Upload directly to FAL's CDN
+      const [falModelUrl, falFrameUrl] = await Promise.all([
+        fal.storage.upload(new Blob([new Uint8Array(modelBuf)], { type: modelType.contentType })),
+        fal.storage.upload(new Blob([new Uint8Array(frameBuf)], { type: frameType.contentType })),
+      ]);
 
-    // Extract image URLs from results
-    const falImageUrlA = resultA.data?.images?.[0]?.url;
-    const falImageUrlB = resultB.data?.images?.[0]?.url;
+      const imageUrls = [falModelUrl, falFrameUrl];
 
-    if (!falImageUrlA || !falImageUrlB) {
-      console.error('[FirstFrame] Missing result URLs:', {
-        A: JSON.stringify(resultA.data).slice(0, 200),
-        B: JSON.stringify(resultB.data).slice(0, 200),
-      });
-      throw new Error('No image URL returned from Nano Banana Pro');
+      console.log('[FirstFrame] FAL URLs — model (face):', falModelUrl.slice(0, 60), '| scene:', falFrameUrl.slice(0, 60));
+      console.log('[FirstFrame] Calling nano-banana-pro/edit (2 variants)...');
+
+      const falResolution = resolution || '1K';
+
+      const [resultA, resultB] = await Promise.all([
+        fal.subscribe('fal-ai/nano-banana-pro/edit', {
+          input: {
+            image_urls: imageUrls,
+            prompt: PROMPT_A,
+            limit_generations: true,
+            resolution: falResolution,
+          },
+          logs: true,
+        }),
+        fal.subscribe('fal-ai/nano-banana-pro/edit', {
+          input: {
+            image_urls: imageUrls,
+            prompt: PROMPT_B,
+            limit_generations: true,
+            resolution: falResolution,
+          },
+          logs: true,
+        }),
+      ]);
+
+      console.log('[FirstFrame] nano-banana-pro done, downloading results...');
+
+      const falImageUrlA = resultA.data?.images?.[0]?.url;
+      const falImageUrlB = resultB.data?.images?.[0]?.url;
+
+      if (!falImageUrlA || !falImageUrlB) {
+        console.error('[FirstFrame] Missing result URLs:', {
+          A: JSON.stringify(resultA.data).slice(0, 200),
+          B: JSON.stringify(resultB.data).slice(0, 200),
+        });
+        throw new Error('No image URL returned from Nano Banana Pro');
+      }
+
+      console.log('[FirstFrame] Result URLs:', { A: falImageUrlA.slice(0, 60), B: falImageUrlB.slice(0, 60) });
+
+      [bufferA, bufferB] = await Promise.all([
+        fetchWithRetry(falImageUrlA),
+        fetchWithRetry(falImageUrlB),
+      ]);
     }
 
-    console.log('[FirstFrame] Result URLs:', { A: falImageUrlA.slice(0, 60), B: falImageUrlB.slice(0, 60) });
-
-    // Download generated images with retry (FAL connections can be flaky)
-    const [bufferA, bufferB] = await Promise.all([
-      fetchWithRetry(falImageUrlA),
-      fetchWithRetry(falImageUrlB),
+    // Compress to JPEG (reduces 4K image sizes that cause video gen failures downstream)
+    const [compressedA, compressedB] = await Promise.all([
+      sharp(Buffer.from(new Uint8Array(bufferA))).jpeg({ quality: 85 }).toBuffer(),
+      sharp(Buffer.from(new Uint8Array(bufferB))).jpeg({ quality: 85 }).toBuffer(),
     ]);
 
+    console.log(`[FirstFrame] Compressed to JPEG — A: ${compressedA.length} bytes, B: ${compressedB.length} bytes`);
+
     const [uploadedA, uploadedB] = await Promise.all([
-      uploadImage(Buffer.from(bufferA), `first-frame-a-${Date.now()}.jpg`),
-      uploadImage(Buffer.from(bufferB), `first-frame-b-${Date.now()}.jpg`),
+      uploadImage(compressedA, `first-frame-a-${Date.now()}.jpg`),
+      uploadImage(compressedB, `first-frame-b-${Date.now()}.jpg`),
     ]);
 
     const [signedA, signedB] = await Promise.all([

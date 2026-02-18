@@ -16,6 +16,7 @@ export const config = {
   RAPIDAPI_KEY: process.env.RAPIDAPI_KEY,
   LATE_API_KEY: process.env.LATE_API_KEY,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   LATE_API_URL: 'https://getlate.dev/api/v1',
   TIKTOK_ACCOUNT_ID: process.env.TIKTOK_ACCOUNT_ID,
   DATABASE_URL: process.env.DATABASE_URL,

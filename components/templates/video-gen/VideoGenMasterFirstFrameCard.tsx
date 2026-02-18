@@ -167,17 +167,30 @@ export default function VideoGenMasterFirstFrameCard({
             )}
           </div>
 
-          <div>
-            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Resolution</label>
-            <select
-              value={config.firstFrameResolution || '1K'}
-              onChange={(e) => onChange({ ...config, firstFrameResolution: e.target.value as '1K' | '2K' | '4K' })}
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:outline-none"
-            >
-              <option value="1K">1K</option>
-              <option value="2K">2K</option>
-              <option value="4K">4K</option>
-            </select>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Model</label>
+              <select
+                value={config.firstFrameProvider || 'gemini'}
+                onChange={(e) => onChange({ ...config, firstFrameProvider: e.target.value as 'gemini' | 'fal' })}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:outline-none"
+              >
+                <option value="gemini">Gemini</option>
+                <option value="fal">FAL (Nano Banana)</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Resolution</label>
+              <select
+                value={config.firstFrameResolution || '1K'}
+                onChange={(e) => onChange({ ...config, firstFrameResolution: e.target.value as '1K' | '2K' | '4K' })}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:outline-none"
+              >
+                <option value="1K">1K</option>
+                <option value="2K">2K</option>
+                <option value="4K">4K</option>
+              </select>
+            </div>
           </div>
 
           {config.extractedFrameUrl && (

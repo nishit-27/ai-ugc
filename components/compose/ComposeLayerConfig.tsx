@@ -9,6 +9,7 @@ type ComposeLayerConfigProps = {
 
 export default function ComposeLayerConfig({ layer, onUpdate }: ComposeLayerConfigProps) {
   const fitOptions: ComposeLayerFit[] = ['cover', 'contain', 'stretch'];
+  const trimDuration = layer.trim?.endSec ?? 0;
 
   return (
     <div className="space-y-4">
@@ -125,31 +126,29 @@ export default function ComposeLayerConfig({ layer, onUpdate }: ComposeLayerConf
 
       {layer.type === 'video' && (
         <div>
-          <label className="mb-1.5 block text-[11px] font-medium text-[var(--text-muted)]">Trim (seconds)</label>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="mb-0.5 block text-[10px] text-[var(--text-muted)]">Start</label>
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={layer.trim?.startSec ?? 0}
-                onChange={(e) => onUpdate({ trim: { startSec: Number(e.target.value), endSec: layer.trim?.endSec ?? 0 } })}
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs text-[var(--text)]"
-              />
-            </div>
-            <div>
-              <label className="mb-0.5 block text-[10px] text-[var(--text-muted)]">End</label>
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={layer.trim?.endSec ?? 0}
-                onChange={(e) => onUpdate({ trim: { startSec: layer.trim?.startSec ?? 0, endSec: Number(e.target.value) } })}
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs text-[var(--text)]"
-                placeholder="0 = full"
-              />
-            </div>
+          <label className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]">
+            <span>Duration</span>
+            <span className="text-[10px]">{trimDuration === 0 ? 'Full' : `${trimDuration}s`}</span>
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={60}
+            step={1}
+            value={trimDuration}
+            onChange={(e) => {
+              const val = Number(e.target.value);
+              if (val === 0) {
+                onUpdate({ trim: undefined });
+              } else {
+                onUpdate({ trim: { startSec: 0, endSec: val } });
+              }
+            }}
+            className="w-full"
+          />
+          <div className="mt-1 flex justify-between text-[10px] text-[var(--text-muted)]">
+            <span>Full</span>
+            <span>60s</span>
           </div>
         </div>
       )}

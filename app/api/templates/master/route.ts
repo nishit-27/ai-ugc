@@ -51,8 +51,8 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
         }
       }
-    } else {
-      // Non-video first step always needs input video
+    } else if (firstEnabled.type !== 'compose') {
+      // Non-video, non-compose first step always needs input video
       if (!tiktokUrl && !videoUrl) {
         return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
       }

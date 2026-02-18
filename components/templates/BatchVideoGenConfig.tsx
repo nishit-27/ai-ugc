@@ -229,6 +229,7 @@ export default function BatchVideoGenConfig({
           frameImageUrl: config.extractedFrameUrl,
           resolution: config.firstFrameResolution || '1K',
           modelId: config.modelId || null,
+          provider: config.firstFrameProvider || 'gemini',
         }),
       });
       const data = await res.json();

@@ -11,12 +11,16 @@ type VideoItem = { url: string; gcsUrl: string; name: string };
 type ImageItem = { url: string; gcsUrl: string; name: string };
 type ModelItem = { id: string; name: string; avatarUrl?: string; images: { gcsUrl: string; signedUrl?: string; filename: string }[] };
 
+const VIDEOS_PER_PAGE = 40;
+const IMAGES_PER_PAGE = 40;
+
 type PipelineStepSource = {
   stepId: string;
   type: string;
   label: string;
   previewUrl?: string;
   modelRefs?: { modelId: string; modelName: string; imageUrl: string }[];
+  batchImages?: { imageUrl: string; filename?: string; imageId?: string }[];
 };
 
 type ComposeAssetPanelProps = {
@@ -57,23 +61,40 @@ export default function ComposeAssetPanel({
     { id: 'url', label: 'URL', icon: Link2 },
   ];
 
-  const loadVideos = async () => {
-    if (videosLoaded.current || isLoadingVideos) return;
-    setIsLoadingVideos(true);
-    videosLoaded.current = true;
+  const [hasMoreVideos, setHasMoreVideos] = useState(false);
+  const [hasMoreImages, setHasMoreImages] = useState(false);
+  const [isLoadingMoreVideos, setIsLoadingMoreVideos] = useState(false);
+  const [isLoadingMoreImages, setIsLoadingMoreImages] = useState(false);
+  const videosPageRef = useRef(1);
+  const imagesPageRef = useRef(1);
+
+  const loadVideos = async (loadMore = false) => {
+    if (!loadMore && (videosLoaded.current || isLoadingVideos)) return;
+    if (loadMore) {
+      setIsLoadingMoreVideos(true);
+    } else {
+      setIsLoadingVideos(true);
+      videosLoaded.current = true;
+      videosPageRef.current = 1;
+    }
     try {
-      const res = await fetch('/api/videos?page=1&perPage=20&mode=generated');
+      const res = await fetch('/api/videos?mode=generated');
       const data = await res.json();
       const rawVideos = data.videos;
       if (!Array.isArray(rawVideos)) return;
 
-      const gcsUrls = rawVideos
+      const page = videosPageRef.current;
+      const start = loadMore ? (page - 1) * VIDEOS_PER_PAGE : 0;
+      const end = page * VIDEOS_PER_PAGE;
+      const pageVideos = rawVideos.slice(start, end);
+
+      const gcsUrls = pageVideos
         .map((v: { url?: string; path?: string }) => v.url || v.path || '')
         .filter((url: string) => url.includes('storage.googleapis.com'));
 
       const signed = gcsUrls.length > 0 ? await signUrls(gcsUrls) : new Map<string, string>();
 
-      const items: VideoItem[] = rawVideos.slice(0, 20).map((v: { url?: string; path?: string; name?: string }) => {
+      const items: VideoItem[] = pageVideos.map((v: { url?: string; path?: string; name?: string }) => {
         const gcsUrl = v.url || v.path || '';
         return {
           gcsUrl,
@@ -81,31 +102,49 @@ export default function ComposeAssetPanel({
           name: v.name || 'Video',
         };
       });
-      setVideos(items);
+
+      if (loadMore) {
+        setVideos((prev) => [...prev, ...items]);
+      } else {
+        setVideos(items);
+      }
+      setHasMoreVideos(rawVideos.length > end);
+      videosPageRef.current = page + 1;
     } catch (err) {
       console.error('Failed to load videos:', err);
     } finally {
       setIsLoadingVideos(false);
+      setIsLoadingMoreVideos(false);
     }
   };
 
-  const loadImages = async () => {
-    if (imagesLoaded.current || isLoadingImages) return;
-    setIsLoadingImages(true);
-    imagesLoaded.current = true;
+  const loadImages = async (loadMore = false) => {
+    if (!loadMore && (imagesLoaded.current || isLoadingImages)) return;
+    if (loadMore) {
+      setIsLoadingMoreImages(true);
+    } else {
+      setIsLoadingImages(true);
+      imagesLoaded.current = true;
+      imagesPageRef.current = 1;
+    }
     try {
-      const res = await fetch('/api/generated-images?page=1&limit=20&signed=false');
+      const page = imagesPageRef.current;
+      // Request signed URLs from the API so images actually display
+      const res = await fetch(`/api/generated-images?page=${page}&limit=${IMAGES_PER_PAGE}&signed=true`);
       const data = await res.json();
       const rawImages = data.images;
       if (!Array.isArray(rawImages)) return;
 
-      const gcsUrls = rawImages
-        .map((img: { gcsUrl?: string }) => img.gcsUrl || '')
+      // The API returns signedUrl for each image when signed=true.
+      // Fall back to client-side signing for any that are missing.
+      const needsSigning = rawImages
+        .filter((img: { gcsUrl?: string; signedUrl?: string }) => !img.signedUrl && img.gcsUrl)
+        .map((img: { gcsUrl?: string }) => img.gcsUrl!)
         .filter((url: string) => url.includes('storage.googleapis.com'));
 
-      const signed = gcsUrls.length > 0 ? await signUrls(gcsUrls) : new Map<string, string>();
+      const signed = needsSigning.length > 0 ? await signUrls(needsSigning) : new Map<string, string>();
 
-      const items: ImageItem[] = rawImages.slice(0, 20).map((img: { gcsUrl?: string; signedUrl?: string; filename?: string }) => {
+      const items: ImageItem[] = rawImages.map((img: { gcsUrl?: string; signedUrl?: string; filename?: string }) => {
         const gcsUrl = img.gcsUrl || '';
         return {
           gcsUrl,
@@ -113,11 +152,20 @@ export default function ComposeAssetPanel({
           name: img.filename || 'Image',
         };
       });
-      setImages(items);
+
+      if (loadMore) {
+        setImages((prev) => [...prev, ...items]);
+      } else {
+        setImages(items);
+      }
+      const total = data.total ?? 0;
+      setHasMoreImages(page * IMAGES_PER_PAGE < total);
+      imagesPageRef.current = page + 1;
     } catch (err) {
       console.error('Failed to load images:', err);
     } finally {
       setIsLoadingImages(false);
+      setIsLoadingMoreImages(false);
     }
   };
 
@@ -197,10 +245,13 @@ export default function ComposeAssetPanel({
     }
   };
 
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setIsUploading(true);
+    setUploadError(null);
     try {
       const isVideo = file.type.startsWith('video/');
       const formData = new FormData();
@@ -208,6 +259,10 @@ export default function ComposeAssetPanel({
       const endpoint = isVideo ? '/api/upload-video' : '/api/upload-image';
       const res = await fetch(endpoint, { method: 'POST', body: formData });
       const data = await res.json();
+      if (!res.ok) {
+        setUploadError(data.error || 'Upload failed');
+        return;
+      }
       if (data.url || data.gcsUrl) {
         const displayUrl = data.url || data.gcsUrl;
         const gcsUrl = data.gcsUrl || data.url;
@@ -215,9 +270,13 @@ export default function ComposeAssetPanel({
           { type: 'upload', url: displayUrl, gcsUrl, label: file.name },
           isVideo ? 'video' : 'image',
         );
+        setUploadError(null);
+      } else {
+        setUploadError('Upload succeeded but no URL returned');
       }
     } catch (err) {
       console.error('Upload failed:', err);
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setIsUploading(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -277,6 +336,7 @@ export default function ComposeAssetPanel({
             ))}
             {pipelineSteps && pipelineSteps.length > 0 && pipelineSteps.map((ps) => (
               <div key={ps.stepId} className="space-y-1.5">
+                {/* Main step-output button (adds layer referencing this step's video output) */}
                 <button
                   onClick={() => onAddLayer(
                     { type: 'step-output', url: ps.previewUrl || '', stepId: ps.stepId, label: ps.label },
@@ -296,6 +356,47 @@ export default function ComposeAssetPanel({
                     <div className="text-[10px] text-[var(--primary)]">Will be generated on run</div>
                   </div>
                 </button>
+
+                {/* Batch images: show each image individually with its own add button */}
+                {ps.batchImages && ps.batchImages.length > 1 && (
+                  <div className="ml-1 pl-2 border-l-2 border-[var(--primary)]/20">
+                    <div className="text-[10px] font-medium text-[var(--text-muted)] mb-1">
+                      {ps.batchImages.length} source image{ps.batchImages.length !== 1 ? 's' : ''} — each generates a video
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {ps.batchImages.map((img, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => onAddLayer(
+                            { type: 'step-output', url: img.imageUrl, stepId: ps.stepId, label: img.filename || `Batch #${idx + 1}` },
+                            'video',
+                          )}
+                          className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
+                          title={img.filename || `Batch image ${idx + 1}`}
+                        >
+                          {img.imageUrl ? (
+                            <img
+                              src={img.imageUrl}
+                              alt={img.filename || `Batch ${idx + 1}`}
+                              className="aspect-square w-full object-cover"
+                                                         />
+                          ) : (
+                            <div className="flex aspect-square w-full items-center justify-center bg-[var(--accent)]">
+                              <ImageIcon className="h-3 w-3 text-[var(--text-muted)]" />
+                            </div>
+                          )}
+                          <div className="absolute inset-x-0 bottom-0 bg-black/60 px-0.5 py-0.5">
+                            <span className="block truncate text-[8px] text-white leading-tight">
+                              {img.filename || `#${idx + 1}`}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Master mode: model references */}
                 {ps.modelRefs && ps.modelRefs.length > 0 && (
                   <div className="ml-1 pl-2 border-l-2 border-[var(--primary)]/20">
                     <div className="text-[10px] font-medium text-[var(--text-muted)] mb-1">
@@ -303,20 +404,24 @@ export default function ComposeAssetPanel({
                     </div>
                     <div className="grid grid-cols-3 gap-1">
                       {ps.modelRefs.map((ref) => (
-                        <div
+                        <button
                           key={ref.modelId}
-                          className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)]"
+                          onClick={() => onAddLayer(
+                            { type: 'step-output', url: ref.imageUrl, stepId: ps.stepId, modelId: ref.modelId, label: ref.modelName },
+                            'video',
+                          )}
+                          className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
                           title={ref.modelName}
                         >
                           <img
                             src={ref.imageUrl}
                             alt={ref.modelName}
                             className="aspect-square w-full object-cover"
-                          />
+                                                     />
                           <div className="absolute inset-x-0 bottom-0 bg-black/60 px-0.5 py-0.5">
                             <span className="block truncate text-[8px] text-white leading-tight">{ref.modelName}</span>
                           </div>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -338,23 +443,34 @@ export default function ComposeAssetPanel({
             ) : videos.length === 0 ? (
               <p className="text-xs text-[var(--text-muted)]">No videos found.</p>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {videos.map((v, i) => (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  {videos.map((v, i) => (
+                    <button
+                      key={i}
+                      onClick={() => onAddLayer(
+                        { type: 'gallery-video', url: v.url, gcsUrl: v.gcsUrl, label: v.name },
+                        'video',
+                      )}
+                      className="group relative overflow-hidden rounded-lg border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
+                    >
+                      <video src={v.url} className="aspect-video w-full object-cover" muted preload="metadata" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.5; }} />
+                      <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
+                        <Film className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {hasMoreVideos && (
                   <button
-                    key={i}
-                    onClick={() => onAddLayer(
-                      { type: 'gallery-video', url: v.url, gcsUrl: v.gcsUrl, label: v.name },
-                      'video',
-                    )}
-                    className="group relative overflow-hidden rounded-lg border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
+                    onClick={() => loadVideos(true)}
+                    disabled={isLoadingMoreVideos}
+                    className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--text)] disabled:opacity-40"
                   >
-                    <video src={v.url} className="aspect-video w-full object-cover" muted preload="metadata" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.5; }} />
-                    <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
-                      <Film className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </div>
+                    {isLoadingMoreVideos ? 'Loading...' : 'Load More Videos'}
                   </button>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -368,23 +484,34 @@ export default function ComposeAssetPanel({
             ) : images.length === 0 ? (
               <p className="text-xs text-[var(--text-muted)]">No images found.</p>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {images.map((img, i) => (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  {images.map((img, i) => (
+                    <button
+                      key={i}
+                      onClick={() => onAddLayer(
+                        { type: 'gallery-image', url: img.url, gcsUrl: img.gcsUrl, label: img.name },
+                        'image',
+                      )}
+                      className="group relative overflow-hidden rounded-lg border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
+                    >
+                      <img src={img.url} alt={img.name} className="aspect-square w-full object-cover" />
+                      <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
+                        <ImageIcon className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {hasMoreImages && (
                   <button
-                    key={i}
-                    onClick={() => onAddLayer(
-                      { type: 'gallery-image', url: img.url, gcsUrl: img.gcsUrl, label: img.name },
-                      'image',
-                    )}
-                    className="group relative overflow-hidden rounded-lg border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
+                    onClick={() => loadImages(true)}
+                    disabled={isLoadingMoreImages}
+                    className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--text)] disabled:opacity-40"
                   >
-                    <img src={img.url} alt={img.name} className="aspect-square w-full object-cover" />
-                    <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
-                      <ImageIcon className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </div>
+                    {isLoadingMoreImages ? 'Loading...' : 'Load More Images'}
                   </button>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -477,6 +604,11 @@ export default function ComposeAssetPanel({
                 </>
               )}
             </button>
+            {uploadError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/50 dark:text-red-400">
+                {uploadError}
+              </div>
+            )}
           </div>
         )}
 

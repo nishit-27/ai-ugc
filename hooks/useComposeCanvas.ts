@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Canvas as FabricCanvas, Rect, FabricText } from 'fabric';
 import { createFabricVideo, createFabricImage } from '@/lib/fabricVideoElement';
+import { signUrls } from '@/lib/signedUrlClient';
 import { ASPECT_RATIO_DIMENSIONS, PRESETS } from '@/components/compose/presets';
 import type {
   ComposeConfig, ComposeLayer, ComposeAspectRatio, ComposePresetId,
@@ -24,6 +25,19 @@ function defaultConfig(): ComposeConfig {
     backgroundColor: '#000000',
     layers: [],
   };
+}
+
+async function resolveDisplayUrl(url: string): Promise<string> {
+  if (!url) return url;
+  if (url.includes('storage.googleapis.com') && !url.includes('X-Goog-')) {
+    try {
+      const signed = await signUrls([url]);
+      return signed.get(url) || url;
+    } catch {
+      return url;
+    }
+  }
+  return url;
 }
 
 function applyFit(
@@ -138,6 +152,24 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     });
 
     fabricRef.current = canvas;
+
+    // Re-add existing layers to the new canvas (survives dispose/re-init)
+    const currentCfg = configRef.current;
+    const cw = currentCfg.canvasWidth * scale;
+    const ch = currentCfg.canvasHeight * scale;
+    currentCfg.layers.forEach((layer) => {
+      const obj = fabricObjectsRef.current.get(layer.id);
+      if (!obj) return;
+      const label = (obj as FabricObject & { _placeholderLabel?: FabricObject })._placeholderLabel;
+      if (label) canvas.add(label);
+      canvas.add(obj);
+      obj.set({ left: layer.x * cw, top: layer.y * ch });
+      const sourceW = obj.width || 100;
+      const sourceH = obj.height || 100;
+      applyFit(obj as FabricImage, sourceW, sourceH, layer.width * cw, layer.height * ch, layer.fit);
+    });
+    canvas.renderAll();
+
     return canvas;
   }, []);
 
@@ -218,11 +250,32 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     try {
       let fabricObj: FabricObject;
 
-      if (!source.url) {
+      // Sign GCS URLs before loading into canvas
+      const displayUrl = source.url ? await resolveDisplayUrl(source.url) : '';
+
+      // For step-output layers, the URL is typically an image preview of the video to be generated.
+      const isStepOutputPreview = source.type === 'step-output' && displayUrl && !/\.(mp4|webm|mov|avi)(\?|$)/i.test(displayUrl);
+
+      if (!displayUrl) {
         fabricObj = createPlaceholder();
+      } else if (isStepOutputPreview) {
+        try {
+          const imgObj = await createFabricImage(displayUrl, {
+            left: layerX * cw,
+            top: layerY * ch,
+            scaleX: 1,
+            scaleY: 1,
+          });
+          const ow = imgObj.width || 100;
+          const oh = imgObj.height || 100;
+          applyFit(imgObj, ow, oh, layerW * cw, layerH * ch, 'cover');
+          fabricObj = imgObj;
+        } catch {
+          fabricObj = createPlaceholder();
+        }
       } else if (type === 'video') {
         try {
-          const { fabricObj: obj, videoEl } = await createFabricVideo(source.url, {
+          const { fabricObj: obj, videoEl } = await createFabricVideo(displayUrl, {
             left: layerX * cw,
             top: layerY * ch,
             scaleX: 1,
@@ -233,10 +286,10 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
           applyFit(obj, vw, vh, layerW * cw, layerH * ch, 'cover');
           fabricObj = obj;
           videoElementsRef.current.set(id, videoEl);
-          if (isPlayingRef.current) videoEl.play();
+          if (isPlayingRef.current) videoEl.play().catch(() => {});
         } catch {
           try {
-            const imgObj = await createFabricImage(source.url, {
+            const imgObj = await createFabricImage(displayUrl, {
               left: layerX * cw,
               top: layerY * ch,
               scaleX: 1,
@@ -252,7 +305,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
         }
       } else {
         try {
-          const imgObj = await createFabricImage(source.url, {
+          const imgObj = await createFabricImage(displayUrl, {
             left: layerX * cw,
             top: layerY * ch,
             scaleX: 1,
@@ -435,7 +488,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
   }, []);
 
   const playAll = useCallback(() => {
-    videoElementsRef.current.forEach((v) => v.play());
+    videoElementsRef.current.forEach((v) => v.play().catch(() => {}));
     setIsPlaying(true);
   }, []);
 

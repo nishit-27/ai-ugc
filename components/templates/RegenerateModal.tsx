@@ -182,6 +182,7 @@ export default function RegenerateModal({
           frameImageUrl: selectedFrameUrl,
           resolution: videoGenConfig?.firstFrameResolution || '1K',
           modelId: job.modelId || modelInfo?.modelId || null,
+          provider: videoGenConfig?.firstFrameProvider || 'gemini',
         }),
       });
       const data = await res.json();

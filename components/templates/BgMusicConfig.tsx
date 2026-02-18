@@ -10,6 +10,7 @@ const stepMeta: Record<string, { icon: typeof Video; label: string }> = {
   'video-generation':       { icon: Video,  label: 'Video Generation' },
   'batch-video-generation': { icon: Layers, label: 'Batch Video Gen' },
   'attach-video':           { icon: Film,   label: 'Attach Video' },
+  'compose':                { icon: Layers, label: 'Compose' },
 };
 
 function formatDuration(sec: number): string {
@@ -44,7 +45,7 @@ export default function BgMusicConfig({
   const [musicTab, setMusicTab] = useState<MusicTab>('library');
 
   const targetSteps = steps.filter(
-    (s) => s.id !== currentStepId && (s.type === 'video-generation' || s.type === 'batch-video-generation' || s.type === 'attach-video'),
+    (s) => s.id !== currentStepId && (s.type === 'video-generation' || s.type === 'batch-video-generation' || s.type === 'attach-video' || s.type === 'compose'),
   );
 
   const selectedIds = config.applyToSteps ?? [];

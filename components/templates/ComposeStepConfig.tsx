@@ -9,7 +9,7 @@ import ComposeLayerPanel from '@/components/compose/ComposeLayerPanel';
 import ComposeLayerConfig from '@/components/compose/ComposeLayerConfig';
 import ComposePresetPicker from '@/components/compose/ComposePresetPicker';
 import { useComposeCanvas } from '@/hooks/useComposeCanvas';
-import type { ComposeConfig, MiniAppStep, LayerSource, VideoGenConfig as VGC, BatchVideoGenConfig as BVGC } from '@/types';
+import type { ComposeConfig, MiniAppStep, LayerSource, VideoGenConfig as VGC, BatchVideoGenConfig as BVGC, BatchImageEntry } from '@/types';
 import type { MasterModel } from './NodeConfigPanel';
 
 type ComposeStepConfigProps = {
@@ -54,27 +54,69 @@ export default function ComposeStepConfig({
     const prevSteps = steps.slice(0, currentIdx).filter((s) => s.enabled);
     const videoGenSteps = prevSteps.filter((s) => s.type === 'video-generation' || s.type === 'batch-video-generation');
 
-    const result: { stepId: string; type: string; label: string; previewUrl?: string; modelRefs?: { modelId: string; modelName: string; imageUrl: string }[] }[] = [];
+    type PipelineStepEntry = {
+      stepId: string;
+      type: string;
+      label: string;
+      previewUrl?: string;
+      modelRefs?: { modelId: string; modelName: string; imageUrl: string }[];
+      batchImages?: { imageUrl: string; filename?: string; imageId?: string }[];
+    };
+
+    const result: PipelineStepEntry[] = [];
 
     for (const s of videoGenSteps) {
-      const label = s.type === 'video-generation' ? 'Video Gen Output' : 'Batch Video Gen Output';
       const cfg = s.config as VGC | BVGC;
-      const previewUrl = (cfg as VGC).imageUrl || undefined;
 
-      if (masterModels && masterModels.length > 0) {
-        result.push({
-          stepId: s.id,
-          type: s.type,
-          label,
-          previewUrl,
-          modelRefs: masterModels.map((m) => ({
-            modelId: m.modelId,
-            modelName: m.modelName,
-            imageUrl: m.primaryImageUrl,
-          })),
-        });
+      if (s.type === 'batch-video-generation') {
+        const batchCfg = cfg as BVGC;
+        const batchImages = (batchCfg.images || []).map((img: BatchImageEntry) => ({
+          imageUrl: img.imageUrl || '',
+          filename: img.filename,
+          imageId: img.imageId,
+        }));
+
+        if (masterModels && masterModels.length > 0) {
+          result.push({
+            stepId: s.id,
+            type: s.type,
+            label: 'Batch Video Gen Output',
+            previewUrl: batchImages[0]?.imageUrl || masterModels[0]?.primaryImageUrl,
+            modelRefs: masterModels.map((m) => ({
+              modelId: m.modelId,
+              modelName: m.modelName,
+              imageUrl: m.primaryImageUrl,
+            })),
+            batchImages,
+          });
+        } else {
+          result.push({
+            stepId: s.id,
+            type: s.type,
+            label: `Batch Video Gen (${batchImages.length} video${batchImages.length !== 1 ? 's' : ''})`,
+            previewUrl: batchImages[0]?.imageUrl,
+            batchImages,
+          });
+        }
       } else {
-        result.push({ stepId: s.id, type: s.type, label, previewUrl });
+        const vgCfg = cfg as VGC;
+        const previewUrl = vgCfg.imageUrl || undefined;
+
+        if (masterModels && masterModels.length > 0) {
+          result.push({
+            stepId: s.id,
+            type: s.type,
+            label: 'Video Gen Output',
+            previewUrl: previewUrl || masterModels[0]?.primaryImageUrl,
+            modelRefs: masterModels.map((m) => ({
+              modelId: m.modelId,
+              modelName: m.modelName,
+              imageUrl: m.primaryImageUrl,
+            })),
+          });
+        } else {
+          result.push({ stepId: s.id, type: s.type, label: 'Video Gen Output', previewUrl });
+        }
       }
     }
 

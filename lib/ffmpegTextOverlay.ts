@@ -459,7 +459,7 @@ export async function addTextOverlay(
       '-map', '0:a?',
       '-c:a', 'copy',
       outputPath,
-    ]);
+    ], { maxBuffer: 50 * 1024 * 1024 });
   } finally {
     try { fs.unlinkSync(overlayPng); } catch {}
   }

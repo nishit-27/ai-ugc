@@ -173,11 +173,12 @@ export default function VideoGenSingleFirstFrameCard({
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Model</label>
                   <select
-                    value="nano-banana"
-                    disabled
-                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] opacity-70"
+                    value={config.firstFrameProvider || 'gemini'}
+                    onChange={(e) => onChange({ ...config, firstFrameProvider: e.target.value as 'gemini' | 'fal' })}
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
                   >
-                    <option value="nano-banana">Nano Banana Pro</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="fal">FAL (Nano Banana)</option>
                   </select>
                 </div>
                 <div>

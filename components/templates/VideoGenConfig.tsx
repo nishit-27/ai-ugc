@@ -201,6 +201,7 @@ export default function VideoGenConfig({
           frameImageUrl: config.extractedFrameUrl,
           resolution: config.firstFrameResolution || '1K',
           modelId: config.modelId || null,
+          provider: config.firstFrameProvider || 'gemini',
         }),
       );
     } catch (error: unknown) {
@@ -276,6 +277,7 @@ export default function VideoGenConfig({
         frameImageUrl: config.extractedFrameUrl,
         resolution: config.firstFrameResolution || '1K',
         modelId,
+        provider: config.firstFrameProvider || 'gemini',
       });
       setMasterPerModelResults((prev) => ({ ...prev, [modelId]: options }));
       return options;

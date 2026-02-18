@@ -39,8 +39,14 @@ export function composeMedia(
     const filePath = layerPaths.get(layer.id);
     if (!filePath) continue;
     if (layer.type === 'video') {
-      const dur = probeDuration(filePath);
-      if (dur > maxDuration) maxDuration = dur;
+      const fullDur = probeDuration(filePath);
+      let effectiveDur = fullDur;
+      if (layer.trim) {
+        const start = layer.trim.startSec || 0;
+        const end = layer.trim.endSec || fullDur;
+        effectiveDur = Math.max(0, (end > start ? end - start : fullDur - start));
+      }
+      if (effectiveDur > maxDuration) maxDuration = effectiveDur;
     }
   }
 
@@ -64,6 +70,10 @@ export function composeMedia(
     } else {
       if (layer.trim?.startSec) {
         inputs.push('-ss', String(layer.trim.startSec));
+      }
+      if (layer.trim?.endSec && layer.trim.endSec > (layer.trim?.startSec || 0)) {
+        const trimDuration = layer.trim.endSec - (layer.trim.startSec || 0);
+        inputs.push('-t', String(trimDuration));
       }
       inputs.push('-i', filePath);
     }
@@ -157,5 +167,5 @@ export function composeMedia(
     outputPath,
   ];
 
-  execFileSync(FFMPEG, args, { timeout: 300000 });
+  execFileSync(FFMPEG, args, { timeout: 300000, maxBuffer: 50 * 1024 * 1024 });
 }

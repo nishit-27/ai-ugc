@@ -76,7 +76,7 @@ export function mixAudio(
       '-filter_complex', `${audioFilter};[0:a][a1]amix=inputs=2:duration=first`,
       '-c:v', 'copy',
       outputPath,
-    ]);
+    ], { maxBuffer: 50 * 1024 * 1024 });
   } else {
     // No existing audio — just use the music track
     execFileSync(FFMPEG, [
@@ -89,7 +89,7 @@ export function mixAudio(
       '-c:v', 'copy',
       '-shortest',
       outputPath,
-    ]);
+    ], { maxBuffer: 50 * 1024 * 1024 });
   }
 }
 
@@ -169,5 +169,5 @@ export function concatVideos(videoPaths: string[], outputPath: string): void {
     '-c:a', 'aac',
     '-shortest',
     outputPath,
-  ]);
+  ], { maxBuffer: 50 * 1024 * 1024 });
 }
