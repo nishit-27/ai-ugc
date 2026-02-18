@@ -19,7 +19,7 @@ type PipelineStepSource = {
   type: string;
   label: string;
   previewUrl?: string;
-  modelRefs?: { modelId: string; modelName: string; imageUrl: string }[];
+  modelRefs?: { modelId: string; modelName: string; imageUrl: string; firstFrameUrl?: string }[];
   batchImages?: { imageUrl: string; filename?: string; imageId?: string }[];
 };
 
@@ -396,34 +396,59 @@ export default function ComposeAssetPanel({
                   </div>
                 )}
 
-                {/* Master mode: model references */}
+                {/* Master mode: model references — Video + First Frame per model */}
                 {ps.modelRefs && ps.modelRefs.length > 0 && (
-                  <div className="ml-1 pl-2 border-l-2 border-[var(--primary)]/20">
-                    <div className="text-[10px] font-medium text-[var(--text-muted)] mb-1">
+                  <div className="ml-1 pl-2 border-l-2 border-[var(--primary)]/20 space-y-2">
+                    <div className="text-[10px] font-medium text-[var(--text-muted)]">
                       {ps.modelRefs.length} model{ps.modelRefs.length !== 1 ? 's' : ''} — same layout for all
                     </div>
-                    <div className="grid grid-cols-3 gap-1">
-                      {ps.modelRefs.map((ref) => (
-                        <button
-                          key={ref.modelId}
-                          onClick={() => onAddLayer(
-                            { type: 'step-output', url: ref.imageUrl, stepId: ps.stepId, modelId: ref.modelId, label: ref.modelName },
-                            'video',
-                          )}
-                          className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
-                          title={ref.modelName}
-                        >
-                          <img
-                            src={ref.imageUrl}
-                            alt={ref.modelName}
-                            className="aspect-square w-full object-cover"
-                                                     />
-                          <div className="absolute inset-x-0 bottom-0 bg-black/60 px-0.5 py-0.5">
-                            <span className="block truncate text-[8px] text-white leading-tight">{ref.modelName}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+                    {ps.modelRefs.map((ref) => (
+                      <div key={ref.modelId} className="space-y-1">
+                        <div className="text-[10px] font-medium text-[var(--text)] truncate">{ref.modelName}</div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {/* Video layer */}
+                          <button
+                            onClick={() => onAddLayer(
+                              { type: 'step-output', url: ref.firstFrameUrl || ref.imageUrl, stepId: ps.stepId, modelId: ref.modelId, label: `${ref.modelName} Video` },
+                              'video',
+                            )}
+                            className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
+                            title={`${ref.modelName} — Video`}
+                          >
+                            <img
+                              src={ref.firstFrameUrl || ref.imageUrl}
+                              alt={`${ref.modelName} video`}
+                              className="aspect-[9/16] w-full object-cover"
+                            />
+                            <div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5">
+                              <span className="flex items-center gap-0.5 text-[8px] text-white leading-tight">
+                                <Film className="h-2 w-2 shrink-0" /> Video
+                              </span>
+                            </div>
+                          </button>
+                          {/* First Frame image layer */}
+                          <button
+                            onClick={() => onAddLayer(
+                              { type: 'step-output', url: ref.firstFrameUrl || ref.imageUrl, stepId: ps.stepId, modelId: ref.modelId, label: `${ref.modelName} First Frame` },
+                              'image',
+                            )}
+                            className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
+                            title={`${ref.modelName} — First Frame`}
+                          >
+                            <img
+                              src={ref.firstFrameUrl || ref.imageUrl}
+                              alt={`${ref.modelName} first frame`}
+                              className="aspect-[9/16] w-full object-cover"
+                            />
+                            <div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5">
+                              <span className="flex items-center gap-0.5 text-[8px] text-white leading-tight">
+                                <ImageIcon className="h-2 w-2 shrink-0" /> First Frame
+                              </span>
+                            </div>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

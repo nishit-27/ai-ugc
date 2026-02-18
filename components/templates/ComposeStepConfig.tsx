@@ -59,7 +59,7 @@ export default function ComposeStepConfig({
       type: string;
       label: string;
       previewUrl?: string;
-      modelRefs?: { modelId: string; modelName: string; imageUrl: string }[];
+      modelRefs?: { modelId: string; modelName: string; imageUrl: string; firstFrameUrl?: string }[];
       batchImages?: { imageUrl: string; filename?: string; imageId?: string }[];
     };
 
@@ -77,6 +77,7 @@ export default function ComposeStepConfig({
         }));
 
         if (masterModels && masterModels.length > 0) {
+          const batchVgCfg = cfg as BVGC;
           result.push({
             stepId: s.id,
             type: s.type,
@@ -86,6 +87,7 @@ export default function ComposeStepConfig({
               modelId: m.modelId,
               modelName: m.modelName,
               imageUrl: m.primaryImageUrl,
+              firstFrameUrl: (batchVgCfg as unknown as VGC).masterFirstFrames?.[m.modelId],
             })),
             batchImages,
           });
@@ -112,6 +114,7 @@ export default function ComposeStepConfig({
               modelId: m.modelId,
               modelName: m.modelName,
               imageUrl: m.primaryImageUrl,
+              firstFrameUrl: vgCfg.masterFirstFrames?.[m.modelId],
             })),
           });
         } else {
