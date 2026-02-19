@@ -1,7 +1,35 @@
 import { useEffect } from 'react';
 import type { CachedStepState, FirstFrameInputMode, FirstFrameOption, ImageSource, ExtractedFrame } from './types';
 
-export const videoGenStepCache = new Map<string, CachedStepState>();
+const STORAGE_KEY = 'ai-ugc-videogen-step-cache';
+
+// Hydrate in-memory cache from sessionStorage on module load
+function hydrateFromStorage(): Map<string, CachedStepState> {
+  const map = new Map<string, CachedStepState>();
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, CachedStepState>;
+      for (const [key, value] of Object.entries(parsed)) {
+        map.set(key, value);
+      }
+    }
+  } catch { /* ignore parse errors */ }
+  return map;
+}
+
+function persistToStorage(map: Map<string, CachedStepState>) {
+  try {
+    const obj: Record<string, CachedStepState> = {};
+    for (const [key, value] of map) {
+      obj[key] = value;
+    }
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+  } catch { /* storage full or unavailable */ }
+}
+
+export const videoGenStepCache: Map<string, CachedStepState> =
+  typeof window !== 'undefined' ? hydrateFromStorage() : new Map();
 
 type Params = {
   stepId?: string;
@@ -36,7 +64,7 @@ export function useVideoGenStepCache({
 }: Params) {
   useEffect(() => {
     if (!stepId) return;
-    videoGenStepCache.set(stepId, {
+    const state: CachedStepState = {
       extractedFrames,
       firstFrameOptions,
       dismissedOptions: Array.from(dismissedOptions),
@@ -49,7 +77,9 @@ export function useVideoGenStepCache({
       selectedFirstFrameDisplayUrl,
       masterPerModelResults,
       masterAutoExtracted,
-    });
+    };
+    videoGenStepCache.set(stepId, state);
+    persistToStorage(videoGenStepCache);
   }, [
     stepId,
     extractedFrames,
