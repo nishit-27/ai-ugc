@@ -31,8 +31,8 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!config.LATE_API_KEY) {
-    return NextResponse.json({ error: 'LATE_API_KEY not configured' }, { status: 500 });
+  if (!config.LATE_API_KEYS[0]) {
+    return NextResponse.json({ error: 'LATE_API_KEYS not configured' }, { status: 500 });
   }
 
   try {

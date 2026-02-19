@@ -40,6 +40,8 @@ export type Post = {
   publishedAt?: string;
   mediaItems?: { type?: string; url?: string; thumbnailUrl?: string }[];
   platforms?: PostPlatform[];
+  apiKeyIndex?: number;
+  accountLabel?: string;
 };
 
 export type Profile = {
@@ -47,6 +49,8 @@ export type Profile = {
   name: string;
   description?: string;
   color?: string;
+  apiKeyIndex?: number;
+  accountLabel?: string;
 };
 
 export type Account = {
@@ -57,6 +61,8 @@ export type Account = {
   profilePicture?: string;
   createdAt?: string;
   profileId?: { _id: string } | string;
+  apiKeyIndex?: number;
+  accountLabel?: string;
 };
 
 export type Model = {
@@ -329,6 +335,7 @@ export type ModelAccountMapping = {
   modelId: string;
   lateAccountId: string;
   platform: string;
+  apiKeyIndex?: number;
   createdAt: string;
 };
 

@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/useToast';
 import Modal from '@/components/ui/Modal';
 import Spinner from '@/components/ui/Spinner';
 import { getProfileInitials, getProfileAvatarClassFromProfile, getProfileAvatarClass } from './profileAvatar';
+import GlBadge from '@/components/ui/GlBadge';
 
 export default function EditProfileModal({
   open,
@@ -69,8 +70,11 @@ export default function EditProfileModal({
           >
             {getProfileInitials(form.name || profile?.name || 'P')}
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{form.name || profile?.name || 'Profile'}</p>
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+              {form.name || profile?.name || 'Profile'}
+              <GlBadge index={profile?.apiKeyIndex} />
+            </p>
             <p className="truncate text-xs text-[var(--text-muted)]">{form.description || 'Update name or description'}</p>
           </div>
         </div>

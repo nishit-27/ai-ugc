@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import { initDatabase, getPipelineBatch, getTemplateJob, getTemplateJobsByBatchId, updateTemplateJobPostStatus, getModelAccountMappings, createPost, getPostsByJobIds, acquireTemplateJobPostLock, releaseTemplateJobPostLock, beginPostIdempotency, completePostIdempotency, clearPostIdempotency } from '@/lib/db';
 import { lateApiRequest, LateApiError } from '@/lib/lateApi';
+import { getApiKeyByIndex } from '@/lib/lateAccountPool';
 import { downloadToBuffer } from '@/lib/storage';
 import { config } from '@/lib/config';
 import path from 'path';
@@ -11,7 +12,6 @@ import { auth } from '@/lib/auth';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-// In-flight lock: prevents concurrent posting of the same batch
 const inflightBatches = new Map<string, Set<string>>();
 
 type PresignResponse = {
@@ -60,16 +60,8 @@ export async function POST(
   { params }: { params: Promise<{ batchId: string }> }
 ) {
   const { batchId } = await params;
-  const requestId = `master-post-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const session = await auth();
   const createdBy = session?.user?.name?.split(' ')[0] || null;
-
-  const log = (stage: string, ...args: unknown[]) => {
-    console.log(`[Master Post][${requestId}][${stage}]`, ...args);
-  };
-  const logError = (stage: string, ...args: unknown[]) => {
-    console.error(`[Master Post][${requestId}][${stage}]`, ...args);
-  };
 
   try {
     await initDatabase();
@@ -80,8 +72,6 @@ export async function POST(
     if (!jobIds || !Array.isArray(jobIds) || jobIds.length === 0) {
       return NextResponse.json({ error: 'jobIds array is required' }, { status: 400 });
     }
-
-    log('START', `Posting ${jobIds.length} jobs from batch ${batchId}`);
 
     const batch = await getPipelineBatch(batchId);
     if (!batch) {
@@ -96,8 +86,8 @@ export async function POST(
       return NextResponse.json({ error: 'Master config not found on batch' }, { status: 400 });
     }
 
-    if (!config.LATE_API_KEY) {
-      return NextResponse.json({ error: 'LATE_API_KEY not configured' }, { status: 500 });
+    if (!config.LATE_API_KEYS.length) {
+      return NextResponse.json({ error: 'LATE_API_KEYS not configured' }, { status: 500 });
     }
 
     const allBatchJobs = await getTemplateJobsByBatchId(batchId);
@@ -110,7 +100,6 @@ export async function POST(
 
     const results: PostResult[] = [];
 
-    // Get or create in-flight set for this batch
     if (!inflightBatches.has(batchId)) {
       inflightBatches.set(batchId, new Set());
     }
@@ -120,25 +109,19 @@ export async function POST(
       let hasDbLock = false;
       let jobIdempotencyKey: string | null = null;
       let jobIdempotencyAcquired = false;
-      let createdLatePostId: string | null = null;
+      const createdLatePostIds: string[] = [];
       try {
-        // Skip if another request is already posting this job
         if (inflightJobs.has(jobId)) {
-          log('JOB', `Job ${jobId}: already being posted by another request, skipping`);
           results.push({ jobId, status: 'skipped', error: 'Already being posted' });
           continue;
         }
         inflightJobs.add(jobId);
 
-        // Cross-instance lock: prevents duplicate posting when requests hit different servers.
         hasDbLock = await acquireTemplateJobPostLock(jobId);
         if (!hasDbLock) {
-          log('JOB', `Job ${jobId}: DB lock already held, skipping duplicate request`);
           results.push({ jobId, status: 'skipped', error: 'Already being posted' });
           continue;
         }
-
-        log('JOB', `Processing job ${jobId}`);
 
         const job = await getTemplateJob(jobId);
         if (!job) {
@@ -152,29 +135,18 @@ export async function POST(
         }
 
         if (job.postStatus === 'posted' && !force) {
-          log('JOB', `Job ${jobId}: already posted, skipping`);
           results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Already posted' });
           continue;
         }
 
         if (!force && job.modelId && postedModelIds.has(job.modelId)) {
-          log('JOB', `Job ${jobId}: another job for model ${job.modelId} already posted in this batch, skipping`);
           await updateTemplateJobPostStatus(jobId, 'posted');
           results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Model already posted in this batch' });
           continue;
         }
 
         const existingPosts = await getPostsByJobIds([jobId]);
-        if (force) {
-          const succeededAccounts = new Set(
-            existingPosts
-              .filter((p: { status: string }) => p.status === 'published' || p.status === 'scheduled' || p.status === 'publishing')
-              .map((p: { lateAccountId: string }) => p.lateAccountId)
-          );
-          if (succeededAccounts.size > 0) {
-            log('REPOST', `Job ${jobId}: ${succeededAccounts.size} platform(s) already succeeded, filtering them out`);
-          }
-        } else {
+        if (!force) {
           const hasAnyPost = existingPosts.some((p: { status: string }) =>
             p.status === 'published' ||
             p.status === 'scheduled' ||
@@ -184,7 +156,6 @@ export async function POST(
             p.status === 'failed'
           );
           if (hasAnyPost) {
-            log('JOB', `Job ${jobId}: posts already exist, skipping`);
             await updateTemplateJobPostStatus(jobId, 'posted');
             results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Already posted' });
             continue;
@@ -192,30 +163,34 @@ export async function POST(
         }
 
         const modelConfig = masterConfig.models.find((m) => m.modelId === job.modelId);
-        const accountMappings: { lateAccountId: string; platform: string }[] = await getModelAccountMappings(job.modelId!);
+        const accountMappings: { lateAccountId: string; platform: string; apiKeyIndex: number }[] = await getModelAccountMappings(job.modelId!);
 
-        let platformTargets: { accountId: string; platform: string }[];
+        let platformTargets: { accountId: string; platform: string; apiKeyIndex: number }[];
 
         if (modelConfig?.accountIds && modelConfig.accountIds.length > 0) {
-          const accountPlatformMap = new Map<string, string>();
+          const accountInfoMap = new Map<string, { platform: string; apiKeyIndex: number }>();
           for (const mapping of accountMappings) {
-            accountPlatformMap.set(mapping.lateAccountId, mapping.platform);
+            accountInfoMap.set(mapping.lateAccountId, { platform: mapping.platform, apiKeyIndex: mapping.apiKeyIndex ?? 0 });
           }
           platformTargets = modelConfig.accountIds
-            .map((accountId) => ({
-              accountId,
-              platform: accountPlatformMap.get(accountId) || 'tiktok',
-            }))
+            .map((accountId) => {
+              const info = accountInfoMap.get(accountId);
+              return {
+                accountId,
+                platform: info?.platform || 'tiktok',
+                apiKeyIndex: info?.apiKeyIndex ?? 0,
+              };
+            })
             .filter((t) => t.accountId);
         } else {
           platformTargets = accountMappings.map((m) => ({
             accountId: m.lateAccountId,
             platform: m.platform,
+            apiKeyIndex: m.apiKeyIndex ?? 0,
           }));
         }
 
         if (platformTargets.length === 0) {
-          // Still mark as posted so user's approval is recorded even without social accounts
           await updateTemplateJobPostStatus(jobId, 'posted');
           results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'No social accounts linked to this model. Go to /models to link accounts.' });
           continue;
@@ -234,11 +209,9 @@ export async function POST(
           );
           platformTargets = platformTargets.filter((t) => !succeededAccounts.has(t.accountId));
           if (platformTargets.length === 0) {
-            log('JOB', `Job ${jobId}: all platforms already succeeded`);
             results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'All platforms already succeeded' });
             continue;
           }
-          log('REPOST', `Job ${jobId}: retrying ${platformTargets.length} failed platform(s)`);
         } else {
           const normalizedMode = effectivePublishMode || 'now';
           const normalizedScheduledFor = normalizedMode === 'schedule' ? (effectiveScheduledFor || null) : null;
@@ -270,16 +243,12 @@ export async function POST(
           });
 
           if (idemState.state === 'processing') {
-            log('DEDUPE', `Job ${jobId}: suppressing duplicate request (idempotency processing lock)`);
             results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Already being posted' });
             continue;
           }
 
           if (idemState.state === 'completed') {
-            log('DEDUPE', `Job ${jobId}: suppressing duplicate request (idempotency completed)`);
-            try {
-              await updateTemplateJobPostStatus(jobId, 'posted');
-            } catch {}
+            try { await updateTemplateJobPostStatus(jobId, 'posted'); } catch {}
             results.push({
               jobId,
               modelId: job.modelId,
@@ -291,7 +260,6 @@ export async function POST(
           }
 
           if (idemState.state === 'mismatch') {
-            log('DEDUPE', `Job ${jobId}: suppressing duplicate request (idempotency mismatch)`);
             results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'Already posted' });
             continue;
           }
@@ -299,16 +267,15 @@ export async function POST(
           jobIdempotencyAcquired = true;
         }
 
-        log('PLATFORMS', `Job ${jobId}: posting to ${platformTargets.length} accounts`, platformTargets);
+        // Group platform targets by apiKeyIndex
+        const targetsByKey = new Map<number, typeof platformTargets>();
+        for (const target of platformTargets) {
+          const list = targetsByKey.get(target.apiKeyIndex) || [];
+          list.push(target);
+          targetsByKey.set(target.apiKeyIndex, list);
+        }
 
-        const filename = path.basename(job.outputUrl.split('?')[0]);
-        const presignData = await lateApiRequest<PresignResponse>('/media/presign', {
-          method: 'POST',
-          body: JSON.stringify({ filename, contentType: 'video/mp4' }),
-        });
-
-        log('PRESIGN', `Job ${jobId}: got presigned URL`, { publicUrl: presignData.publicUrl });
-
+        // Download video once
         let fileBuffer: Buffer;
         if (job.outputUrl.startsWith('https://storage.googleapis.com')) {
           fileBuffer = await downloadToBuffer(job.outputUrl);
@@ -321,191 +288,169 @@ export async function POST(
           fileBuffer = Buffer.from(arrayBuffer);
         }
 
-        const fileSizeMB = (fileBuffer.length / (1024 * 1024)).toFixed(2);
-        log('DOWNLOAD', `Job ${jobId}: downloaded ${fileSizeMB}MB`);
+        // Create a separate Late post per API key group
+        for (const [keyIndex, groupTargets] of targetsByKey) {
+          const apiKey = getApiKeyByIndex(keyIndex);
+          const filename = path.basename(job.outputUrl.split('?')[0]);
 
-        const uploadController = new AbortController();
-        const uploadTimeout = setTimeout(() => uploadController.abort(), 120000);
-
-        try {
-          const uploadResponse = await fetch(presignData.uploadUrl, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'video/mp4',
-              'Content-Length': String(fileBuffer.length),
-            },
-            body: new Uint8Array(fileBuffer),
-            signal: uploadController.signal,
+          const presignData = await lateApiRequest<PresignResponse>('/media/presign', {
+            method: 'POST',
+            body: JSON.stringify({ filename, contentType: 'video/mp4' }),
+            apiKey,
           });
 
-          clearTimeout(uploadTimeout);
+          const uploadController = new AbortController();
+          const uploadTimeout = setTimeout(() => uploadController.abort(), 120000);
 
-          if (!uploadResponse.ok) {
-            const errorText = await uploadResponse.text();
-            throw new Error(`File upload to Late storage failed: ${uploadResponse.status} - ${errorText}`);
+          try {
+            const uploadResponse = await fetch(presignData.uploadUrl, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'video/mp4',
+                'Content-Length': String(fileBuffer.length),
+              },
+              body: new Uint8Array(fileBuffer),
+              signal: uploadController.signal,
+            });
+            clearTimeout(uploadTimeout);
+            if (!uploadResponse.ok) {
+              const errorText = await uploadResponse.text();
+              throw new Error(`File upload to Late storage failed: ${uploadResponse.status} - ${errorText}`);
+            }
+          } catch (uploadErr) {
+            clearTimeout(uploadTimeout);
+            if (uploadErr instanceof Error && uploadErr.name === 'AbortError') {
+              throw new Error('Video upload timed out.');
+            }
+            throw uploadErr;
           }
 
-          log('UPLOAD', `Job ${jobId}: upload complete`);
-        } catch (uploadErr) {
-          clearTimeout(uploadTimeout);
-          if (uploadErr instanceof Error && uploadErr.name === 'AbortError') {
-            throw new Error('Video upload timed out.');
-          }
-          throw uploadErr;
-        }
+          await new Promise((r) => setTimeout(r, 2000));
 
-        await new Promise((r) => setTimeout(r, 2000));
-        const latePlatforms = platformTargets.map((t) => {
-          if (t.platform === 'tiktok') {
-            return {
-              platform: 'tiktok',
-              accountId: t.accountId,
-              platformSpecificData: {
-                privacyLevel: 'PUBLIC_TO_EVERYONE',
-                allowComment: true,
-                allowDuet: true,
-                allowStitch: true,
-                contentPreviewConfirmed: true,
-                expressConsentGiven: true,
-                videoMadeWithAi: false,
-                videoCoverTimestampMs: 1000,
-              },
-            };
-          } else if (t.platform === 'instagram') {
-            return {
-              platform: 'instagram',
-              accountId: t.accountId,
-              platformSpecificData: {
-                shareToFeed: true,
-                thumbOffset: 0,
-              },
-            };
-          } else if (t.platform === 'youtube') {
-            return {
-              platform: 'youtube',
-              accountId: t.accountId,
-              platformSpecificData: {
-                title: (caption || 'Untitled Video').split('\n')[0].slice(0, 100),
-                visibility: 'public',
-                madeForKids: false,
-                categoryId: '22',
-              },
-            };
-          }
-          return {
-            platform: t.platform,
-            accountId: t.accountId,
+          const latePlatforms = groupTargets.map((t) => {
+            if (t.platform === 'tiktok') {
+              return {
+                platform: 'tiktok',
+                accountId: t.accountId,
+                platformSpecificData: {
+                  privacyLevel: 'PUBLIC_TO_EVERYONE',
+                  allowComment: true,
+                  allowDuet: true,
+                  allowStitch: true,
+                  contentPreviewConfirmed: true,
+                  expressConsentGiven: true,
+                  videoMadeWithAi: false,
+                  videoCoverTimestampMs: 1000,
+                },
+              };
+            } else if (t.platform === 'instagram') {
+              return {
+                platform: 'instagram',
+                accountId: t.accountId,
+                platformSpecificData: { shareToFeed: true, thumbOffset: 0 },
+              };
+            } else if (t.platform === 'youtube') {
+              return {
+                platform: 'youtube',
+                accountId: t.accountId,
+                platformSpecificData: {
+                  title: (caption || 'Untitled Video').split('\n')[0].slice(0, 100),
+                  visibility: 'public',
+                  madeForKids: false,
+                  categoryId: '22',
+                },
+              };
+            }
+            return { platform: t.platform, accountId: t.accountId };
+          });
+
+          const postBody: Record<string, unknown> = {
+            content: caption,
+            mediaItems: [{ type: 'video', url: presignData.publicUrl }],
+            platforms: latePlatforms,
           };
-        });
 
-        const postBody: Record<string, unknown> = {
-          content: caption,
-          mediaItems: [{ type: 'video', url: presignData.publicUrl }],
-          platforms: latePlatforms,
-        };
-
-        const mode = effectivePublishMode;
-        switch (mode) {
-          case 'now':
-            postBody.publishNow = true;
-            break;
-          case 'schedule':
-            postBody.scheduledFor = effectiveScheduledFor;
-            postBody.timezone = effectiveTimezone || config.defaultTimezone;
-            postBody.publishNow = false;
-            break;
-          case 'queue':
-            postBody.publishNow = false;
-            postBody.addToQueue = true;
-            break;
-          case 'draft':
-            postBody.isDraft = true;
-            postBody.publishNow = false;
-            break;
-        }
-
-        log('POST', `Job ${jobId}: creating Late API post`, { mode, platformCount: latePlatforms.length });
-
-        const postData = await lateApiRequest<CreatePostResponse>('/posts', {
-          method: 'POST',
-          body: JSON.stringify(postBody),
-          timeout: 60000,
-        });
-
-        let latePost = postData.post;
-        const latePostId = latePost._id;
-        createdLatePostId = latePostId;
-        log('POST', `Job ${jobId}: Late post created: ${latePostId}`);
-
-        // Auto-retry failed platforms once
-        const failedPlatforms = latePost.platforms?.filter(p => p.status === 'failed') || [];
-        if (failedPlatforms.length > 0 && failedPlatforms.length < platformTargets.length) {
-          log('RETRY', `Job ${jobId}: ${failedPlatforms.length} platform(s) failed, auto-retrying once`);
-          await new Promise((r) => setTimeout(r, 3000));
-          try {
-            const retryData = await lateApiRequest<CreatePostResponse>(`/posts/${latePostId}/retry`, {
-              method: 'POST',
-              retries: 0,
-            });
-            latePost = retryData.post;
-            log('RETRY', `Job ${jobId}: auto-retry complete`);
-          } catch (retryErr) {
-            log('RETRY', `Job ${jobId}: auto-retry failed, will save as failed for manual retry`);
+          const mode = effectivePublishMode;
+          switch (mode) {
+            case 'now':
+              postBody.publishNow = true;
+              break;
+            case 'schedule':
+              postBody.scheduledFor = effectiveScheduledFor;
+              postBody.timezone = effectiveTimezone || config.defaultTimezone;
+              postBody.publishNow = false;
+              break;
+            case 'queue':
+              postBody.publishNow = false;
+              postBody.addToQueue = true;
+              break;
+            case 'draft':
+              postBody.isDraft = true;
+              postBody.publishNow = false;
+              break;
           }
-        }
 
-        for (const target of platformTargets) {
-          const platformResult = latePost.platforms?.find((p) => {
-            const pAccountId = typeof p.accountId === 'object' ? p.accountId._id : p.accountId;
-            return p.platform === target.platform && pAccountId === target.accountId;
+          const postData = await lateApiRequest<CreatePostResponse>('/posts', {
+            method: 'POST',
+            body: JSON.stringify(postBody),
+            timeout: 60000,
+            apiKey,
           });
 
-          const platformStatus = platformResult?.status || latePost.status;
+          const latePost = postData.post;
+          const latePostId = latePost._id;
+          createdLatePostIds.push(latePostId);
 
-          let dbStatus: string;
-          if (mode === 'draft') {
-            dbStatus = 'draft';
-          } else if (platformStatus === 'published') {
-            dbStatus = 'published';
-          } else if (latePost.status === 'scheduled' || mode === 'schedule') {
-            dbStatus = 'scheduled';
-          } else if (platformStatus === 'failed') {
-            dbStatus = 'failed';
-          } else if (platformStatus === 'partial') {
-            dbStatus = 'partial';
-          } else {
-            dbStatus = mode === 'now' ? 'publishing' : 'pending';
-          }
-
-          try {
-            await createPost({
-              jobId: jobId,
-              accountId: null,
-              lateAccountId: target.accountId,
-              caption,
-              videoUrl: job.outputUrl,
-              platform: target.platform,
-              status: dbStatus,
-              scheduledFor: effectiveScheduledFor || null,
-              latePostId,
-              platformPostUrl: platformResult?.platformPostUrl || null,
-              createdBy,
+          for (const target of groupTargets) {
+            const platformResult = latePost.platforms?.find((p) => {
+              const pAccountId = typeof p.accountId === 'object' ? p.accountId._id : p.accountId;
+              return p.platform === target.platform && pAccountId === target.accountId;
             });
-          } catch (dbError) {
-            logError('DB', `Failed to save post record for ${target.platform}/${target.accountId}:`, (dbError as Error).message);
+
+            const platformStatus = platformResult?.status || latePost.status;
+            let dbStatus: string;
+            if (mode === 'draft') {
+              dbStatus = 'draft';
+            } else if (platformStatus === 'published') {
+              dbStatus = 'published';
+            } else if (latePost.status === 'scheduled' || mode === 'schedule') {
+              dbStatus = 'scheduled';
+            } else if (platformStatus === 'failed') {
+              dbStatus = 'failed';
+            } else if (platformStatus === 'partial') {
+              dbStatus = 'partial';
+            } else {
+              dbStatus = mode === 'now' ? 'publishing' : 'pending';
+            }
+
+            try {
+              await createPost({
+                jobId,
+                accountId: null,
+                lateAccountId: target.accountId,
+                caption,
+                videoUrl: job.outputUrl,
+                platform: target.platform,
+                status: dbStatus,
+                scheduledFor: effectiveScheduledFor || null,
+                latePostId,
+                platformPostUrl: platformResult?.platformPostUrl || null,
+                createdBy,
+                apiKeyIndex: keyIndex,
+              });
+            } catch {
+              // DB save failed, continue
+            }
           }
         }
 
         await updateTemplateJobPostStatus(jobId, 'posted');
-
-        if (job.modelId) {
-          postedModelIds.add(job.modelId);
-        }
+        if (job.modelId) postedModelIds.add(job.modelId);
 
         results.push({
           jobId,
           modelId: job.modelId,
-          latePostId,
+          latePostId: createdLatePostIds[0],
           status: 'posted',
           platforms: platformTargets.map((t) => t.platform),
         });
@@ -513,72 +458,51 @@ export async function POST(
         if (jobIdempotencyAcquired && jobIdempotencyKey) {
           await completePostIdempotency({
             key: jobIdempotencyKey,
-            latePostId,
+            latePostId: createdLatePostIds[0],
             response: {
               jobId,
               modelId: job.modelId,
-              latePostId,
+              latePostId: createdLatePostIds[0],
               status: 'posted',
               platforms: platformTargets.map((t) => t.platform),
             },
           });
         }
-
-        log('JOB', `Job ${jobId}: successfully posted`);
       } catch (jobError) {
         const errorMessage = jobError instanceof LateApiError
           ? `Late API ${jobError.status}: ${jobError.message}`
           : (jobError as Error).message;
 
-        logError('JOB', `Job ${jobId} failed:`, errorMessage);
-
-        results.push({
-          jobId,
-          status: 'failed',
-          error: errorMessage,
-        });
+        results.push({ jobId, status: 'failed', error: errorMessage });
 
         if (jobIdempotencyAcquired && jobIdempotencyKey) {
           try {
-            if (createdLatePostId) {
+            if (createdLatePostIds.length > 0) {
               await completePostIdempotency({
                 key: jobIdempotencyKey,
-                latePostId: createdLatePostId,
-                response: {
-                  jobId,
-                  latePostId: createdLatePostId,
-                  status: 'posted',
-                },
+                latePostId: createdLatePostIds[0],
+                response: { jobId, latePostId: createdLatePostIds[0], status: 'posted' },
               });
             } else {
               await clearPostIdempotency(jobIdempotencyKey);
             }
-          } catch (idemError) {
-            logError('DEDUPE', `Job ${jobId}: failed to finalize idempotency state`, (idemError as Error).message);
+          } catch {
+            // idempotency finalization failed
           }
         }
       } finally {
         if (hasDbLock) {
-          try {
-            await releaseTemplateJobPostLock(jobId);
-          } catch (lockError) {
-            logError('LOCK', `Failed to release DB lock for ${jobId}:`, (lockError as Error).message);
-          }
+          try { await releaseTemplateJobPostLock(jobId); } catch {}
         }
         inflightJobs.delete(jobId);
       }
     }
 
-    // Cleanup batch from in-flight map if no more jobs
-    if (inflightJobs.size === 0) {
-      inflightBatches.delete(batchId);
-    }
+    if (inflightJobs.size === 0) inflightBatches.delete(batchId);
 
     const posted = results.filter((r) => r.status === 'posted').length;
     const skipped = results.filter((r) => r.status === 'skipped').length;
     const failed = results.filter((r) => r.status === 'failed').length;
-
-    log('DONE', `Posted: ${posted}, Skipped: ${skipped}, Failed: ${failed}`);
 
     return NextResponse.json({
       success: posted > 0,
@@ -586,7 +510,6 @@ export async function POST(
       summary: { posted, skipped, failed, total: jobIds.length },
     });
   } catch (error) {
-    logError('FATAL', 'Unhandled error:', (error as Error).message);
     return NextResponse.json(
       { error: (error as Error).message || 'Failed to post videos' },
       { status: 500 }

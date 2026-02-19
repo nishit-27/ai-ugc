@@ -13,7 +13,6 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     const mappings = await getModelAccountMappings(id);
     return NextResponse.json(mappings);
   } catch (err) {
-    console.error('Get model account mappings error:', err);
     return NextResponse.json({ error: 'Failed to fetch account mappings' }, { status: 500 });
   }
 }
@@ -23,13 +22,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { accounts } = body as { accounts: { lateAccountId: string; platform: string }[] };
+    const { accounts } = body as { accounts: { lateAccountId: string; platform: string; apiKeyIndex?: number }[] };
 
     await initDatabase();
     const mappings = await replaceModelAccountMappings(id, accounts);
     return NextResponse.json(mappings);
   } catch (err) {
-    console.error('Replace model account mappings error:', err);
     return NextResponse.json({ error: 'Failed to replace account mappings' }, { status: 500 });
   }
 }

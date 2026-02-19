@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ensureDatabaseReady } from '@/lib/db';
-import { lateApiRequest } from '@/lib/lateApi';
+import { fetchFromAllKeys } from '@/lib/lateAccountPool';
 import { createAnalyticsAccount, getAllAnalyticsAccounts } from '@/lib/db-analytics';
 
 type LateAccount = {
@@ -22,9 +22,14 @@ export async function POST() {
   try {
     await ensureDatabaseReady();
 
-    // Fetch connected accounts from Late API
-    const data = await lateApiRequest<{ accounts?: LateAccount[] }>('/accounts');
-    const lateAccounts = data.accounts || [];
+    // Fetch connected accounts from ALL GetLate API keys
+    const results = await fetchFromAllKeys<{ accounts?: LateAccount[] }>('/accounts');
+    const lateAccounts: LateAccount[] = [];
+    for (const { data } of results) {
+      for (const account of data.accounts || []) {
+        lateAccounts.push(account);
+      }
+    }
 
     // Get existing analytics accounts to avoid duplicates
     const existingAccounts = await getAllAnalyticsAccounts();
@@ -58,7 +63,6 @@ export async function POST() {
       }
 
       try {
-        // Create the analytics account (without syncing — user can click Refresh All)
         await createAnalyticsAccount({
           platform,
           username: cleanUsername,

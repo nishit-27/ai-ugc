@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { lateApiRequest } from '@/lib/lateApi';
+import { fetchFromAllKeys, getAccountLabel } from '@/lib/lateAccountPool';
 import { derivePostStatus, hasPublishedPlatformWithoutUrl, postMatchesFilter } from '@/lib/postStatus';
 import type { Post, PostPlatform } from '@/types';
 
@@ -46,6 +47,7 @@ type LatePost = {
   publishedAt?: string;
   mediaItems?: LateMediaItem[];
   platforms?: LatePlatform[];
+  apiKeyIndex?: number;
 };
 
 function parseLimit(rawLimit: string | null): number {
@@ -119,6 +121,8 @@ function normalizePost(post: LatePost): Post {
       thumbnailUrl: media.thumbnailUrl,
     })),
     platforms,
+    apiKeyIndex: post.apiKeyIndex,
+    accountLabel: post.apiKeyIndex !== undefined ? getAccountLabel(post.apiKeyIndex) : undefined,
   };
 
   return normalized;
@@ -137,15 +141,21 @@ async function hydratePostLinks(posts: LatePost[]): Promise<LatePost[]> {
     const chunk = candidates.slice(i, i + LINK_HYDRATE_CONCURRENCY);
     await Promise.all(
       chunk.map(async (post) => {
+        // Use the same key that fetched this post for hydration
+        const apiKey = post.apiKeyIndex !== undefined ? config.LATE_API_KEYS[post.apiKeyIndex] : undefined;
         try {
           const detailPayload = await lateApiRequest(`/posts/${post._id}`, {
             timeout: 6_000,
             retries: 0,
+            apiKey,
           });
           const detailPost = extractSinglePost(detailPayload);
-          if (detailPost?._id) hydrated.set(detailPost._id, detailPost);
-        } catch (error) {
-          console.warn(`[Late API posts] Link hydration failed for ${post._id}:`, (error as Error).message);
+          if (detailPost?._id) {
+            detailPost.apiKeyIndex = post.apiKeyIndex;
+            hydrated.set(detailPost._id, detailPost);
+          }
+        } catch {
+          // Silently continue if hydration fails
         }
       })
     );
@@ -156,8 +166,8 @@ async function hydratePostLinks(posts: LatePost[]): Promise<LatePost[]> {
 }
 
 export async function GET(request: NextRequest) {
-  if (!config.LATE_API_KEY) {
-    return NextResponse.json({ error: 'LATE_API_KEY not configured' }, { status: 500 });
+  if (!config.LATE_API_KEYS.length) {
+    return NextResponse.json({ error: 'LATE_API_KEYS not configured' }, { status: 500 });
   }
   try {
     const rawStatusFilter = (request.nextUrl.searchParams.get('status') || 'all').toLowerCase();
@@ -185,13 +195,28 @@ export async function GET(request: NextRequest) {
     const loadPromise = (async () => {
       const fetchLimit = statusFilter === 'all' ? requestedLimit : Math.min(requestedLimit * 2, MAX_LIMIT);
 
-      const listPayload = await lateApiRequest(`/posts?limit=${fetchLimit}`, {
+      // Fetch posts from all API keys in parallel
+      const results = await fetchFromAllKeys<{ posts?: LatePost[] }>(`/posts?limit=${fetchLimit}`, {
         timeout: 10_000,
         retries: 1,
       });
 
-      const initialPosts = extractPosts(listPayload);
-      const hydratedPosts = await hydratePostLinks(initialPosts);
+      const allPosts: LatePost[] = [];
+      for (const { apiKeyIndex, data } of results) {
+        for (const post of extractPosts(data)) {
+          post.apiKeyIndex = apiKeyIndex;
+          allPosts.push(post);
+        }
+      }
+
+      // Sort by createdAt descending
+      allPosts.sort((a, b) => {
+        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+
+      const hydratedPosts = await hydratePostLinks(allPosts);
 
       const normalized = hydratedPosts
         .map(normalizePost)
@@ -216,7 +241,6 @@ export async function GET(request: NextRequest) {
       headers: { 'Cache-Control': 'private, max-age=4, stale-while-revalidate=20' },
     });
   } catch (error) {
-    console.error('Late API posts error:', error);
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }

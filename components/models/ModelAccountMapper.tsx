@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { X, Plus, Loader2, ExternalLink, Search } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaFacebook, FaXTwitter, FaLinkedin } from 'react-icons/fa6';
 import type { ModelAccountMapping, Account } from '@/types';
+import GlBadge from '@/components/ui/GlBadge';
 
 const PLATFORM_META: Record<string, { label: string; icon: ReactNode; color: string; bg: string }> = {
   tiktok:    { label: 'TikTok',    icon: <FaTiktok className="h-3.5 w-3.5" />,    color: '#00f2ea', bg: 'bg-[#00f2ea]/10' },
@@ -46,7 +47,7 @@ export default function ModelAccountMapper({
   modelId: string;
   mappings: ModelAccountMapping[];
   allAccounts: Account[];
-  onSave: (accounts: { lateAccountId: string; platform: string }[]) => Promise<void>;
+  onSave: (accounts: { lateAccountId: string; platform: string; apiKeyIndex?: number }[]) => Promise<void>;
   loading?: boolean;
 }) {
   const [showDropdown, setShowDropdown] = useState(false);
@@ -84,8 +85,8 @@ export default function ModelAccountMapper({
     setShowDropdown(false);
     setSearch('');
     const newAccounts = [
-      ...mappings.map((m) => ({ lateAccountId: m.lateAccountId, platform: m.platform })),
-      { lateAccountId: account._id, platform: account.platform },
+      ...mappings.map((m) => ({ lateAccountId: m.lateAccountId, platform: m.platform, apiKeyIndex: m.apiKeyIndex })),
+      { lateAccountId: account._id, platform: account.platform, apiKeyIndex: account.apiKeyIndex },
     ];
     await onSave(newAccounts);
     setIsSaving(false);
@@ -95,7 +96,7 @@ export default function ModelAccountMapper({
     setIsSaving(true);
     const newAccounts = mappings
       .filter((m) => m.lateAccountId !== lateAccountId)
-      .map((m) => ({ lateAccountId: m.lateAccountId, platform: m.platform }));
+      .map((m) => ({ lateAccountId: m.lateAccountId, platform: m.platform, apiKeyIndex: m.apiKeyIndex }));
     await onSave(newAccounts);
     setIsSaving(false);
   };
@@ -130,8 +131,9 @@ export default function ModelAccountMapper({
               >
                 <PlatformIcon platform={mapping.platform} size="md" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">
+                  <div className="flex items-center gap-1.5 truncate text-sm font-medium">
                     {account?.username || account?.displayName || mapping.lateAccountId}
+                    <GlBadge index={account?.apiKeyIndex} />
                   </div>
                   <div className="text-[10px] text-[var(--text-muted)]">{meta?.label || mapping.platform}</div>
                 </div>
@@ -242,7 +244,10 @@ export default function ModelAccountMapper({
                                   </div>
                                 )}
                                 <div className="min-w-0 flex-1">
-                                  <div className="truncate text-xs font-medium text-neutral-900 dark:text-neutral-100">{account.username || account.displayName || account._id}</div>
+                                  <div className="flex items-center gap-1.5 truncate text-xs font-medium text-neutral-900 dark:text-neutral-100">
+                                    {account.username || account.displayName || account._id}
+                                    <GlBadge index={account.apiKeyIndex} />
+                                  </div>
                                 </div>
                               </button>
                             ))}

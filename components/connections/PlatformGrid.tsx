@@ -7,6 +7,7 @@ import { copyToClipboard } from '@/lib/dateUtils';
 import { Link2, Link2Off, Copy, ExternalLink, UserRound } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaFacebook, FaXTwitter, FaLinkedin } from 'react-icons/fa6';
 import Spinner from '@/components/ui/Spinner';
+import GlBadge from '@/components/ui/GlBadge';
 
 const PLATFORMS: { id: string; label: string; icon: ReactNode; color: string }[] = [
   { id: 'tiktok', label: 'TikTok', icon: <FaTiktok className="h-5 w-5" />, color: '#00f2ea' },
@@ -130,7 +131,10 @@ export default function PlatformGrid({
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-semibold">@{account.username || account.displayName || 'unknown'}</p>
+                        <p className="flex items-center gap-1.5 truncate text-xs font-semibold">
+                          @{account.username || account.displayName || 'unknown'}
+                          <GlBadge index={account.apiKeyIndex} />
+                        </p>
                         {account.createdAt && (
                           <p className="text-[10px] text-[var(--text-muted)]">
                             Connected {new Date(account.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
@@ -153,7 +157,7 @@ export default function PlatformGrid({
                         if (!confirm('Disconnect this account?')) return;
                         setIsDisconnecting(account._id);
                         try {
-                          const res = await fetch(`/api/late/accounts/${account._id}`, { method: 'DELETE' });
+                          const res = await fetch(`/api/late/accounts/${account._id}?apiKeyIndex=${account.apiKeyIndex ?? 0}`, { method: 'DELETE' });
                           if (!res.ok) throw new Error('Failed to disconnect');
                           showToast('Disconnected', 'success');
                           await loadConnections();

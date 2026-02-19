@@ -16,6 +16,8 @@ export default function ConnectionsPage() {
   const {
     profiles,
     accounts,
+    apiKeyCount,
+    keyUsage,
     currentProfile,
     setCurrentProfile,
     profileAccounts,
@@ -115,6 +117,8 @@ export default function ConnectionsPage() {
         open={newProfileModal}
         onClose={() => setNewProfileModal(false)}
         onCreated={refresh}
+        apiKeyCount={apiKeyCount}
+        keyUsage={keyUsage}
       />
 
       <EditProfileModal

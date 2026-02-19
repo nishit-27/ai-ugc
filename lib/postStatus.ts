@@ -33,21 +33,25 @@ export function derivePostStatus(post: PostLike): UiPostStatus {
   const hasFailed = platformStatuses.includes('failed');
   const hasActive = platformStatuses.some((status) => ACTIVE_PLATFORM_STATUSES.has(status));
 
-  // Active states must win so retries for partial/failed posts render as publishing.
-  if (hasActive || isActiveStatus(topLevel)) return 'publishing';
+  // When platform-level statuses exist, they are the source of truth.
+  // Only show "publishing" when platforms are actually active — not based on a stale top-level status.
+  if (hasActive) return 'publishing';
 
-  if (hasPublished && hasFailed) return 'partial';
-  if (hasFailed && !hasPublished) return 'failed';
-  if (hasPublished && !hasFailed && !hasActive) return 'published';
+  if (platformStatuses.length > 0) {
+    if (hasPublished && hasFailed) return 'partial';
+    if (hasFailed && !hasPublished) return 'failed';
+    if (hasPublished) return 'published';
+    if (platformStatuses.every((status) => status === 'scheduled')) return 'scheduled';
+  }
 
+  // No platform-level data — fall back to top-level status
+  if (isActiveStatus(topLevel)) return 'publishing';
   if (topLevel === 'scheduled') return 'scheduled';
   if (topLevel === 'draft') return 'draft';
   if (topLevel === 'partial') return 'partial';
   if (topLevel === 'failed') return 'failed';
   if (topLevel === 'published') return 'published';
   if (topLevel === 'cancelled') return 'cancelled';
-
-  if (platformStatuses.length > 0 && platformStatuses.every((status) => status === 'scheduled')) return 'scheduled';
 
   return 'draft';
 }

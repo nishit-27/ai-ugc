@@ -10,11 +10,19 @@ export function getFalWebhookUrl(): string | undefined {
   return `${appUrl}/api/fal-webhook`;
 }
 
+function getLateApiKeys(): string[] {
+  const raw = process.env.LATE_API_KEYS;
+  if (!raw) return [];
+  return raw.split(',').map((k) => k.trim()).filter(Boolean);
+}
+
+const LATE_API_KEYS = getLateApiKeys();
+
 export const config = {
   APP_URL: getAppUrl(),
   FAL_KEY: process.env.FAL_KEY,
   RAPIDAPI_KEY: process.env.RAPIDAPI_KEY,
-  LATE_API_KEY: process.env.LATE_API_KEY,
+  LATE_API_KEYS,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   LATE_API_URL: 'https://getlate.dev/api/v1',

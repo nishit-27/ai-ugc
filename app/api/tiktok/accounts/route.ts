@@ -48,7 +48,7 @@ export async function GET() {
   }
 
   // Sync accounts from Late API and store in our database
-  if (config.LATE_API_KEY) {
+  if (config.LATE_API_KEYS[0]) {
     try {
       const data = (await lateApiRequest<{ accounts?: { _id: string; platform: string; displayName?: string; username?: string; profilePicture?: string }[] }>(
         '/accounts'

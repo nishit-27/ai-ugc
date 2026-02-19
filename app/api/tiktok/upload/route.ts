@@ -96,9 +96,9 @@ export async function POST(request: NextRequest) {
     });
 
     // --- Validation ---
-    if (!config.LATE_API_KEY) {
-      logError('VALIDATE', 'LATE_API_KEY not configured');
-      return NextResponse.json({ error: 'LATE_API_KEY not configured' }, { status: 500 });
+    if (!config.LATE_API_KEYS[0]) {
+      logError('VALIDATE', 'LATE_API_KEYS not configured');
+      return NextResponse.json({ error: 'LATE_API_KEYS not configured' }, { status: 500 });
     }
 
     const finalVideoUrl = videoUrl || videoPath;
@@ -334,7 +334,8 @@ export async function POST(request: NextRequest) {
     const postData = await lateApiRequest<CreatePostResponse>('/posts', {
       method: 'POST',
       body: JSON.stringify(postBody),
-      timeout: 60000, // 60s timeout for post creation
+      timeout: 60000,
+      retries: 0,
     });
 
     const latePost = postData.post;

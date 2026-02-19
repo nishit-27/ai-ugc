@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/useToast';
 import { copyToClipboard } from '@/lib/dateUtils';
 import { ChevronDown, Pencil, Trash2, Copy, Check, UserRound } from 'lucide-react';
 import { getProfileInitials, getProfileAvatarClassFromProfile } from './profileAvatar';
+import GlBadge from '@/components/ui/GlBadge';
 
 function getAccountProfileId(account: Account): string | undefined {
   if (!account?.profileId) return undefined;
@@ -125,7 +126,10 @@ export default function ProfileSelector({
             </div>
           )}
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{currentProfile?.name || 'Select profile'}</p>
+            <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+              {currentProfile?.name || 'Select profile'}
+              <GlBadge index={currentProfile?.apiKeyIndex} />
+            </p>
             <p className="truncate text-xs text-[var(--text-muted)]">{currentProfile?.description || 'No description'}</p>
           </div>
         </div>
@@ -162,7 +166,10 @@ export default function ProfileSelector({
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{profile.name}</p>
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                      {profile.name}
+                      <GlBadge index={profile.apiKeyIndex} />
+                    </p>
                     {profile.description && <p className="truncate text-xs text-[var(--text-muted)]">{profile.description}</p>}
                   </div>
                   {active && <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}

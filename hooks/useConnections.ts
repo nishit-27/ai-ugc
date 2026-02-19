@@ -6,9 +6,13 @@ import { usePageVisibility } from './usePageVisibility';
 
 const REFRESH_INTERVAL = 60_000;
 
+export type KeyUsageInfo = { index: number; count: number; max: number; label: string };
+
 // Module-level cache
 let _profilesCache: Profile[] = [];
 let _accountsCache: Account[] = [];
+let _apiKeyCountCache = 1;
+let _keyUsageCache: KeyUsageInfo[] = [];
 let _cacheTime = 0;
 
 function getProfileIdFromAccount(account: Account): string | undefined {
@@ -21,6 +25,8 @@ export function useConnections() {
   const isPageVisible = usePageVisibility();
   const [profiles, setProfiles] = useState<Profile[]>(_profilesCache);
   const [accounts, setAccounts] = useState<Account[]>(_accountsCache);
+  const [apiKeyCount, setApiKeyCount] = useState(_apiKeyCountCache);
+  const [keyUsage, setKeyUsage] = useState<KeyUsageInfo[]>(_keyUsageCache);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
     _profilesCache.length > 0 ? _profilesCache[0]._id : null,
   );
@@ -47,11 +53,17 @@ export function useConnections() {
       const accountsData = await accountsRes.json();
       const p = profilesData.profiles || [];
       const a = accountsData.accounts || [];
+      const keyCount = profilesData.apiKeyCount ?? 1;
+      const usage: KeyUsageInfo[] = profilesData.keyUsage ?? [];
       _profilesCache = p;
       _accountsCache = a;
+      _apiKeyCountCache = keyCount;
+      _keyUsageCache = usage;
       _cacheTime = Date.now();
       setProfiles(p);
       setAccounts(a);
+      setApiKeyCount(keyCount);
+      setKeyUsage(usage);
       setSelectedProfileId((prev) => {
         if (!p.length) return null;
         if (!prev) return p[0]._id;
@@ -100,6 +112,8 @@ export function useConnections() {
   return {
     profiles,
     accounts,
+    apiKeyCount,
+    keyUsage,
     currentProfile,
     setCurrentProfile,
     profileAccounts,

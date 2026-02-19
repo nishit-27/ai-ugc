@@ -34,6 +34,7 @@ export async function lateApiRequest<T = unknown>(
     headers?: Record<string, string>;
     timeout?: number;
     retries?: number;
+    apiKey?: string;
   } = {}
 ): Promise<T> {
   const url = `${config.LATE_API_URL}${endpoint}`;
@@ -43,10 +44,12 @@ export async function lateApiRequest<T = unknown>(
     headers: customHeaders = {},
     timeout = LATE_API_TIMEOUT,
     retries = MAX_RETRIES,
+    apiKey,
   } = options;
 
-  if (!config.LATE_API_KEY) {
-    throw new LateApiError('LATE_API_KEY is not configured', 0);
+  const effectiveApiKey = apiKey || config.LATE_API_KEYS[0];
+  if (!effectiveApiKey) {
+    throw new LateApiError('LATE_API_KEYS is not configured', 0);
   }
 
   let lastError: Error | null = null;
@@ -54,7 +57,6 @@ export async function lateApiRequest<T = unknown>(
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
       const delay = RETRY_DELAYS[Math.min(attempt - 1, RETRY_DELAYS.length - 1)];
-      console.log(`[Late API] Retry ${attempt}/${retries} after ${delay}ms...`);
       await new Promise((r) => setTimeout(r, delay));
     }
 
@@ -65,7 +67,7 @@ export async function lateApiRequest<T = unknown>(
       const fetchOptions: RequestInit = {
         method,
         headers: {
-          Authorization: `Bearer ${config.LATE_API_KEY}`,
+          Authorization: `Bearer ${effectiveApiKey}`,
           'Content-Type': 'application/json',
           ...customHeaders,
         },
@@ -76,18 +78,10 @@ export async function lateApiRequest<T = unknown>(
         fetchOptions.body = body;
       }
 
-      const startTime = Date.now();
-      console.log(`[Late API] ${method} ${endpoint}${attempt > 0 ? ` (attempt ${attempt + 1})` : ''}`);
       const response = await fetch(url, fetchOptions);
-      const elapsed = Date.now() - startTime;
 
-      // Parse rate limit headers
       const retryAfter = response.headers.get('Retry-After');
       const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
-
-      if (rateLimitRemaining) {
-        console.log(`[Late API] Rate limit remaining: ${rateLimitRemaining}`);
-      }
 
       if (!response.ok) {
         let errorBody: unknown;
@@ -105,25 +99,18 @@ export async function lateApiRequest<T = unknown>(
           rateLimitRemaining ? parseInt(rateLimitRemaining, 10) : null
         );
 
-        // Retry on 429 (rate limit) or 5xx (server errors)
         if ((response.status === 429 || response.status >= 500) && attempt < retries) {
-          console.warn(`[Late API] ${response.status} on ${method} ${endpoint} (${elapsed}ms) - will retry`);
           lastError = apiError;
-
-          // If we got a Retry-After header, use that delay
           if (retryAfter) {
             const retryMs = parseInt(retryAfter, 10) * 1000;
-            console.log(`[Late API] Waiting ${retryMs}ms (Retry-After header)`);
             await new Promise((r) => setTimeout(r, retryMs));
           }
           continue;
         }
 
-        console.error(`[Late API] Error ${response.status} on ${method} ${endpoint} (${elapsed}ms):`, errorBody);
         throw apiError;
       }
 
-      console.log(`[Late API] ${response.status} on ${method} ${endpoint} (${elapsed}ms)`);
       return response.json() as Promise<T>;
     } catch (error) {
       if (error instanceof LateApiError) throw error;
@@ -131,15 +118,12 @@ export async function lateApiRequest<T = unknown>(
       if (error instanceof Error && error.name === 'AbortError') {
         lastError = new LateApiError(`Late API request timed out after ${timeout}ms`, 0);
         if (attempt < retries) {
-          console.warn(`[Late API] Timeout on ${method} ${endpoint} - will retry`);
           continue;
         }
         throw lastError;
       }
 
-      // Network errors - retry
       if (attempt < retries) {
-        console.warn(`[Late API] Network error on ${method} ${endpoint}:`, (error as Error).message, '- will retry');
         lastError = error as Error;
         continue;
       }

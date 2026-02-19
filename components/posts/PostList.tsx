@@ -10,6 +10,7 @@ import { derivePostStatus, isActiveStatus } from '@/lib/postStatus';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
+import GlBadge from '@/components/ui/GlBadge';
 
 const PER_PAGE = 16;
 
@@ -276,8 +277,9 @@ export default function PostList({
                     {getCreatedDateDisplay(post.createdAt)}
                   </p>
                 )}
-                <p className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">
+                <p className="mt-0.5 flex items-center gap-1.5 truncate text-[10px] text-[var(--text-muted)]">
                   By {postAuthor}
+                  <GlBadge index={post.apiKeyIndex} />
                 </p>
               </div>
             </div>
@@ -433,6 +435,33 @@ export default function PostList({
                                   <Spinner className="h-2.5 w-2.5" />
                                 </span>
                               )}
+                              {pStatus === 'failed' && (
+                                <button
+                                  type="button"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    setIsRetrying(livePost._id);
+                                    try {
+                                      const res = await fetch(`/api/late/posts/${livePost._id}/retry`, { method: 'POST' });
+                                      const data = await res.json().catch(() => ({} as { error?: string }));
+                                      if (!res.ok) throw new Error(data.error || 'Failed to retry');
+                                      showToast('Retrying failed platforms...', 'success');
+                                      await refresh();
+                                      setTimeout(() => { void refresh(); }, 2000);
+                                      setTimeout(() => { void refresh(); }, 5000);
+                                    } catch (error) {
+                                      showToast((error as Error).message || 'Failed to retry', 'error');
+                                    } finally {
+                                      setIsRetrying(null);
+                                    }
+                                  }}
+                                  disabled={isRetrying === livePost._id}
+                                  className="ml-0.5 inline-flex items-center justify-center rounded p-0.5 text-red-600 hover:bg-red-100 disabled:opacity-50"
+                                  title="Retry this platform"
+                                >
+                                  {isRetrying === livePost._id ? <Spinner className="h-3 w-3" /> : <RotateCw className="h-3 w-3" />}
+                                </button>
+                              )}
                             </span>
                           );
                         })}
@@ -513,34 +542,6 @@ export default function PostList({
 
                   {/* Actions */}
                   <div className="flex gap-2 pt-1">
-                    {isFailed && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          setIsRetrying(livePost._id);
-                          try {
-                            const res = await fetch(`/api/late/posts/${livePost._id}/retry`, { method: 'POST' });
-                            const data = await res.json().catch(() => ({} as { error?: string }));
-                            if (!res.ok) {
-                              throw new Error(data.error || 'Failed to retry post');
-                            }
-                            showToast('Retrying publish...', 'success');
-                            await refresh();
-                            setTimeout(() => { void refresh(); }, 2000);
-                            setTimeout(() => { void refresh(); }, 5000);
-                          } catch (error) {
-                            showToast((error as Error).message || 'Failed to retry post', 'error');
-                          } finally {
-                            setIsRetrying(null);
-                          }
-                        }}
-                        disabled={isRetrying === livePost._id}
-                        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
-                      >
-                        {isRetrying === livePost._id ? <Spinner className="h-3.5 w-3.5" /> : <RotateCw className="h-3.5 w-3.5" />}
-                        Retry
-                      </button>
-                    )}
                     <button
                       type="button"
                       onClick={async () => {

@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 
 export async function GET() {
-  if (!config.LATE_API_KEY) {
+  if (!config.LATE_API_KEYS[0]) {
     return NextResponse.json({ error: 'LATE_API_KEY not configured' }, { status: 500 });
   }
 
   try {
     const profilesRes = await fetch(`${config.LATE_API_URL}/profiles`, {
-      headers: { Authorization: `Bearer ${config.LATE_API_KEY}` },
+      headers: { Authorization: `Bearer ${config.LATE_API_KEYS[0]}` },
     });
     if (!profilesRes.ok) throw new Error('Failed to fetch profiles');
     const profilesData = (await profilesRes.json()) as { profiles?: unknown[] };
@@ -19,7 +19,7 @@ export async function GET() {
     const createProfileRes = await fetch(`${config.LATE_API_URL}/profiles`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.LATE_API_KEY}`,
+        Authorization: `Bearer ${config.LATE_API_KEYS[0]}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -37,7 +37,7 @@ export async function GET() {
 
     const connectRes = await fetch(
       `${config.LATE_API_URL}/connect/tiktok?profileId=${profileId}`,
-      { headers: { Authorization: `Bearer ${config.LATE_API_KEY}` } }
+      { headers: { Authorization: `Bearer ${config.LATE_API_KEYS[0]}` } }
     );
     if (connectRes.ok) {
       const data = (await connectRes.json()) as {
