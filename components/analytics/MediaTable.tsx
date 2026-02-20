@@ -4,12 +4,23 @@ import { useState, useMemo, ReactNode } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationPrevious, PaginationNext, PaginationEllipsis } from '@/components/ui/pagination';
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
 import type { AnalyticsMediaItem, AnalyticsAccount } from '@/types';
 
 const PAGE_SIZE = 20;
+
+function getPageNumbers(current: number, total: number): (number | '...')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | '...')[] = [1];
+  if (current > 3) pages.push('...');
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (current < total - 2) pages.push('...');
+  pages.push(total);
+  return pages;
+}
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -80,7 +91,13 @@ export default function MediaTable({
                 ))}
               </SelectContent>
             </Select>
-            <Select value={sortBy} onValueChange={handleFilterChange(onSortChange)}>
+            <Select
+              value={sortBy.split('-')[0]}
+              onValueChange={(field) => {
+                const dir = sortBy.split('-')[1] || 'desc';
+                handleFilterChange(onSortChange)(`${field}-${dir}`);
+              }}
+            >
               <SelectTrigger className="h-8 w-[120px] text-xs">
                 <SelectValue placeholder="Sort by" />
               </SelectTrigger>
@@ -89,6 +106,21 @@ export default function MediaTable({
                 <SelectItem value="likes">Likes</SelectItem>
                 <SelectItem value="comments">Comments</SelectItem>
                 <SelectItem value="date">Date</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={sortBy.split('-')[1] || 'desc'}
+              onValueChange={(dir) => {
+                const field = sortBy.split('-')[0];
+                handleFilterChange(onSortChange)(`${field}-${dir}`);
+              }}
+            >
+              <SelectTrigger className="h-8 w-[100px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="desc">Desc ↑</SelectItem>
+                <SelectItem value="asc">Asc ↓</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -109,7 +141,6 @@ export default function MediaTable({
                     <TableHead className="text-right">Views</TableHead>
                     <TableHead className="text-right">Likes</TableHead>
                     <TableHead className="text-right">Comments</TableHead>
-                    <TableHead className="text-right">Shares</TableHead>
                     <TableHead className="text-right">Eng.</TableHead>
                     <TableHead className="text-right">Published</TableHead>
                   </TableRow>
@@ -136,7 +167,6 @@ export default function MediaTable({
                         <TableCell className="text-right font-medium">{formatNumber(item.views)}</TableCell>
                         <TableCell className="text-right">{formatNumber(item.likes)}</TableCell>
                         <TableCell className="text-right">{formatNumber(item.comments)}</TableCell>
-                        <TableCell className="text-right">{formatNumber(item.shares)}</TableCell>
                         <TableCell className="text-right">{item.engagementRate.toFixed(1)}%</TableCell>
                         <TableCell className="text-right text-xs text-[var(--text-muted)]">
                           {item.publishedAt ? new Date(item.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
@@ -149,29 +179,42 @@ export default function MediaTable({
             </div>
 
             {/* Pagination */}
-            <div className="mt-3 flex items-center justify-between border-t border-[var(--border)] pt-3">
-              <p className="text-xs text-[var(--text-muted)]">
-                {items.length} item{items.length !== 1 ? 's' : ''} — page {page + 1} of {totalPages}
-              </p>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)} className="h-7 w-7 p-0">
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
-                  const start = Math.max(0, Math.min(page - 2, totalPages - 5));
-                  const p = start + i;
-                  if (p >= totalPages) return null;
-                  return (
-                    <Button key={p} variant={p === page ? 'default' : 'ghost'} size="sm" onClick={() => setPage(p)} className="h-7 w-7 p-0 text-xs">
-                      {p + 1}
-                    </Button>
-                  );
-                })}
-                <Button variant="ghost" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)} className="h-7 w-7 p-0">
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
+            {totalPages > 1 && (
+              <Pagination className="mt-4 border-t border-[var(--border)] pt-4">
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      href="#"
+                      onClick={(e) => { e.preventDefault(); setPage(p => Math.max(0, p - 1)); }}
+                      className={page === 0 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                    />
+                  </PaginationItem>
+                  {getPageNumbers(page + 1, totalPages).map((p, i) =>
+                    p === '...' ? (
+                      <PaginationItem key={`ellipsis-${i}`}><PaginationEllipsis /></PaginationItem>
+                    ) : (
+                      <PaginationItem key={p}>
+                        <PaginationLink
+                          href="#"
+                          isActive={page + 1 === p}
+                          onClick={(e) => { e.preventDefault(); setPage((p as number) - 1); }}
+                          className="cursor-pointer"
+                        >
+                          {p}
+                        </PaginationLink>
+                      </PaginationItem>
+                    )
+                  )}
+                  <PaginationItem>
+                    <PaginationNext
+                      href="#"
+                      onClick={(e) => { e.preventDefault(); setPage(p => Math.min(totalPages - 1, p + 1)); }}
+                      className={page >= totalPages - 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
           </>
         )}
       </CardContent>
