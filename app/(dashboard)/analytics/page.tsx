@@ -252,7 +252,7 @@ function AnalyticsContent() {
           {overview?.lastSyncedAt && (
             <span className="flex items-center gap-1.5 rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
               <Clock className="h-3 w-3 shrink-0" />
-              {new Date(overview.lastSyncedAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
+              Last updated {new Date(overview.lastSyncedAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
             </span>
           )}
         </div>
@@ -396,12 +396,6 @@ function AnalyticsContent() {
                   className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] pl-8 pr-3 text-sm text-[var(--foreground)] placeholder:text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--primary)]"
                 />
               </div>
-              {overview?.lastSyncedAt && (
-                <span className="flex items-center gap-1.5 rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
-                  <Clock className="h-3 w-3 shrink-0" />
-                  {new Date(overview.lastSyncedAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
-                </span>
-              )}
               <div className="flex rounded-lg border border-[var(--border)] p-0.5">
                 <button
                   onClick={() => setAcctView('grid')}
