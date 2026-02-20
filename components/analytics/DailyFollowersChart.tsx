@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
-import type { PostingActivityEntry } from '@/types';
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -17,8 +16,9 @@ const FILTERS = [
   { label: 'All', days: 0 },
 ] as const;
 
-const BAR_COLOR = '#f59e0b';
-const BAR_TODAY = '#8b5cf6';
+const GAIN = '#22c55e';
+const LOSS = '#ef4444';
+const TODAY_COLOR = '#8b5cf6';
 
 function toLocalDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -26,19 +26,16 @@ function toLocalDateStr(d: Date): string {
 
 function formatDateLabel(dateStr: string, totalDays: number): string {
   const d = new Date(dateStr + 'T00:00:00');
-  if (totalDays <= 7) {
-    return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
-  }
-  if (totalDays <= 90) {
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
+  if (totalDays <= 7) return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
+  if (totalDays <= 90) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 }
 
-export default function PostingActivity() {
+type FollowerPoint = { date: string; followers: number };
+
+export default function DailyFollowersChart({ globalFilter }: { globalFilter?: number }) {
   const [filter, setFilter] = useState(30);
-  const [rawData, setRawData] = useState<PostingActivityEntry[]>([]);
-  const [totalVideos, setTotalVideos] = useState(0);
+  const [rawData, setRawData] = useState<FollowerPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [todayStr, setTodayStr] = useState('');
 
@@ -46,16 +43,18 @@ export default function PostingActivity() {
     setTodayStr(toLocalDateStr(new Date()));
   }, []);
 
+  useEffect(() => {
+    if (globalFilter !== undefined) setFilter(globalFilter);
+  }, [globalFilter]);
+
   const fetchData = useCallback(async (days: number) => {
     try {
       const param = days > 0 ? `?days=${days}` : '';
-      const res = await fetch(`/api/analytics/posting-activity${param}`, { cache: 'no-store' });
+      const res = await fetch(`/api/analytics/follower-history${param}`, { cache: 'no-store' });
       const json = await res.json();
-      console.log('[PostingActivity] API response:', { entries: json.postingActivity?.length, totalVideos: json.totalVideos, sample: json.postingActivity?.slice(0, 3) });
-      setRawData(json.postingActivity || []);
-      setTotalVideos(json.totalVideos || 0);
+      setRawData(json.history || []);
     } catch (e) {
-      console.error('Failed to load posting activity:', e);
+      console.error('Failed to load follower history:', e);
     } finally {
       setLoading(false);
     }
@@ -66,60 +65,68 @@ export default function PostingActivity() {
     fetchData(filter);
   }, [filter, fetchData]);
 
-  // Fill in missing dates so the chart has no gaps
   const chartData = useMemo(() => {
     if (rawData.length === 0) return [];
 
-    const dataMap = new Map(rawData.map(d => [d.date, d]));
-
-    // Determine date range
+    const dataMap = new Map(rawData.map(d => [d.date, d.followers]));
     const allDates = rawData.map(d => d.date).sort();
     const start = new Date(allDates[0] + 'T00:00:00');
     const end = new Date(allDates[allDates.length - 1] + 'T00:00:00');
-
-    // If today is after the last data point, extend to today
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     if (now > end) end.setTime(now.getTime());
 
-    const filled: { date: string; label: string; posts: number; totalViews: number }[] = [];
+    const filled: { date: string; label: string; followers: number; change: number }[] = [];
     const cursor = new Date(start);
     const totalSpanDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    let lastKnown = rawData[0]?.followers || 0;
+    let prevFollowers = lastKnown;
 
     while (cursor <= end) {
       const key = toLocalDateStr(cursor);
-      const entry = dataMap.get(key);
+      const val = dataMap.get(key);
+      if (val !== undefined) lastKnown = val;
       filled.push({
         date: key,
         label: formatDateLabel(key, totalSpanDays),
-        posts: entry?.posts || 0,
-        totalViews: entry?.totalViews || 0,
+        followers: lastKnown,
+        change: lastKnown - prevFollowers,
       });
+      prevFollowers = lastKnown;
       cursor.setDate(cursor.getDate() + 1);
     }
 
     return filled;
   }, [rawData]);
 
-  // Best day (highest uploads)
-  const bestDay = useMemo(() => {
-    if (chartData.length === 0) return null;
-    return chartData.reduce((b, d) => (d.posts > b.posts ? d : b), chartData[0]);
-  }, [chartData]);
-
-  // Determine tick interval based on data length
   const tickInterval = useMemo(() => {
     const len = chartData.length;
-    if (len <= 7) return 0; // show every tick
+    if (len <= 7) return 0;
     if (len <= 31) return Math.ceil(len / 10) - 1;
     if (len <= 90) return Math.ceil(len / 12) - 1;
     return Math.ceil(len / 10) - 1;
   }, [chartData]);
 
-  if (!loading && (totalVideos === 0 || chartData.length === 0)) {
+  const netChange = useMemo(() => {
+    if (chartData.length < 2) return 0;
+    return chartData[chartData.length - 1].followers - chartData[0].followers;
+  }, [chartData]);
+
+  const todayChange = useMemo(() => {
+    if (chartData.length === 0) return 0;
+    const today = chartData.find(d => d.date === todayStr);
+    return today?.change ?? chartData[chartData.length - 1].change;
+  }, [chartData, todayStr]);
+
+  const bestDay = useMemo(() => {
+    if (chartData.length === 0) return null;
+    return chartData.reduce((b, d) => (d.change > b.change ? d : b), chartData[0]);
+  }, [chartData]);
+
+  if (!loading && chartData.length === 0) {
     return (
       <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2">
-        <p className="text-sm text-[var(--text-muted)]">No posting data yet.</p>
+        <p className="text-sm text-[var(--text-muted)]">No subscriber data yet.</p>
         <div className="flex rounded-lg border border-[var(--border)] p-0.5">
           {FILTERS.map(f => (
             <button
@@ -144,17 +151,31 @@ export default function PostingActivity() {
       <div className="flex items-start justify-between pb-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
-            Posting Activity
+            Daily Subscribers
           </p>
           <p className="mt-1 text-2xl font-bold tracking-tight">
-            {loading ? '...' : totalVideos}{' '}
-            <span className="text-sm font-medium text-[var(--text-muted)]">videos</span>
+            {loading ? '...' : (
+              <>
+                <span className={todayChange >= 0 ? 'text-emerald-500' : 'text-red-500'}>
+                  {todayChange >= 0 ? '+' : ''}{formatNumber(todayChange)}
+                </span>{' '}
+                <span className="text-sm font-medium text-[var(--text-muted)]">today</span>
+                {chartData.length > 1 && (
+                  <span className="ml-2 text-sm font-medium text-[var(--text-muted)]">
+                    · <span className={netChange >= 0 ? 'text-emerald-500' : 'text-red-500'}>
+                      {netChange >= 0 ? '+' : ''}{formatNumber(netChange)}
+                    </span> net
+                  </span>
+                )}
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {bestDay && bestDay.posts > 0 && (
+          {bestDay && bestDay.change > 0 && (
             <span className="rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
-              Peak: <span className="font-semibold text-[var(--foreground)]">{bestDay.posts}</span> on{' '}
+              Best: <span className="font-semibold text-emerald-500">+{formatNumber(bestDay.change)}</span>
+              <span className="mx-1">on</span>
               <span className="font-semibold text-[var(--foreground)]">
                 {new Date(bestDay.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </span>
@@ -191,11 +212,13 @@ export default function PostingActivity() {
             />
             <YAxis
               tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
+              tickFormatter={(v: number) => (v > 0 ? '+' : '') + formatNumber(v)}
               axisLine={false}
               tickLine={false}
-              width={24}
+              width={40}
               allowDecimals={false}
             />
+            <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
             <Tooltip
               contentStyle={{
                 backgroundColor: 'var(--popover)',
@@ -213,10 +236,10 @@ export default function PostingActivity() {
                 const d = new Date(entry.date + 'T00:00:00');
                 return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
               }}
-              formatter={(v: number, name: string) => [
-                name === 'posts' ? `${v} video${v !== 1 ? 's' : ''}` : formatNumber(v) + ' views',
-                name === 'posts' ? 'Uploaded' : 'Total Views',
-              ]}
+              formatter={(v: number) => {
+                const label = v > 0 ? `+${formatNumber(v)}` : v < 0 ? formatNumber(v) : '0';
+                return [label, 'Subscribers'];
+              }}
             />
             {todayStr && (
               <ReferenceLine
@@ -226,12 +249,20 @@ export default function PostingActivity() {
                 strokeOpacity={0.5}
               />
             )}
-            <Bar dataKey="posts" radius={[3, 3, 0, 0]} maxBarSize={20}>
+            <Bar dataKey="change" radius={[3, 3, 0, 0]} maxBarSize={20}>
               {chartData.map((entry) => (
                 <Cell
                   key={entry.date}
-                  fill={entry.date === todayStr ? BAR_TODAY : BAR_COLOR}
-                  fillOpacity={entry.date === todayStr ? 1 : 0.8}
+                  fill={
+                    entry.date === todayStr
+                      ? TODAY_COLOR
+                      : entry.change > 0
+                        ? GAIN
+                        : entry.change < 0
+                          ? LOSS
+                          : 'var(--border)'
+                  }
+                  fillOpacity={entry.date === todayStr ? 1 : entry.change === 0 ? 0.3 : 0.8}
                 />
               ))}
             </Bar>

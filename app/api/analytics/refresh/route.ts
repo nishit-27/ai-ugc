@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ensureDatabaseReady } from '@/lib/db';
-import { getAllAnalyticsAccounts } from '@/lib/db-analytics';
+import { getAllAnalyticsAccounts, touchAllAccountsSyncTime } from '@/lib/db-analytics';
 import { syncAllAccounts } from '@/lib/analytics/sync';
 
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
@@ -37,6 +37,8 @@ export async function POST(request: NextRequest) {
     if (failed.length > 0) {
       console.error('[analytics] Failed accounts:', JSON.stringify(failed));
     }
+    // Always update last_synced_at for all accounts (even if some failed)
+    await touchAllAccountsSyncTime();
     return NextResponse.json({ results });
   } catch (error) {
     console.error('[analytics] Hard Sync error:', error);

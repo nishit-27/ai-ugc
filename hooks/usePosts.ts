@@ -173,7 +173,7 @@ async function signPostMedia(posts: Post[]): Promise<Post[]> {
 }
 
 async function fetchPostsOnce(signal: AbortSignal, forceModelRefresh = false): Promise<Post[] | null> {
-  const endpoint = '/api/late/posts?limit=80';
+  const endpoint = '/api/late/posts';
   const res = await fetch(endpoint, { signal, cache: 'no-store' });
   if (!res.ok) return null;
   const data = await res.json();

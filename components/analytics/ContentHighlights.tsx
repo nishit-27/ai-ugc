@@ -18,10 +18,9 @@ export default function ContentHighlights({
     (best, p) => (p.engagementRate > (best?.engagementRate || 0) ? p : best),
     overview.platformBreakdown[0],
   );
-  const avgViews = Math.round(items.reduce((s, i) => s + i.views, 0) / items.length);
-  const recentPost = [...items]
-    .filter((i) => i.publishedAt)
-    .sort((a, b) => new Date(b.publishedAt!).getTime() - new Date(a.publishedAt!).getTime())[0];
+  const totalVideos = overview.totalVideos || items.length;
+  const avgViews = totalVideos > 0 ? Math.round(overview.totalViews / totalVideos) : 0;
+  const recentPost = overview.latestPost;
 
   const highlights = [
     {
@@ -51,7 +50,7 @@ export default function ContentHighlights({
       label: 'Avg Views',
       value: avgViews,
       suffix: '',
-      detail: `${items.length} videos tracked`,
+      detail: `${totalVideos} videos tracked`,
       url: null,
     },
     {
@@ -60,7 +59,7 @@ export default function ContentHighlights({
       label: 'Latest Post',
       value: null as number | null,
       dateValue: recentPost?.publishedAt
-        ? new Date(recentPost.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        ? new Date(recentPost.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
         : '—',
       detail: recentPost?.title || recentPost?.caption?.slice(0, 30) || 'No posts yet',
       url: recentPost?.url || null,

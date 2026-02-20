@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef, useCallback, Suspense } from 'react';
-import { HardDriveDownload, RefreshCw, Plus, BarChart3, Link2, Filter, ArrowDownUp } from 'lucide-react';
+import { HardDriveDownload, RefreshCw, Plus, BarChart3, Link2, Filter, ArrowDownUp, Clock, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { useToast } from '@/hooks/useToast';
 import OverviewCards from '@/components/analytics/OverviewCards';
 import FollowersChart from '@/components/analytics/FollowersChart';
+import DailyFollowersChart from '@/components/analytics/DailyFollowersChart';
 import PlatformComparison from '@/components/analytics/PlatformComparison';
 import PostingActivity from '@/components/analytics/PostingActivity';
 import TopVideosTable from '@/components/analytics/TopVideosTable';
@@ -24,10 +25,11 @@ const DATE_RANGES = [
   { label: 'Week', days: 7 },
   { label: 'Month', days: 30 },
   { label: '3 Months', days: 90 },
+  { label: 'All', days: 0 },
 ];
 
 function filterHistory(history: AnalyticsSnapshot[], days: number): AnalyticsSnapshot[] {
-  if (days >= 90 || history.length === 0) return history;
+  if (days === 0 || history.length === 0) return history;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   return history.filter(s => new Date(s.date) >= cutoff);
@@ -56,6 +58,8 @@ function AnalyticsContent() {
   const [acctPlatform, setAcctPlatform] = useState('all');
   const [acctSort, setAcctSort] = useState('followers-desc');
   const [activeTab, setActiveTab] = useState('overview');
+  const [acctSearch, setAcctSearch] = useState('');
+  const [contentSearch, setContentSearch] = useState('');
   const [autoSyncing, setAutoSyncing] = useState(false);
   const autoSyncAttempted = useRef(false);
   const syncingRef = useRef(false);
@@ -121,6 +125,15 @@ function AnalyticsContent() {
     let items = mediaItems;
     if (platformFilter !== 'all') items = items.filter(i => i.platform === platformFilter);
     if (accountFilter !== 'all') items = items.filter(i => i.accountId === accountFilter);
+    if (contentSearch.trim()) {
+      const q = contentSearch.trim().toLowerCase();
+      items = items.filter(i =>
+        (i.title || '').toLowerCase().includes(q) ||
+        (i.caption || '').toLowerCase().includes(q) ||
+        i.platform.toLowerCase().includes(q) ||
+        (i.externalId || '').toLowerCase().includes(q)
+      );
+    }
     const sorted = [...items];
     switch (sortBy) {
       case 'views': sorted.sort((a, b) => b.views - a.views); break;
@@ -133,7 +146,7 @@ function AnalyticsContent() {
       }); break;
     }
     return sorted;
-  }, [mediaItems, platformFilter, accountFilter, sortBy]);
+  }, [mediaItems, platformFilter, accountFilter, sortBy, contentSearch]);
 
   const filteredHistory = useMemo(
     () => filterHistory(overview?.history || [], dateRange),
@@ -143,6 +156,14 @@ function AnalyticsContent() {
   const filteredAccounts = useMemo(() => {
     let list = accounts;
     if (acctPlatform !== 'all') list = list.filter(a => a.platform === acctPlatform);
+    if (acctSearch.trim()) {
+      const q = acctSearch.trim().toLowerCase();
+      list = list.filter(a =>
+        (a.displayName || '').toLowerCase().includes(q) ||
+        a.username.toLowerCase().includes(q) ||
+        a.platform.toLowerCase().includes(q)
+      );
+    }
     const sorted = [...list];
     const [field, dir] = acctSort.split('-') as [string, string];
     const asc = dir === 'asc' ? 1 : -1;
@@ -153,7 +174,7 @@ function AnalyticsContent() {
       case 'name': sorted.sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username) * asc); break;
     }
     return sorted;
-  }, [accounts, acctPlatform, acctSort]);
+  }, [accounts, acctPlatform, acctSort, acctSearch]);
 
   const handleAddAccount = async (platform: string, username: string) => {
     try {
@@ -190,6 +211,12 @@ function AnalyticsContent() {
         <div className="flex items-center gap-3">
           <BarChart3 className="h-5 w-5 text-[var(--primary)]" />
           <h1 className="text-xl font-bold">Analytics</h1>
+          {overview?.lastSyncedAt && (
+            <span className="flex items-center gap-1.5 rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
+              <Clock className="h-3 w-3 shrink-0" />
+              {new Date(overview.lastSyncedAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={syncFromConnections} disabled={autoSyncing || syncing}>
@@ -197,7 +224,7 @@ function AnalyticsContent() {
             {autoSyncing ? 'Importing...' : 'Sync from Connections'}
           </Button>
           <Button variant="ghost" size="sm" onClick={handleHardSync} disabled={syncing || autoSyncing}>
-            <HardDriveDownload className={`mr-1.5 h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Syncing...' : 'Hard Sync'}
           </Button>
           <Button size="sm" onClick={() => setAddModalOpen(true)}>
@@ -257,7 +284,7 @@ function AnalyticsContent() {
               </>
             )}
             {/* Date range filter */}
-            <div className="flex rounded-lg border border-[var(--border)] p-0.5">
+            {/* <div className="flex rounded-lg border border-[var(--border)] p-0.5">
               {DATE_RANGES.map(r => (
                 <button
                   key={r.days}
@@ -271,7 +298,7 @@ function AnalyticsContent() {
                   {r.label}
                 </button>
               ))}
-            </div>
+            </div> */}
           </div>
         </div>
 
@@ -283,29 +310,46 @@ function AnalyticsContent() {
             <ContentHighlights overview={overview} items={mediaItems} />
           </div>
 
-          {/* Charts row: Audience + Platform side by side */}
+          {/* Charts row: Audience Growth + Daily Subscribers */}
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-              <FollowersChart history={filteredHistory} />
+              <FollowersChart />
             </div>
             <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-              <PlatformComparison overview={overview} />
+              <DailyFollowersChart />
             </div>
           </div>
 
-          {/* Engagement + Top Videos */}
+          {/* Platform + Posting Activity */}
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+              <PlatformComparison overview={overview} />
+            </div>
             <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
               <PostingActivity />
             </div>
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-              <TopVideosTable items={mediaItems} />
-            </div>
+          </div>
+
+          {/* Top Videos */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+            <TopVideosTable items={mediaItems} />
           </div>
         </TabsContent>
 
         {/* Tab 2: Accounts */}
         <TabsContent value="accounts" className="mt-4 space-y-4">
+          {accounts.length > 0 && (
+            <div className="relative max-w-xs">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input
+                type="text"
+                value={acctSearch}
+                onChange={e => setAcctSearch(e.target.value)}
+                placeholder="Search accounts..."
+                className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] pl-8 pr-3 text-sm text-[var(--foreground)] placeholder:text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--primary)]"
+              />
+            </div>
+          )}
           {accounts.length === 0 ? (
             <div className="flex flex-col items-center gap-4 py-16 text-center">
               <BarChart3 className="h-12 w-12 text-[var(--text-muted)]" />
@@ -336,6 +380,16 @@ function AnalyticsContent() {
 
         {/* Tab 3: Content */}
         <TabsContent value="content" className="mt-4 space-y-4">
+          <div className="relative max-w-xs">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+            <input
+              type="text"
+              value={contentSearch}
+              onChange={e => setContentSearch(e.target.value)}
+              placeholder="Search by title, caption..."
+              className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] pl-8 pr-3 text-sm text-[var(--foreground)] placeholder:text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--primary)]"
+            />
+          </div>
           <MediaTable
             items={filteredMedia}
             accounts={accounts}
@@ -351,7 +405,7 @@ function AnalyticsContent() {
 
         {/* Tab 4: Trends */}
         <TabsContent value="trends" className="mt-4">
-          <TrendsCharts overview={overview} history={filteredHistory} items={mediaItems} />
+          <TrendsCharts overview={overview} />
         </TabsContent>
       </Tabs>
 

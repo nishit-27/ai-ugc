@@ -438,5 +438,14 @@ export type AnalyticsOverview = {
   }[];
   postingActivity: PostingActivityEntry[];
   totalVideos: number;
+  latestPost: {
+    title: string | null;
+    caption: string | null;
+    url: string | null;
+    publishedAt: string;
+    platform: string;
+    accountUsername: string;
+  } | null;
+  lastSyncedAt: string | null;
   history: AnalyticsSnapshot[];
 };

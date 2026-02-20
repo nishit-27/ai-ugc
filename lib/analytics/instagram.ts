@@ -27,27 +27,39 @@ async function rapidApiGet(path: string, retries = 2): Promise<any> {
   throw new Error('Unreachable');
 }
 
-export async function resolveInstagramUser(username: string): Promise<string> {
-  const data = await rapidApiGet(`/id?username=${encodeURIComponent(username)}`);
-  const userId = data?.id || data?.user_id || data?.pk;
-  if (!userId) throw new Error(`Could not resolve Instagram user: ${username}`);
-  return String(userId);
-}
+export type InstagramProfile = {
+  userId: string;
+  username: string;
+  displayName: string;
+  profileUrl: string;
+  followers: number;
+  following: number;
+  mediaCount: number;
+};
 
-export async function fetchInstagramProfile(userId: string) {
-  const data = await rapidApiGet(`/profile2?id=${userId}`);
-  const user = data?.data?.user || data?.user || data;
+/**
+ * Single /profile call replaces both resolveInstagramUser() and fetchInstagramProfile().
+ * Returns user ID + profile stats + in one API call.
+ */
+export async function fetchInstagramProfileByUsername(username: string): Promise<InstagramProfile> {
+  const data = await rapidApiGet(`/profile?username=${encodeURIComponent(username)}`);
+
+  if (data?.status === false || !data?.id) {
+    throw new Error(`Could not resolve Instagram user: ${username}`);
+  }
+
   return {
-    username: user?.username || '',
-    displayName: user?.full_name || user?.username || '',
-    profileUrl: user?.profile_pic_url_hd || user?.profile_pic_url || '',
-    followers: Number(user?.edge_followed_by?.count ?? user?.follower_count ?? 0),
-    following: Number(user?.edge_follow?.count ?? user?.following_count ?? 0),
-    mediaCount: Number(user?.edge_owner_to_timeline_media?.count ?? user?.media_count ?? 0),
+    userId: String(data.id),
+    username: data.username || username,
+    displayName: data.full_name || data.username || username,
+    profileUrl: data.profile_pic_url_hd || data.profile_pic_url || '',
+    followers: Number(data.edge_followed_by?.count ?? data.follower_count ?? 0),
+    following: Number(data.edge_follow?.count ?? data.following_count ?? 0),
+    mediaCount: Number(data.edge_owner_to_timeline_media?.count ?? data.media_count ?? 0),
   };
 }
 
-type InstagramReel = {
+export type InstagramReel = {
   externalId: string;
   caption: string;
   url: string;
@@ -60,11 +72,17 @@ type InstagramReel = {
   saves: number;
 };
 
-export async function fetchInstagramReels(userId: string, maxPages = 10): Promise<InstagramReel[]> {
+/**
+ * Fetch ALL reels — keeps paginating until the API says there are no more.
+ * No arbitrary page limit. Uses duplicate cursor detection to prevent infinite loops.
+ */
+export async function fetchInstagramReels(userId: string): Promise<InstagramReel[]> {
   const reels: InstagramReel[] = [];
   let nextMaxId: string | undefined;
+  const seenCursors = new Set<string>();
 
-  for (let page = 0; page < maxPages; page++) {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
     const path = nextMaxId
       ? `/reels?id=${userId}&count=12&max_id=${nextMaxId}`
       : `/reels?id=${userId}&count=12`;
@@ -82,7 +100,7 @@ export async function fetchInstagramReels(userId: string, maxPages = 10): Promis
         url: media?.code ? `https://www.instagram.com/reel/${media.code}/` : '',
         thumbnailUrl: media?.image_versions2?.candidates?.[0]?.url || media?.thumbnail_url || '',
         publishedAt: media?.taken_at ? new Date(Number(media.taken_at) * 1000).toISOString() : '',
-        views: Number(media?.video_play_count ?? media?.play_count ?? media?.view_count ?? 0),
+        views: Number(media?.play_count ?? media?.video_play_count ?? media?.ig_play_count ?? media?.view_count ?? 0),
         likes: Number(media?.like_count ?? 0),
         comments: Number(media?.comment_count ?? 0),
         shares: Number(media?.share_count ?? media?.reshare_count ?? media?.send_count ?? media?.shares ?? 0),
@@ -91,7 +109,14 @@ export async function fetchInstagramReels(userId: string, maxPages = 10): Promis
     }
 
     nextMaxId = data?.paging_info?.max_id || data?.next_max_id;
-    if (!nextMaxId) break;
+    if (!nextMaxId || !data?.paging_info?.more_available) break;
+
+    // Prevent infinite loop if API keeps returning the same cursor
+    if (seenCursors.has(nextMaxId)) {
+      console.warn(`[analytics] Instagram reels: duplicate cursor detected (${nextMaxId}), stopping pagination`);
+      break;
+    }
+    seenCursors.add(nextMaxId);
   }
 
   return reels;

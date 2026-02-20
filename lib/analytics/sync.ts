@@ -1,4 +1,4 @@
-import { resolveInstagramUser, fetchInstagramProfile, fetchInstagramReels } from './instagram';
+import { fetchInstagramProfileByUsername, fetchInstagramReels } from './instagram';
 import { resolveTikTokUser, fetchTikTokPosts } from './tiktok';
 import { resolveYouTubeChannel, fetchYouTubeVideos } from './youtube';
 import {
@@ -35,13 +35,13 @@ export async function syncAccount(account: AccountRow) {
 }
 
 async function syncInstagram(accountDbId: string, username: string, existingUserId?: string) {
-  const userId = existingUserId || await resolveInstagramUser(username);
-  const profile = await fetchInstagramProfile(userId);
+  // Single /profile call gets userId + profile stats (replaces /id + /profile2)
+  const profile = await fetchInstagramProfileByUsername(username);
+  const userId = existingUserId || profile.userId;
 
-  // Always fetch ALL reels (no knownIds skip)
-  const reels = await fetchInstagramReels(userId, 10);
+  // Fetch ALL reels (paginate until done)
+  const reels = await fetchInstagramReels(userId);
 
-  // Upsert all media items into DB
   for (const r of reels) {
     const interactions = r.likes + r.comments + r.shares;
     const mediaEngagement = r.views > 0 ? (interactions / r.views) * 100 : 0;
@@ -71,7 +71,6 @@ async function syncInstagram(accountDbId: string, username: string, existingUser
     });
   }
 
-  // Compute totals from ALL items stored in DB
   const totals = await getAccountMediaTotals(accountDbId);
   const totalInteractions = totals.totalLikes + totals.totalComments + totals.totalShares;
   const engagementRate = totals.totalViews > 0 ? (totalInteractions / totals.totalViews) * 100 : 0;
@@ -103,10 +102,9 @@ async function syncTikTok(accountDbId: string, username: string, existingSecUid?
   const userInfo = await resolveTikTokUser(username);
   const secUid = existingSecUid || userInfo.secUid;
 
-  // Always fetch ALL posts (no knownIds skip)
-  const posts = await fetchTikTokPosts(secUid, 5);
+  // Fetch ALL posts (paginate until done)
+  const posts = await fetchTikTokPosts(secUid);
 
-  // Upsert all media items into DB
   for (const p of posts) {
     const interactions = p.likes + p.comments + p.shares;
     const mediaEngagement = p.views > 0 ? (interactions / p.views) * 100 : 0;
@@ -136,7 +134,6 @@ async function syncTikTok(accountDbId: string, username: string, existingSecUid?
     });
   }
 
-  // Compute totals from ALL items stored in DB
   const totals = await getAccountMediaTotals(accountDbId);
   const totalInteractions = totals.totalLikes + totals.totalComments + totals.totalShares;
   const engagementRate = totals.totalViews > 0 ? (totalInteractions / totals.totalViews) * 100 : 0;
@@ -167,10 +164,9 @@ async function syncTikTok(accountDbId: string, username: string, existingSecUid?
 async function syncYouTube(accountDbId: string, identifier: string, existingChannelId?: string) {
   const channel = await resolveYouTubeChannel(existingChannelId || identifier);
 
-  // Always fetch ALL videos (no knownIds skip)
-  const videos = await fetchYouTubeVideos(channel.channelId, 120);
+  // Pass uploadsPlaylistId directly — no duplicate channel fetch
+  const videos = await fetchYouTubeVideos(channel.uploadsPlaylistId);
 
-  // Upsert all media items into DB
   for (const v of videos) {
     const interactions = v.likes + v.comments;
     const mediaEngagement = v.views > 0 ? (interactions / v.views) * 100 : 0;
@@ -200,7 +196,6 @@ async function syncYouTube(accountDbId: string, identifier: string, existingChan
     });
   }
 
-  // Compute totals from ALL items stored in DB
   const totals = await getAccountMediaTotals(accountDbId);
   const totalInteractions = totals.totalLikes + totals.totalComments;
   const engagementRate = totals.totalViews > 0 ? (totalInteractions / totals.totalViews) * 100 : 0;
@@ -228,14 +223,38 @@ async function syncYouTube(accountDbId: string, identifier: string, existingChan
   });
 }
 
+const BATCH_SIZE = 5;
+const BATCH_DELAY_MS = 1000;
+
+/**
+ * Sync all accounts in parallel batches of 5.
+ * Much faster than sequential — 1000 accounts in ~7 min vs ~33 min.
+ */
 export async function syncAllAccounts(accounts: AccountRow[]) {
   const results: { id: string; success: boolean; error?: string }[] = [];
-  for (const account of accounts) {
-    if (results.length > 0) {
-      await new Promise(r => setTimeout(r, 2000));
+
+  for (let i = 0; i < accounts.length; i += BATCH_SIZE) {
+    const batch = accounts.slice(i, i + BATCH_SIZE);
+
+    const batchResults = await Promise.allSettled(
+      batch.map((account) => syncAccount(account))
+    );
+
+    for (let j = 0; j < batch.length; j++) {
+      const settled = batchResults[j];
+      if (settled.status === 'fulfilled') {
+        results.push({ id: batch[j].id, ...settled.value });
+      } else {
+        const errMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
+        results.push({ id: batch[j].id, success: false, error: errMsg });
+      }
     }
-    const result = await syncAccount(account);
-    results.push({ id: account.id, ...result });
+
+    // Delay between batches (not after the last one)
+    if (i + BATCH_SIZE < accounts.length) {
+      await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
+    }
   }
+
   return results;
 }

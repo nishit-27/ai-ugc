@@ -71,11 +71,17 @@ type TikTokPost = {
   shares: number;
 };
 
-export async function fetchTikTokPosts(secUid: string, maxPages = 5): Promise<TikTokPost[]> {
+/**
+ * Fetch ALL posts — keeps paginating until hasMore=false.
+ * No arbitrary page limit. Uses duplicate cursor detection to prevent infinite loops.
+ */
+export async function fetchTikTokPosts(secUid: string): Promise<TikTokPost[]> {
   const posts: TikTokPost[] = [];
   let cursor = '0';
+  const seenCursors = new Set<string>();
 
-  for (let page = 0; page < maxPages; page++) {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
     const path = `/api/user/posts?secUid=${encodeURIComponent(secUid)}&count=35&cursor=${cursor}`;
     const raw = await rapidApiGet(path);
     // API wraps response in a `data` envelope
@@ -103,6 +109,13 @@ export async function fetchTikTokPosts(secUid: string, maxPages = 5): Promise<Ti
     const hasMore = data?.hasMore ?? data?.has_more;
     cursor = String(data?.cursor ?? '0');
     if (!hasMore || cursor === '0') break;
+
+    // Prevent infinite loop if API keeps returning the same cursor
+    if (seenCursors.has(cursor)) {
+      console.warn(`[analytics] TikTok posts: duplicate cursor detected (${cursor}), stopping pagination`);
+      break;
+    }
+    seenCursors.add(cursor);
   }
 
   return posts;

@@ -41,7 +41,7 @@ export default function ViewsDistribution({ items }: { items: AnalyticsMediaItem
               <XAxis dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={formatNumber} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={45} />
               <Tooltip
-                contentStyle={{ backgroundColor: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}
+                contentStyle={{ backgroundColor: 'var(--popover)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} labelStyle={{ color: 'var(--foreground)' }} itemStyle={{ color: 'var(--foreground)' }}
                 formatter={(value: number) => [formatNumber(value), 'Views']}
                 labelFormatter={(_label: string, payload: Array<{ payload?: { label?: string } }>) => payload?.[0]?.payload?.label || ''}
               />

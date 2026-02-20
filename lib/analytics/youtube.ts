@@ -57,27 +57,40 @@ type YouTubeVideo = {
   comments: number;
 };
 
-export async function fetchYouTubeVideos(channelId: string, maxVideos = 120): Promise<YouTubeVideo[]> {
-  // Get uploads playlist
-  const channelData = await ytGet(`/channels?part=contentDetails&id=${channelId}`);
-  const uploadsPlaylistId = channelData?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+/**
+ * Fetch ALL videos from the uploads playlist.
+ * Accepts uploadsPlaylistId directly (no duplicate channel fetch).
+ * Handles 404/missing playlist gracefully.
+ */
+export async function fetchYouTubeVideos(uploadsPlaylistId: string): Promise<YouTubeVideo[]> {
   if (!uploadsPlaylistId) return [];
 
-  // Get all playlist items (paginated)
+  // Get ALL playlist items (paginated) — wrapped in try/catch for 404
   const videoIds: string[] = [];
   let pageToken = '';
 
-  while (videoIds.length < maxVideos) {
-    const pageParam = pageToken ? `&pageToken=${pageToken}` : '';
-    const plData = await ytGet(`/playlistItems?part=contentDetails&playlistId=${uploadsPlaylistId}&maxResults=50${pageParam}`);
-    const items = plData?.items || [];
-    for (const item of items) {
-      const vid = item?.contentDetails?.videoId;
-      if (!vid) continue;
-      videoIds.push(vid);
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const pageParam = pageToken ? `&pageToken=${pageToken}` : '';
+      const plData = await ytGet(`/playlistItems?part=contentDetails&playlistId=${uploadsPlaylistId}&maxResults=50${pageParam}`);
+      const items = plData?.items || [];
+      for (const item of items) {
+        const vid = item?.contentDetails?.videoId;
+        if (!vid) continue;
+        videoIds.push(vid);
+      }
+      pageToken = plData?.nextPageToken || '';
+      if (!pageToken || items.length === 0) break;
     }
-    pageToken = plData?.nextPageToken || '';
-    if (!pageToken || items.length === 0) break;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // 404 = playlist not found (new channel, no uploads yet)
+    if (message.includes('404')) {
+      console.warn(`[analytics] YouTube playlist not found: ${uploadsPlaylistId} — skipping video fetch`);
+      return [];
+    }
+    throw err;
   }
 
   if (videoIds.length === 0) return [];

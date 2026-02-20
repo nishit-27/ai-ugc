@@ -8,7 +8,6 @@ import type { Post, PostPlatform } from '@/types';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const MAX_LIMIT = 100;
 const LINK_HYDRATE_CONCURRENCY = 3;
 const MAX_LINK_HYDRATE_POSTS = 8;
 const RESPONSE_CACHE_TTL_MS = 4_000;
@@ -50,14 +49,9 @@ type LatePost = {
   apiKeyIndex?: number;
 };
 
-function parseLimit(rawLimit: string | null): number {
-  const parsed = Number.parseInt(rawLimit || '50', 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 50;
-  return Math.min(parsed, MAX_LIMIT);
-}
 
-function getCacheKey(statusFilter: string, platformFilter: string, requestedLimit: number): string {
-  return `${statusFilter}|${platformFilter}|${requestedLimit}`;
+function getCacheKey(statusFilter: string, platformFilter: string): string {
+  return `${statusFilter}|${platformFilter}`;
 }
 
 function getCachedResponse(cacheKey: string): { posts: Post[] } | null {
@@ -175,8 +169,7 @@ export async function GET(request: NextRequest) {
       ? rawStatusFilter
       : 'all';
     const platformFilter = (request.nextUrl.searchParams.get('platform') || '').toLowerCase();
-    const requestedLimit = parseLimit(request.nextUrl.searchParams.get('limit'));
-    const cacheKey = getCacheKey(statusFilter, platformFilter, requestedLimit);
+    const cacheKey = getCacheKey(statusFilter, platformFilter);
     const cached = getCachedResponse(cacheKey);
     if (cached) {
       return NextResponse.json(cached, {
@@ -193,10 +186,8 @@ export async function GET(request: NextRequest) {
     }
 
     const loadPromise = (async () => {
-      const fetchLimit = statusFilter === 'all' ? requestedLimit : Math.min(requestedLimit * 2, MAX_LIMIT);
-
-      // Fetch posts from all API keys in parallel
-      const results = await fetchFromAllKeys<{ posts?: LatePost[] }>(`/posts?limit=${fetchLimit}`, {
+      // Fetch all posts from all API keys in parallel (no artificial limit)
+      const results = await fetchFromAllKeys<{ posts?: LatePost[] }>('/posts?limit=10000', {
         timeout: 10_000,
         retries: 1,
       });
@@ -223,8 +214,7 @@ export async function GET(request: NextRequest) {
         .filter((post) => (platformFilter
           ? post.platforms?.some((platform) => (platform.platform || '').toLowerCase() === platformFilter)
           : true))
-        .filter((post) => postMatchesFilter(post, statusFilter))
-        .slice(0, requestedLimit);
+        .filter((post) => postMatchesFilter(post, statusFilter));
 
       return { posts: normalized };
     })();
