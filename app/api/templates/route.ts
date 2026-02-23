@@ -115,6 +115,8 @@ export async function POST(request: NextRequest) {
               negativePrompt: batchConfig.negativePrompt,
               resolution: batchConfig.resolution,
               maxSeconds: batchConfig.maxSeconds,
+              trimStart: batchConfig.trimStart,
+              trimEnd: batchConfig.trimEnd,
             };
             return {
               ...step,
