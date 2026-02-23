@@ -2,11 +2,10 @@
 
 import { ReactNode, useMemo, useState, useEffect, useCallback } from 'react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  PieChart, Pie, Cell, ResponsiveContainer,
+  PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import {
-  Activity, PieChartIcon, TrendingUp,
+  PieChartIcon, TrendingUp,
   Zap, Video, Eye, Heart, MessageCircle,
 } from 'lucide-react';
 import EngagementTrend from '@/components/analytics/EngagementTrend';
@@ -26,38 +25,12 @@ const PLATFORM_META: Record<string, { label: string; icon: ReactNode; color: str
   youtube:   { label: 'YouTube',   icon: <FaYoutube className="h-4 w-4" />,   color: '#FF0000' },
 };
 
-const LINE_METRICS = [
-  { key: 'views',    label: 'Views',    color: '#d4698e' },
-  { key: 'likes',    label: 'Likes',    color: '#f59e0b' },
-  { key: 'comments', label: 'Comments', color: '#22c55e' },
-];
-
 const FILTERS = [
   { label: '7d', days: 7 },
   { label: '30d', days: 30 },
   { label: '3m', days: 90 },
   { label: 'All', days: 0 },
 ] as const;
-
-type DailyMetric = {
-  date: string;
-  posts: number;
-  views: number;
-  likes: number;
-  comments: number;
-  shares: number;
-};
-
-function toLocalDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function formatDateLabel(dateStr: string, totalDays: number): string {
-  const d = new Date(dateStr + 'T00:00:00');
-  if (totalDays <= 7) return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
-  if (totalDays <= 90) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-}
 
 function FilterButtons({ filter, setFilter }: { filter: number; setFilter: (d: number) => void }) {
   return (
@@ -84,13 +57,7 @@ export default function TrendsCharts({
 }: {
   overview: AnalyticsOverview | null;
 }) {
-  const [metricsFilter, setMetricsFilter] = useState(30);
-  const [engFilter, setEngFilter] = useState(30);
   const [pieFilter, setPieFilter] = useState(0); // 0 = All time
-  const [metricsRaw, setMetricsRaw] = useState<DailyMetric[]>([]);
-  const [engRaw, setEngRaw] = useState<DailyMetric[]>([]);
-  const [metricsLoading, setMetricsLoading] = useState(true);
-  const [engLoading, setEngLoading] = useState(true);
 
   type PlatformData = { platform: string; views: number; likes: number; comments: number; shares: number; videoCount: number; followers: number };
   const [piePlatforms, setPiePlatforms] = useState<PlatformData[]>([]);
@@ -105,21 +72,6 @@ export default function TrendsCharts({
   // Re-fetch all charts when a sync completes (lastSyncedAt changes)
   const refreshKey = overview?.lastSyncedAt || '';
 
-  const fetchMetrics = useCallback(async (days: number, target: 'metrics' | 'eng') => {
-    try {
-      const param = days > 0 ? `?days=${days}` : '';
-      const res = await fetch(`/api/analytics/daily-metrics${param}`, { cache: 'no-store' });
-      const json = await res.json();
-      if (target === 'metrics') setMetricsRaw(json.metrics || []);
-      else setEngRaw(json.metrics || []);
-    } catch (e) {
-      console.error('Failed to load daily metrics:', e);
-    } finally {
-      if (target === 'metrics') setMetricsLoading(false);
-      else setEngLoading(false);
-    }
-  }, []);
-
   const fetchPiePlatforms = useCallback(async (days: number) => {
     try {
       const param = days > 0 ? `?days=${days}` : '';
@@ -132,16 +84,6 @@ export default function TrendsCharts({
       setPieLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    setMetricsLoading(true);
-    fetchMetrics(metricsFilter, 'metrics');
-  }, [metricsFilter, fetchMetrics, refreshKey]);
-
-  useEffect(() => {
-    setEngLoading(true);
-    fetchMetrics(engFilter, 'eng');
-  }, [engFilter, fetchMetrics, refreshKey]);
 
   useEffect(() => {
     setPieLoading(true);
@@ -184,100 +126,6 @@ export default function TrendsCharts({
     fetchContentData(contentFilter);
   }, [contentFilter, fetchContentData, refreshKey]);
 
-  // Fill in missing dates for continuous timeline
-  const chartData = useMemo(() => {
-    if (metricsRaw.length === 0) return [];
-
-    const dataMap = new Map(metricsRaw.map(d => [d.date, d]));
-    const allDates = metricsRaw.map(d => d.date).sort();
-    const start = new Date(allDates[0] + 'T00:00:00');
-    const end = new Date(allDates[allDates.length - 1] + 'T00:00:00');
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    if (now > end) end.setTime(now.getTime());
-
-    const filled: { date: string; label: string; views: number; likes: number; comments: number; shares: number; engagement: number }[] = [];
-    const cursor = new Date(start);
-    const totalSpanDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-
-    while (cursor <= end) {
-      const key = toLocalDateStr(cursor);
-      const entry = dataMap.get(key);
-      const views = entry?.views || 0;
-      const likes = entry?.likes || 0;
-      const comments = entry?.comments || 0;
-      const shares = entry?.shares || 0;
-      const interactions = likes + comments + shares;
-      filled.push({
-        date: key,
-        label: formatDateLabel(key, totalSpanDays),
-        views,
-        likes,
-        comments,
-        shares,
-        engagement: views > 0 ? Number(((interactions / views) * 100).toFixed(2)) : 0,
-      });
-      cursor.setDate(cursor.getDate() + 1);
-    }
-
-    return filled;
-  }, [metricsRaw]);
-
-  // Separate chart data for engagement (independent filter)
-  const engChartData = useMemo(() => {
-    if (engRaw.length === 0) return [];
-
-    const dataMap = new Map(engRaw.map(d => [d.date, d]));
-    const allDates = engRaw.map(d => d.date).sort();
-    const start = new Date(allDates[0] + 'T00:00:00');
-    const end = new Date(allDates[allDates.length - 1] + 'T00:00:00');
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    if (now > end) end.setTime(now.getTime());
-
-    const filled: { date: string; label: string; engagement: number }[] = [];
-    const cursor = new Date(start);
-    const totalSpanDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-
-    while (cursor <= end) {
-      const key = toLocalDateStr(cursor);
-      const entry = dataMap.get(key);
-      const views = entry?.views || 0;
-      const interactions = (entry?.likes || 0) + (entry?.comments || 0) + (entry?.shares || 0);
-      filled.push({
-        date: key,
-        label: formatDateLabel(key, totalSpanDays),
-        engagement: views > 0 ? Number(((interactions / views) * 100).toFixed(2)) : 0,
-      });
-      cursor.setDate(cursor.getDate() + 1);
-    }
-
-    return filled;
-  }, [engRaw]);
-
-  // Tick intervals for each chart
-  const metricsTickInterval = useMemo(() => {
-    const len = chartData.length;
-    if (len <= 7) return 0;
-    if (len <= 31) return Math.ceil(len / 10) - 1;
-    if (len <= 90) return Math.ceil(len / 12) - 1;
-    return Math.ceil(len / 10) - 1;
-  }, [chartData]);
-
-  const engTickInterval = useMemo(() => {
-    const len = engChartData.length;
-    if (len <= 7) return 0;
-    if (len <= 31) return Math.ceil(len / 10) - 1;
-    if (len <= 90) return Math.ceil(len / 12) - 1;
-    return Math.ceil(len / 10) - 1;
-  }, [engChartData]);
-
-  // Peak day stats
-  const peakViews = useMemo(() => {
-    if (chartData.length === 0) return null;
-    return chartData.reduce((b, d) => (d.views > b.views ? d : b), chartData[0]);
-  }, [chartData]);
-
   const breakdown = overview?.platformBreakdown || [];
   // Pie chart uses date-filtered platform data
   const pieSource = piePlatforms.length > 0 ? piePlatforms : breakdown;
@@ -302,13 +150,6 @@ export default function TrendsCharts({
       accounts: overview.accountCount,
     };
   }, [overview, breakdown]);
-
-  const tooltipLabelFormatter = useCallback((_: string, payload: Array<{ payload?: { date?: string } }>) => {
-    const entry = payload?.[0]?.payload;
-    if (!entry?.date) return '';
-    const d = new Date(entry.date + 'T00:00:00');
-    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-  }, []);
 
   return (
     <div className="space-y-5">
@@ -344,90 +185,8 @@ export default function TrendsCharts({
         </div>
       )}
 
-      {/* Row 2: Metrics Over Time + Views by Platform */}
+      {/* Row 2: Views by Platform + Engagement Breakdown */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {/* Metrics Over Time — per-day from all media items */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-[var(--primary)]" />
-              <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
-                Metrics Over Time
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              {peakViews && peakViews.views > 0 && (
-                <span className="hidden rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] text-[var(--text-muted)] lg:inline-flex">
-                  Peak: <span className="ml-1 font-semibold text-[var(--foreground)]">{formatNumber(peakViews.views)}</span>
-                  <span className="mx-1">on</span>
-                  <span className="font-semibold text-[var(--foreground)]">
-                    {new Date(peakViews.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </span>
-                </span>
-              )}
-              <FilterButtons filter={metricsFilter} setFilter={setMetricsFilter} />
-            </div>
-          </div>
-
-          <div className="mb-3 flex items-center gap-3">
-            {LINE_METRICS.map(m => (
-              <div key={m.key} className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: m.color }} />
-                <span className="text-[10px] text-[var(--text-muted)]">{m.label}</span>
-              </div>
-            ))}
-          </div>
-
-          {metricsLoading || chartData.length === 0 ? (
-            <div className="flex h-[220px] items-center justify-center text-sm text-[var(--text-muted)]">
-              {metricsLoading ? 'Loading...' : 'No data yet. Sync to build history.'}
-            </div>
-          ) : (
-            <div className="h-[220px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                  <defs>
-                    {LINE_METRICS.map(m => (
-                      <linearGradient key={m.key} id={`trend-${m.key}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={m.color} stopOpacity={0.12} />
-                        <stop offset="100%" stopColor={m.color} stopOpacity={0} />
-                      </linearGradient>
-                    ))}
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    tick={{ fontSize: 9, fill: 'var(--text-muted)' }}
-                    axisLine={false}
-                    tickLine={false}
-                    interval={metricsTickInterval}
-                  />
-                  <YAxis tickFormatter={formatNumber} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={40} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: 'var(--popover)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, padding: '6px 10px' }} labelStyle={{ color: 'var(--foreground)' }} itemStyle={{ color: 'var(--foreground)' }}
-                    labelFormatter={tooltipLabelFormatter}
-                    formatter={(v: number, name: string) => [formatNumber(v), name.charAt(0).toUpperCase() + name.slice(1)]}
-                    cursor={{ stroke: 'var(--text-muted)', strokeWidth: 1, strokeDasharray: '4 4' }}
-                  />
-                  {LINE_METRICS.map(m => (
-                    <Area
-                      key={m.key}
-                      type="monotone"
-                      dataKey={m.key}
-                      name={m.label}
-                      stroke={m.color}
-                      strokeWidth={2}
-                      fill={`url(#trend-${m.key})`}
-                      dot={false}
-                      activeDot={{ r: 3, fill: m.color, stroke: 'var(--background)', strokeWidth: 2 }}
-                    />
-                  ))}
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-
         {/* Views by Platform */}
         {(pieData.length > 0 || pieLoading) && (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
@@ -502,70 +261,6 @@ export default function TrendsCharts({
             </div>
           </div>
         )}
-      </div>
-
-      {/* Row 3: Engagement Rate Over Time + Engagement Breakdown */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {/* Engagement Rate Over Time — per-day from all media items */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Zap className="h-4 w-4 text-[#22c55e]" />
-              <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
-                Engagement Rate Over Time
-              </p>
-            </div>
-            <FilterButtons filter={engFilter} setFilter={setEngFilter} />
-          </div>
-          {engLoading || engChartData.length === 0 ? (
-            <div className="flex h-[200px] items-center justify-center text-sm text-[var(--text-muted)]">
-              {engLoading ? 'Loading...' : 'No data yet.'}
-            </div>
-          ) : (
-            <div className="h-[200px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={engChartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                  <defs>
-                    <linearGradient id="engFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#22c55e" stopOpacity={0.15} />
-                      <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    tick={{ fontSize: 9, fill: 'var(--text-muted)' }}
-                    axisLine={false}
-                    tickLine={false}
-                    interval={engTickInterval}
-                  />
-                  <YAxis
-                    tickFormatter={(v: number) => v.toFixed(1) + '%'}
-                    tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={45}
-                  />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: 'var(--popover)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, padding: '6px 10px' }} labelStyle={{ color: 'var(--foreground)' }} itemStyle={{ color: 'var(--foreground)' }}
-                    labelFormatter={tooltipLabelFormatter}
-                    formatter={(v: number) => [v.toFixed(2) + '%', 'Engagement']}
-                    cursor={{ stroke: '#22c55e', strokeWidth: 1, strokeDasharray: '4 4' }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="engagement"
-                    stroke="#22c55e"
-                    strokeWidth={2}
-                    fill="url(#engFill)"
-                    dot={false}
-                    activeDot={{ r: 3, fill: '#22c55e', stroke: 'var(--background)', strokeWidth: 2 }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
 
         {/* Engagement Breakdown */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
@@ -573,7 +268,7 @@ export default function TrendsCharts({
         </div>
       </div>
 
-      {/* Row 4: Content Performance + Platform Engagement */}
+      {/* Row 3: Content Performance + Platform Engagement */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* Content Performance */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">

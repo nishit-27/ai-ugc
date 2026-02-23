@@ -43,6 +43,7 @@ export default function TemplatesPage() {
   const [uploadedFilename, setUploadedFilename] = useState(() => draft.current?.uploadedFilename ?? '');
   const [sourceDuration, setSourceDuration] = useState<number | undefined>(() => draft.current?.sourceDuration);
   const [previewUrl, setPreviewUrl] = useState(() => draft.current?.previewUrl ?? '');
+  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResolvingPreview, setIsResolvingPreview] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Map<string, string>>(new Map());
@@ -271,6 +272,23 @@ export default function TemplatesPage() {
       }
       const data = await res.json();
       const isBatch = data.isBatch === true;
+      // Save variable values for the created job(s)
+      const activeVarValues = Object.entries(variableValues).filter(([, v]) => v !== '');
+      if (activeVarValues.length > 0) {
+        const jobIds = isBatch && data.childJobIds ? data.childJobIds : [data.id];
+        for (const jobId of jobIds) {
+          try {
+            await fetch('/api/variables/values', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jobId,
+                values: activeVarValues.map(([variableId, value]) => ({ variableId, value })),
+              }),
+            });
+          } catch {}
+        }
+      }
       if (!isBatch) {
         try {
           sessionStorage.setItem('ai-ugc-new-job', JSON.stringify(data));
@@ -400,6 +418,8 @@ export default function TemplatesPage() {
                   onVideoUpload: (e) => handleVideoUpload(e),
                   onVideoRemove: () => { setVideoUrl(''); setPreviewUrl(''); setUploadedFilename(''); setSourceDuration(undefined); },
                   onFileDrop: handleVideoFile,
+                  variableValues,
+                  onVariableValuesChange: setVariableValues,
                 }}
                 videoUrl={previewUrl || undefined}
                 sourceDuration={sourceDuration}

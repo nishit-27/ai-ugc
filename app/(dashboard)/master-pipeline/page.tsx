@@ -54,6 +54,7 @@ export default function MasterPipelinePage() {
   const [uploadedFilename, setUploadedFilename] = useState(() => draft.current?.uploadedFilename ?? '');
   const [sourceDuration, setSourceDuration] = useState<number | undefined>(() => draft.current?.sourceDuration);
   const [previewUrl, setPreviewUrl] = useState(() => draft.current?.previewUrl ?? '');
+  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResolvingPreview, setIsResolvingPreview] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Map<string, string>>(new Map());
@@ -367,6 +368,24 @@ export default function MasterPipelinePage() {
         throw new Error(data.error || 'Failed to create master batch');
       }
 
+      const data = await res.json();
+      // Save variable values for all child jobs
+      const activeVarValues = Object.entries(variableValues).filter(([, v]) => v !== '');
+      if (activeVarValues.length > 0 && data.childJobIds) {
+        for (const jobId of data.childJobIds) {
+          try {
+            await fetch('/api/variables/values', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jobId,
+                values: activeVarValues.map(([variableId, value]) => ({ variableId, value })),
+              }),
+            });
+          } catch {}
+        }
+      }
+
       try { sessionStorage.removeItem(MASTER_DRAFT_KEY); } catch {}
       showToast(`Master batch started with ${selectedModelIds.length} models!`, 'success');
       router.push('/jobs?tab=master');
@@ -466,6 +485,8 @@ export default function MasterPipelinePage() {
                     onLibraryVideoSelect: (modelId, gcsUrl) => setLibraryVideos((prev) => ({ ...prev, [modelId]: gcsUrl })),
                     onLibraryVideoRemove: (modelId) => setLibraryVideos((prev) => { const next = { ...prev }; delete next[modelId]; return next; }),
                     selectedModelIds,
+                    variableValues,
+                    onVariableValuesChange: setVariableValues,
                   }}
                   videoUrl={previewUrl || undefined}
                   sourceDuration={sourceDuration}
