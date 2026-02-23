@@ -407,6 +407,7 @@ export default function BatchVideoGenConfig({
           config={config}
           onChange={onChange}
           sourceDuration={sourceDuration}
+          sourceVideoUrl={sourceVideoUrl}
           masterMode={masterMode}
           imageSource={imageSource}
           models={models}

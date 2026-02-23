@@ -40,14 +40,14 @@ export async function POST(request: NextRequest) {
       const batchConfig = firstEnabled.config as BatchVideoGenConfig;
       if (batchConfig.mode !== 'subtle-animation') {
         // Motion control needs input video
-        if (!tiktokUrl && !videoUrl) {
+        if (!tiktokUrl && !videoUrl && videoSource !== 'library') {
           return NextResponse.json({ error: 'A video source is required for Motion Control mode' }, { status: 400 });
         }
       }
     } else if (firstIsVideo) {
       const videoConfig = firstEnabled.config as VideoGenConfig;
       if (videoConfig.mode !== 'subtle-animation') {
-        if (!tiktokUrl && !videoUrl) {
+        if (!tiktokUrl && !videoUrl && videoSource !== 'library') {
           return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
         }
       }
@@ -144,6 +144,8 @@ export async function POST(request: NextRequest) {
             negativePrompt: batchConfig.negativePrompt,
             resolution: batchConfig.resolution,
             maxSeconds: batchConfig.maxSeconds,
+            trimStart: batchConfig.trimStart,
+            trimEnd: batchConfig.trimEnd,
           };
           return {
             ...step,

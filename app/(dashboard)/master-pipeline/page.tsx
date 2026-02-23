@@ -165,6 +165,19 @@ export default function MasterPipelinePage() {
     };
   }, [tiktokUrl, videoSource]);
 
+  // Detect duration from preview URL (covers TikTok/IG resolves where upload metadata isn't available)
+  useEffect(() => {
+    if (!previewUrl || sourceDuration) return;
+    const vid = document.createElement('video');
+    vid.preload = 'metadata';
+    vid.crossOrigin = 'anonymous';
+    vid.onloadedmetadata = () => {
+      if (vid.duration && isFinite(vid.duration)) setSourceDuration(Math.round(vid.duration));
+    };
+    vid.src = previewUrl;
+    return () => { vid.src = ''; };
+  }, [previewUrl, sourceDuration]);
+
   // UI state
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showPresets, setShowPresets] = useState(false);

@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronUp, Clock, Monitor, Volume2, VolumeX, X } from 'lucide-react';
 import Dropdown from '@/components/templates/shared/OptionDropdown';
+import VideoTrimmer from '@/components/templates/shared/VideoTrimmer';
 import VideoGenMasterFirstFrameCard from './VideoGenMasterFirstFrameCard';
 import type { Model, ModelImage, VideoGenConfig as VGC } from '@/types';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
@@ -419,6 +420,16 @@ export default function VideoGenMainColumn({
           </button>
         </div>
       </div>
+
+      {sourceVideoUrl && sourceDuration && sourceDuration > 0 && (
+        <VideoTrimmer
+          videoUrl={sourceVideoUrl}
+          duration={sourceDuration}
+          trimStart={config.trimStart ?? 0}
+          trimEnd={config.trimEnd ?? sourceDuration}
+          onChange={(start, end) => onChange({ ...config, trimStart: start, trimEnd: end })}
+        />
+      )}
     </div>
   );
 }

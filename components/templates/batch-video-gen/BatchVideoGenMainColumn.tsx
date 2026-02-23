@@ -1,5 +1,6 @@
 import { Check, Clock, Expand, Monitor, User, Volume2, VolumeX, X } from 'lucide-react';
 import Dropdown from '@/components/templates/shared/OptionDropdown';
+import VideoTrimmer from '@/components/templates/shared/VideoTrimmer';
 import type { BatchVideoGenConfig as BVGC, Model, ModelImage } from '@/types';
 import type { ImageSource } from './types';
 
@@ -14,6 +15,7 @@ type Props = {
   config: BVGC;
   onChange: (c: BVGC) => void;
   sourceDuration?: number;
+  sourceVideoUrl?: string;
   masterMode?: boolean;
   imageSource: ImageSource;
   models: Model[];
@@ -37,6 +39,7 @@ export default function BatchVideoGenMainColumn({
   config,
   onChange,
   sourceDuration,
+  sourceVideoUrl,
   masterMode,
   imageSource,
   models,
@@ -362,6 +365,16 @@ export default function BatchVideoGenMainColumn({
           </button>
         </div>
       </div>
+
+      {sourceVideoUrl && sourceDuration && sourceDuration > 0 && (
+        <VideoTrimmer
+          videoUrl={sourceVideoUrl}
+          duration={sourceDuration}
+          trimStart={config.trimStart ?? 0}
+          trimEnd={config.trimEnd ?? sourceDuration}
+          onChange={(start, end) => onChange({ ...config, trimStart: start, trimEnd: end })}
+        />
+      )}
     </div>
   );
 }

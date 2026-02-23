@@ -112,6 +112,8 @@ export type VideoGenConfig = {
   imageUrl?: string;
   prompt?: string;
   maxSeconds?: number;
+  trimStart?: number;              // seconds – start of trim range
+  trimEnd?: number;                // seconds – end of trim range
   // Shared settings (toolbar controls)
   aspectRatio?: string;            // '9:16' | '16:9' | 'auto'
   duration?: string;               // Veo: '4s'|'6s'|'8s'
@@ -187,6 +189,8 @@ export type BatchVideoGenConfig = {
   negativePrompt?: string;
   resolution?: '720p' | '1080p' | '4k';
   maxSeconds?: number;
+  trimStart?: number;              // seconds – start of trim range
+  trimEnd?: number;                // seconds – end of trim range
   // First Frame Generation (shared across all batch entries)
   firstFrameEnabled?: boolean;
   extractedFrameUrl?: string;    // Single extracted frame, used for all

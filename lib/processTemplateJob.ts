@@ -4,13 +4,42 @@ import os from 'os';
 import { fal } from '@fal-ai/client';
 import { getTemplateJob, updateTemplateJob, getModelImage, updatePipelineBatchProgress } from '@/lib/db';
 import { uploadVideoFromPath, downloadToBuffer as gcsDownloadToBuffer } from '@/lib/storage';
-import { downloadFile, getVideoDuration, trimVideo } from '@/lib/serverUtils';
+import { downloadFile, getVideoDuration, trimVideo, trimVideoRange } from '@/lib/serverUtils';
 import { addTextOverlay, mixAudio, concatVideos, stripAudio } from '@/lib/ffmpegOps';
 import { composeMedia } from '@/lib/ffmpegCompose';
 import { config, getFalWebhookUrl } from '@/lib/config';
 import { getVideoDownloadUrl } from '@/lib/processJob';
 import { uploadBuffer } from '@/lib/upload-via-presigned.js';
 import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, ComposeConfig, ComposeLayer } from '@/types';
+
+/**
+ * Semaphore for limiting concurrent local ffmpeg/sharp operations.
+ * FAL API calls (video gen) are pure network I/O and don't need limiting,
+ * but text overlay, audio mix, concat, trim etc. are CPU/memory-heavy.
+ */
+class Semaphore {
+  private queue: (() => void)[] = [];
+  private active = 0;
+  constructor(private limit: number) {}
+  async acquire(): Promise<void> {
+    if (this.active < this.limit) {
+      this.active++;
+      return;
+    }
+    return new Promise<void>((resolve) => this.queue.push(resolve));
+  }
+  release(): void {
+    this.active--;
+    const next = this.queue.shift();
+    if (next) {
+      this.active++;
+      next();
+    }
+  }
+}
+
+const localProcessingSemaphore = new Semaphore(5);
+
 function getTempDir(): string {
   const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -142,7 +171,11 @@ export async function processStep(
         const duration = getVideoDuration(currentVideoPath);
         let videoToUpload = currentVideoPath;
         let trimmedPath: string | undefined;
-        if (duration > maxSec) {
+        if (cfg.trimStart != null && cfg.trimEnd != null) {
+          trimmedPath = path.join(tempDir, `tpl-mc-trimmed-${stepIndex}-${jobId}-${Date.now()}.mp4`);
+          trimVideoRange(currentVideoPath, trimmedPath, cfg.trimStart, cfg.trimEnd);
+          videoToUpload = trimmedPath;
+        } else if (duration > maxSec) {
           trimmedPath = path.join(tempDir, `tpl-mc-trimmed-${stepIndex}-${jobId}-${Date.now()}.mp4`);
           trimVideo(currentVideoPath, trimmedPath, maxSec);
           videoToUpload = trimmedPath;
@@ -190,105 +223,125 @@ export async function processStep(
       }
     }
     case 'text-overlay': {
-      const cfg = step.config as TextOverlayConfig;
-      const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
-      await addTextOverlay(currentVideoPath, outputPath, cfg);
-      return outputPath;
-    }
-    case 'bg-music': {
-      const cfg = step.config as BgMusicConfig;
-      const trackUrl = cfg.customTrackUrl || cfg.trackId;
-      if (!trackUrl) throw new Error('No music track specified');
-      let effectiveAudioMode: 'replace' | 'mix' = 'mix';
-      if (cfg.audioModePerStep) {
-        const targetIds = cfg.applyToSteps?.length ? cfg.applyToSteps : Object.keys(cfg.audioModePerStep);
-        if (targetIds.some((id) => cfg.audioModePerStep![id] === 'replace')) {
-          effectiveAudioMode = 'replace';
-        }
-      }
-      const effectiveCfg = { ...cfg, audioMode: effectiveAudioMode };
-      const audioPath = path.join(tempDir, `tpl-audio-${stepIndex}-${Date.now()}.mp3`);
-      await downloadToLocal(trackUrl, audioPath);
-      const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
+      await localProcessingSemaphore.acquire();
       try {
-        mixAudio(currentVideoPath, audioPath, outputPath, effectiveCfg);
-      } finally {
-        try { fs.unlinkSync(audioPath); } catch {}
-      }
-      return outputPath;
-    }
-    case 'attach-video': {
-      const cfg = step.config as AttachVideoConfig;
-      let clipUrl: string | undefined;
-      let clipIsLocal = false;
-      if (cfg.sourceStepId && stepOutputs.has(cfg.sourceStepId)) {
-        clipUrl = stepOutputs.get(cfg.sourceStepId);
-        clipIsLocal = true;
-      } else if (cfg.tiktokUrl) {
-        const rapidApiKey = config.RAPIDAPI_KEY;
-        if (!rapidApiKey) throw new Error('RAPIDAPI_KEY not configured');
-        clipUrl = await getVideoDownloadUrl(cfg.tiktokUrl, rapidApiKey);
-      } else {
-        clipUrl = cfg.videoUrl;
-      }
-      if (!clipUrl) throw new Error('No video source for attach step');
-      let attachPath: string;
-      if (clipIsLocal) {
-        attachPath = clipUrl;
-      } else {
-        attachPath = path.join(tempDir, `tpl-attach-${stepIndex}-${jobId}-${Date.now()}.mp4`);
-        await downloadToLocal(clipUrl, attachPath);
-      }
-      let musicedClipPath: string | undefined;
-      if (inlineMusic) {
-        musicedClipPath = await applyInlineMusic(attachPath, inlineMusic, stepIndex, jobId);
-        attachPath = musicedClipPath;
-      }
-      const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
-      const videoPaths = cfg.position === 'before'
-        ? [attachPath, currentVideoPath]
-        : [currentVideoPath, attachPath];
-      try {
-        concatVideos(videoPaths, outputPath);
-      } finally {
-        if (!clipIsLocal) {
-          try { fs.unlinkSync(attachPath); } catch {}
-        }
-        if (musicedClipPath) {
-          try { fs.unlinkSync(musicedClipPath); } catch {}
-        }
-      }
-      return outputPath;
-    }
-    case 'compose': {
-      const cfg = step.config as ComposeConfig;
-      if (!cfg.layers || cfg.layers.length === 0) {
-        throw new Error('Compose step has no layers');
-      }
-      const layerPaths = new Map<string, string>();
-      const downloadedPaths: string[] = [];
-      try {
-        for (const layer of cfg.layers) {
-          const src = layer.source;
-          let localPath: string;
-          if (src.type === 'step-output' && src.stepId && stepOutputs.has(src.stepId)) {
-            localPath = stepOutputs.get(src.stepId)!;
-          } else {
-            const url = src.gcsUrl || src.url;
-            if (!url) throw new Error(`No URL for compose layer ${layer.id}`);
-            localPath = path.join(tempDir, `tpl-compose-${layer.id}-${Date.now()}.${layer.type === 'video' ? 'mp4' : 'png'}`);
-            await downloadToLocal(url, localPath);
-            downloadedPaths.push(localPath);
-          }
-          layerPaths.set(layer.id, localPath);
-        }
-        const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-compose-${Date.now()}.mp4`);
-        composeMedia(layerPaths, cfg, outputPath);
+        const cfg = step.config as TextOverlayConfig;
+        const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
+        await addTextOverlay(currentVideoPath, outputPath, cfg);
         return outputPath;
       } finally {
-        for (const p of downloadedPaths) {
-          try { fs.unlinkSync(p); } catch {}
+        localProcessingSemaphore.release();
+      }
+    }
+    case 'bg-music': {
+      await localProcessingSemaphore.acquire();
+      try {
+        const cfg = step.config as BgMusicConfig;
+        const trackUrl = cfg.customTrackUrl || cfg.trackId;
+        if (!trackUrl) throw new Error('No music track specified');
+        let effectiveAudioMode: 'replace' | 'mix' = 'mix';
+        if (cfg.audioModePerStep) {
+          const targetIds = cfg.applyToSteps?.length ? cfg.applyToSteps : Object.keys(cfg.audioModePerStep);
+          if (targetIds.some((id) => cfg.audioModePerStep![id] === 'replace')) {
+            effectiveAudioMode = 'replace';
+          }
         }
+        const effectiveCfg = { ...cfg, audioMode: effectiveAudioMode };
+        const audioPath = path.join(tempDir, `tpl-audio-${stepIndex}-${Date.now()}.mp3`);
+        await downloadToLocal(trackUrl, audioPath);
+        const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
+        try {
+          mixAudio(currentVideoPath, audioPath, outputPath, effectiveCfg);
+        } finally {
+          try { fs.unlinkSync(audioPath); } catch {}
+        }
+        return outputPath;
+      } finally {
+        localProcessingSemaphore.release();
+      }
+    }
+    case 'attach-video': {
+      await localProcessingSemaphore.acquire();
+      try {
+        const cfg = step.config as AttachVideoConfig;
+        let clipUrl: string | undefined;
+        let clipIsLocal = false;
+        if (cfg.sourceStepId && stepOutputs.has(cfg.sourceStepId)) {
+          clipUrl = stepOutputs.get(cfg.sourceStepId);
+          clipIsLocal = true;
+        } else if (cfg.tiktokUrl) {
+          const rapidApiKey = config.RAPIDAPI_KEY;
+          if (!rapidApiKey) throw new Error('RAPIDAPI_KEY not configured');
+          clipUrl = await getVideoDownloadUrl(cfg.tiktokUrl, rapidApiKey);
+        } else {
+          clipUrl = cfg.videoUrl;
+        }
+        if (!clipUrl) throw new Error('No video source for attach step');
+        let attachPath: string;
+        if (clipIsLocal) {
+          attachPath = clipUrl;
+        } else {
+          attachPath = path.join(tempDir, `tpl-attach-${stepIndex}-${jobId}-${Date.now()}.mp4`);
+          await downloadToLocal(clipUrl, attachPath);
+        }
+        let musicedClipPath: string | undefined;
+        if (inlineMusic) {
+          musicedClipPath = await applyInlineMusic(attachPath, inlineMusic, stepIndex, jobId);
+          attachPath = musicedClipPath;
+        }
+        const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
+        const videoPaths = cfg.position === 'before'
+          ? [attachPath, currentVideoPath]
+          : [currentVideoPath, attachPath];
+        try {
+          concatVideos(videoPaths, outputPath);
+        } finally {
+          if (!clipIsLocal) {
+            try { fs.unlinkSync(attachPath); } catch {}
+          }
+          if (musicedClipPath) {
+            try { fs.unlinkSync(musicedClipPath); } catch {}
+          }
+        }
+        return outputPath;
+      } finally {
+        localProcessingSemaphore.release();
+      }
+    }
+    case 'compose': {
+      await localProcessingSemaphore.acquire();
+      try {
+        const cfg = step.config as ComposeConfig;
+        if (!cfg.layers || cfg.layers.length === 0) {
+          throw new Error('Compose step has no layers');
+        }
+        const layerPaths = new Map<string, string>();
+        const downloadedPaths: string[] = [];
+        try {
+          for (const layer of cfg.layers) {
+            const src = layer.source;
+            let localPath: string;
+            if (src.type === 'step-output' && src.stepId && stepOutputs.has(src.stepId)) {
+              localPath = stepOutputs.get(src.stepId)!;
+            } else {
+              const url = src.gcsUrl || src.url;
+              if (!url) throw new Error(`No URL for compose layer ${layer.id}`);
+              localPath = path.join(tempDir, `tpl-compose-${layer.id}-${Date.now()}.${layer.type === 'video' ? 'mp4' : 'png'}`);
+              await downloadToLocal(url, localPath);
+              downloadedPaths.push(localPath);
+            }
+            layerPaths.set(layer.id, localPath);
+          }
+          const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-compose-${Date.now()}.mp4`);
+          composeMedia(layerPaths, cfg, outputPath);
+          return outputPath;
+        } finally {
+          for (const p of downloadedPaths) {
+            try { fs.unlinkSync(p); } catch {}
+          }
+        }
+      } finally {
+        localProcessingSemaphore.release();
       }
     }
     default:

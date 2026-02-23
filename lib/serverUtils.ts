@@ -107,6 +107,65 @@ export function extractRandomFrames(videoPath: string, count = 10): Array<{ time
   return frames
 }
 
+/** Extract evenly-spaced frames from a video (lightweight, no AI scoring) */
+export function extractEvenlySpacedFrames(
+  videoPath: string,
+  count = 15,
+  thumbnailWidth = 120,
+): Array<{ timestamp: number; buffer: Buffer }> {
+  const duration = getVideoDuration(videoPath)
+  if (duration <= 0) throw new Error('Could not determine video duration')
+
+  const timestamps: number[] = []
+  for (let i = 0; i < count; i++) {
+    timestamps.push((i / (count - 1)) * duration)
+  }
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-'))
+  const frames: Array<{ timestamp: number; buffer: Buffer }> = []
+
+  try {
+    for (const ts of timestamps) {
+      const outPath = path.join(tmpDir, `frame-${ts.toFixed(3)}.jpg`)
+      execFileSync(FFMPEG, [
+        '-ss', String(ts),
+        '-i', videoPath,
+        '-vframes', '1',
+        '-vf', `scale=${thumbnailWidth}:-1`,
+        '-q:v', '4',
+        '-y',
+        outPath,
+      ])
+      if (fs.existsSync(outPath)) {
+        frames.push({ timestamp: ts, buffer: fs.readFileSync(outPath) })
+        fs.unlinkSync(outPath)
+      }
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+
+  return frames
+}
+
+/** Trim a video to a specific time range using ffmpeg (stream copy) */
+export function trimVideoRange(
+  inputPath: string,
+  outputPath: string,
+  startSec: number,
+  endSec: number,
+): void {
+  const duration = endSec - startSec
+  execFileSync(FFMPEG, [
+    '-y',
+    '-ss', String(startSec),
+    '-i', inputPath,
+    '-t', String(duration),
+    '-c', 'copy',
+    outputPath,
+  ])
+}
+
 /** Download a file from a URL to a local path */
 export function downloadFile(url: string, destPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
