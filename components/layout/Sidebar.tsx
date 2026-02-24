@@ -39,6 +39,7 @@ const contentItems = [
 
 const settingsItems = [
   { href: '/models', label: 'Models', icon: UserCircle },
+  { href: '/model-groups', label: 'Model Groups', icon: FolderOpen },
   { href: '/connections', label: 'Connections', icon: Link2 },
   { href: '/variables', label: 'Variables', icon: Tag },
 ];

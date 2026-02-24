@@ -69,6 +69,7 @@ export type Model = {
   id: string;
   name: string;
   description?: string;
+  groupName?: string;
   avatarUrl?: string;
   avatarGcsUrl?: string;
   imageCount?: number;

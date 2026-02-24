@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getModel, updateModel, deleteModel, getModelImages } from '@/lib/db';
+import { getModel, updateModel, deleteModel, getModelImages, ensureDatabaseReady } from '@/lib/db';
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+function normalizeGroupName(groupName?: string | null): string | null {
+  const trimmed = typeof groupName === 'string' ? groupName.trim() : '';
+  return trimmed || null;
+}
 
 // GET /api/models/[id] - Get model with images
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   try {
+    await ensureDatabaseReady();
     const { id } = await params;
     const model = await getModel(id);
 
@@ -29,19 +35,39 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 // PATCH /api/models/[id] - Update model
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
+    await ensureDatabaseReady();
     const { id } = await params;
     const body = await request.json();
-    const { name, description } = body as { name?: string; description?: string };
+    const payload = body as { name?: string; description?: string | null; groupName?: string | null };
 
     const existing = await getModel(id);
     if (!existing) {
       return NextResponse.json({ error: 'Model not found' }, { status: 404 });
     }
 
-    const updated = await updateModel(id, {
-      name: name?.trim(),
-      description: description?.trim(),
+    const updates: { name?: string; description?: string | null; groupName?: string | null; avatarUrl?: string | null } = {
       avatarUrl: undefined,
+    };
+
+    if ('name' in payload) {
+      const nextName = payload.name?.trim();
+      if (!nextName) {
+        return NextResponse.json({ error: 'Model name is required' }, { status: 400 });
+      }
+      updates.name = nextName;
+    }
+
+    if ('description' in payload) {
+      const nextDescription = typeof payload.description === 'string' ? payload.description.trim() : '';
+      updates.description = nextDescription || null;
+    }
+
+    if ('groupName' in payload) {
+      updates.groupName = normalizeGroupName(payload.groupName);
+    }
+
+    const updated = await updateModel(id, {
+      ...updates,
     });
 
     return NextResponse.json(updated);
@@ -54,6 +80,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 // DELETE /api/models/[id] - Delete model and all images
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
+    await ensureDatabaseReady();
     const { id } = await params;
     const existing = await getModel(id);
 

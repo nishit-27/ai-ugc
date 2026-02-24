@@ -8,7 +8,7 @@ import { getDateFilterCutoffMs, getDateFilterSortDirection, toMillis } from '@/l
 import type { DateFilterValue } from '@/types/media-filters';
 import { usePageVisibility } from './usePageVisibility';
 
-const ACTIVE_POLL_INTERVAL = 2_000;   // 2s when posts are publishing
+const ACTIVE_POLL_INTERVAL = 5_000;   // 5s when posts are publishing (server caches for 4s)
 const IDLE_POLL_INTERVAL = 60_000;    // 60s baseline
 const HIDDEN_POLL_INTERVAL = 120_000; // 2m when tab is hidden
 const CACHE_KEY = 'ai-ugc-posts-v3';
