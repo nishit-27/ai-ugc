@@ -8,17 +8,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { useToast } from '@/hooks/useToast';
 import OverviewCards from '@/components/analytics/OverviewCards';
-import FollowersChart from '@/components/analytics/FollowersChart';
-import DailyFollowersChart from '@/components/analytics/DailyFollowersChart';
+import OverviewCharts from '@/components/analytics/OverviewCharts';
 import PlatformComparison from '@/components/analytics/PlatformComparison';
 import PostingActivity from '@/components/analytics/PostingActivity';
 import TopVideosTable from '@/components/analytics/TopVideosTable';
 import ContentHighlights from '@/components/analytics/ContentHighlights';
+import EngagementTrend from '@/components/analytics/EngagementTrend';
+import BestPostingTimes from '@/components/analytics/BestPostingTimes';
+import ViewsToFollowerRatio from '@/components/analytics/ViewsToFollowerRatio';
+import TrendsCharts from '@/components/analytics/TrendsCharts';
 import AccountCard from '@/components/analytics/AccountCard';
 import AddAccountModal from '@/components/analytics/AddAccountModal';
 import MediaTable from '@/components/analytics/MediaTable';
 import ViewsDistribution from '@/components/analytics/ViewsDistribution';
-import TrendsCharts from '@/components/analytics/TrendsCharts';
+import VariableTracking from '@/components/analytics/VariableTracking';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationPrevious, PaginationNext, PaginationEllipsis } from '@/components/ui/pagination';
 import type { AnalyticsSnapshot } from '@/types';
 
@@ -279,7 +282,7 @@ function AnalyticsContent() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="accounts">Accounts</TabsTrigger>
             <TabsTrigger value="content">Content</TabsTrigger>
-            <TabsTrigger value="trends">Trends</TabsTrigger>
+            <TabsTrigger value="variables">Variable Tracking</TabsTrigger>
           </TabsList>
           <div className="flex items-center gap-2">
             {/* Account filters — only visible on Accounts tab */}
@@ -356,15 +359,8 @@ function AnalyticsContent() {
             <ContentHighlights overview={overview} items={mediaItems} />
           </div>
 
-          {/* Charts row: Audience Growth + Daily Subscribers */}
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-              <FollowersChart refreshKey={overview?.lastSyncedAt || ''} />
-            </div>
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-              <DailyFollowersChart refreshKey={overview?.lastSyncedAt || ''} />
-            </div>
-          </div>
+          {/* Charts row: Day-over-Day + Cumulative with metric dropdowns */}
+          <OverviewCharts refreshKey={overview?.lastSyncedAt || ''} />
 
           {/* Platform + Posting Activity */}
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -375,6 +371,24 @@ function AnalyticsContent() {
               <PostingActivity refreshKey={overview?.lastSyncedAt || ''} />
             </div>
           </div>
+
+          {/* Engagement Breakdown + Views-to-Follower Ratio */}
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+              <EngagementTrend refreshKey={overview?.lastSyncedAt || ''} />
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+              <ViewsToFollowerRatio refreshKey={overview?.lastSyncedAt || ''} />
+            </div>
+          </div>
+
+          {/* Best Posting Times Heatmap */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+            <BestPostingTimes refreshKey={overview?.lastSyncedAt || ''} />
+          </div>
+
+          {/* Trends sections: Views by Platform, Content Performance, Platform Engagement */}
+          <TrendsCharts overview={overview} />
 
           {/* Top Videos */}
           <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
@@ -581,10 +595,11 @@ function AnalyticsContent() {
           <ViewsDistribution items={filteredMedia} />
         </TabsContent>
 
-        {/* Tab 4: Trends */}
-        <TabsContent value="trends" className="mt-4">
-          <TrendsCharts overview={overview} />
+        {/* Tab 4: Variable Tracking */}
+        <TabsContent value="variables" className="mt-4">
+          <VariableTracking />
         </TabsContent>
+
       </Tabs>
 
       <AddAccountModal open={addModalOpen} onClose={() => setAddModalOpen(false)} onAdd={handleAddAccount} />

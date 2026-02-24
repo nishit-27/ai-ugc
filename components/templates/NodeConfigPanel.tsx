@@ -12,6 +12,7 @@ import BatchVideoGenConfig from './BatchVideoGenConfig';
 import TextOverlayPreview from './TextOverlayPreview';
 import ComposeStepConfig from './ComposeStepConfig';
 import LibraryVideoSelector from './LibraryVideoSelector';
+import VariableTagging from './VariableTagging';
 
 const nodeMeta: Record<MiniAppType, { label: string; icon: typeof Video; iconBg: string; iconColor: string }> = {
   'video-generation': { label: 'Video Generation', icon: Video, iconBg: '#f3f0ff', iconColor: '#7c3aed' },
@@ -40,6 +41,9 @@ type SourceConfig = {
   onLibraryVideoSelect?: (modelId: string, gcsUrl: string) => void;
   onLibraryVideoRemove?: (modelId: string) => void;
   selectedModelIds?: string[];
+  // Variable tagging
+  variableValues?: Record<string, string>;
+  onVariableValuesChange?: (values: Record<string, string>) => void;
 };
 
 export type MasterModel = { modelId: string; modelName: string; primaryImageUrl: string; primaryGcsUrl: string };
@@ -203,6 +207,11 @@ export default function NodeConfigPanel({
           <p className="text-[10px] text-[var(--text-muted)]">
             Not needed if the first step is Video Generation with Subtle Animation mode.
           </p>
+          {sourceConfig.variableValues && sourceConfig.onVariableValuesChange && (
+            <div className="mt-4 border-t border-[var(--border)] pt-4">
+              <VariableTagging values={sourceConfig.variableValues} onChange={sourceConfig.onVariableValuesChange} />
+            </div>
+          )}
           </div>
         </div>
         {previewUrl && <PreviewModal src={previewUrl} type="video" onClose={() => setPreviewUrl(null)} />}

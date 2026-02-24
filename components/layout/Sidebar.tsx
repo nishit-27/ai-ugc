@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList, ImageIcon, Crown, LogOut, Video, LayoutGrid, BarChart3, FolderOpen } from 'lucide-react';
+import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList, ImageIcon, Crown, LogOut, Video, LayoutGrid, BarChart3, Tag } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 import {
   Sidebar,
@@ -41,6 +41,7 @@ const settingsItems = [
   { href: '/models', label: 'Models', icon: UserCircle },
   { href: '/model-groups', label: 'Model Groups', icon: FolderOpen },
   { href: '/connections', label: 'Connections', icon: Link2 },
+  { href: '/variables', label: 'Variables', icon: Tag },
 ];
 
 export default function AppSidebar() {
