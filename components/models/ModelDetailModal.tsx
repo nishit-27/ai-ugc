@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, type ReactNode } from 'react';
-import { X, Upload, Star, Trash2, Loader2, ImageIcon, Link2, Pencil, Check } from 'lucide-react';
+import { X, Upload, Star, Trash2, Loader2, ImageIcon, Link2, Pencil, Check, Folder } from 'lucide-react';
 import type { Model, ModelImage, ModelAccountMapping, Account } from '@/types';
 import { useToast } from '@/hooks/useToast';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -67,6 +67,7 @@ export default function ModelDetailModal({
   imagesLoading,
   loadModelImages,
   loadModels,
+  existingGroupNames = [],
 }: {
   open: boolean;
   onClose: () => void;
@@ -75,6 +76,7 @@ export default function ModelDetailModal({
   imagesLoading?: boolean;
   loadModelImages: (modelId: string) => Promise<void>;
   loadModels: () => Promise<void>;
+  existingGroupNames?: string[];
 }) {
   // Social account mappings
   const [accountMappings, setAccountMappings] = useState<ModelAccountMapping[]>([]);
@@ -101,7 +103,16 @@ export default function ModelDetailModal({
   const [isEditingName, setIsEditingName] = useState(false);
   const [editName, setEditName] = useState('');
   const [isSavingName, setIsSavingName] = useState(false);
+  const [isEditingGroup, setIsEditingGroup] = useState(false);
+  const [editGroupName, setEditGroupName] = useState('');
+  const [isSavingGroup, setIsSavingGroup] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!model) return;
+    setEditGroupName(model.groupName || '');
+    setIsEditingGroup(false);
+  }, [model]);
 
   const handleSaveName = async () => {
     const trimmed = editName.trim();
@@ -129,6 +140,39 @@ export default function ModelDetailModal({
     } finally {
       setIsSavingName(false);
       setIsEditingName(false);
+    }
+  };
+
+  const handleSaveGroup = async () => {
+    if (!model) return;
+    const trimmedGroup = editGroupName.trim();
+    const currentGroup = (model.groupName || '').trim();
+
+    if (trimmedGroup === currentGroup) {
+      setIsEditingGroup(false);
+      return;
+    }
+
+    setIsSavingGroup(true);
+    try {
+      const res = await fetch(`/api/models/${model.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupName: trimmedGroup || null }),
+      });
+      if (res.ok) {
+        showToast(trimmedGroup ? 'Group updated' : 'Group removed', 'success');
+        await loadModels();
+      } else {
+        let errMsg = 'Failed to update group';
+        try { const d = await res.json(); errMsg = d.error || errMsg; } catch { /* non-JSON */ }
+        showToast(errMsg, 'error');
+      }
+    } catch {
+      showToast('Failed to update group', 'error');
+    } finally {
+      setIsSavingGroup(false);
+      setIsEditingGroup(false);
     }
   };
 
@@ -263,6 +307,49 @@ export default function ModelDetailModal({
               )}
               {model.description && (
                 <p className="text-[11px] text-[var(--text-muted)]">{model.description}</p>
+              )}
+              {isEditingGroup ? (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    value={editGroupName}
+                    onChange={(e) => setEditGroupName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveGroup(); if (e.key === 'Escape') setIsEditingGroup(false); }}
+                    autoFocus
+                    placeholder="Ungrouped"
+                    list={`group-options-${model.id}`}
+                    className="w-40 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-0.5 text-xs text-[var(--text)] focus:border-[var(--primary)] focus:outline-none"
+                  />
+                  <button
+                    onClick={handleSaveGroup}
+                    disabled={isSavingGroup}
+                    className="rounded-md p-1 text-[var(--primary)] transition-colors hover:bg-[var(--accent)]"
+                  >
+                    {isSavingGroup ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  </button>
+                  <button
+                    onClick={() => { setEditGroupName(model.groupName || ''); setIsEditingGroup(false); }}
+                    className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                  {existingGroupNames.length > 0 && (
+                    <datalist id={`group-options-${model.id}`}>
+                      {existingGroupNames.map((groupName) => (
+                        <option key={groupName} value={groupName} />
+                      ))}
+                    </datalist>
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setEditGroupName(model.groupName || ''); setIsEditingGroup(true); }}
+                  className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--background)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--primary)]/50 hover:text-[var(--text)]"
+                  title="Edit group"
+                >
+                  <Folder className="h-2.5 w-2.5" />
+                  {model.groupName?.trim() || 'Ungrouped'}
+                  <Pencil className="h-2.5 w-2.5" />
+                </button>
               )}
             </div>
           </div>

@@ -1,8 +1,40 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Search, CheckSquare, Square, Check } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Search, CheckSquare, Square, Check, Minus } from 'lucide-react';
 import type { Model } from '@/types';
+
+const UNGROUPED_KEY = '__ungrouped__';
+const UNGROUPED_LABEL = 'Ungrouped';
+
+type ModelGroup = {
+  key: string;
+  label: string;
+  models: Model[];
+};
+
+function groupModels(models: Model[]): ModelGroup[] {
+  const grouped = new Map<string, Model[]>();
+
+  for (const model of models) {
+    const groupName = model.groupName?.trim() || UNGROUPED_KEY;
+    const existing = grouped.get(groupName) || [];
+    existing.push(model);
+    grouped.set(groupName, existing);
+  }
+
+  return Array.from(grouped.entries())
+    .sort(([a], [b]) => {
+      if (a === UNGROUPED_KEY) return 1;
+      if (b === UNGROUPED_KEY) return -1;
+      return a.localeCompare(b);
+    })
+    .map(([key, entries]) => ({
+      key,
+      label: key === UNGROUPED_KEY ? UNGROUPED_LABEL : key,
+      models: [...entries].sort((a, b) => a.name.localeCompare(b.name)),
+    }));
+}
 
 export default function ModelSelector({
   models,
@@ -17,98 +49,195 @@ export default function ModelSelector({
 }) {
   const [search, setSearch] = useState('');
 
-  const filtered = useMemo(() => {
-    if (!search.trim()) return models;
-    const q = search.toLowerCase();
-    return models.filter((m) => m.name.toLowerCase().includes(q));
-  }, [models, search]);
+  const groupedModels = useMemo(() => groupModels(models), [models]);
 
-  const allSelected = filtered.length > 0 && filtered.every((m) => selectedIds.includes(m.id));
+  const filteredGroups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return groupedModels;
 
-  const toggleAll = () => {
-    if (allSelected) {
-      onChange(selectedIds.filter((id) => !filtered.some((m) => m.id === id)));
-    } else {
-      const newIds = new Set(selectedIds);
-      filtered.forEach((m) => newIds.add(m.id));
-      onChange(Array.from(newIds));
+    return groupedModels
+      .map((group) => {
+        if (group.label.toLowerCase().includes(q)) return group;
+
+        const matchingModels = group.models.filter((model) => model.name.toLowerCase().includes(q));
+        if (matchingModels.length === 0) return null;
+
+        return { ...group, models: matchingModels };
+      })
+      .filter((group): group is ModelGroup => group !== null);
+  }, [groupedModels, search]);
+
+  const filteredModelIds = useMemo(
+    () => filteredGroups.flatMap((group) => group.models.map((model) => model.id)),
+    [filteredGroups],
+  );
+
+  const allFilteredSelected = filteredModelIds.length > 0 && filteredModelIds.every((id) => selectedIds.includes(id));
+
+  const toggleAllFiltered = () => {
+    if (allFilteredSelected) {
+      const filteredIdSet = new Set(filteredModelIds);
+      onChange(selectedIds.filter((id) => !filteredIdSet.has(id)));
+      return;
     }
+
+    const next = new Set(selectedIds);
+    filteredModelIds.forEach((id) => next.add(id));
+    onChange(Array.from(next));
   };
 
-  const toggle = (id: string) => {
+  const toggleGroup = (group: ModelGroup) => {
+    const groupIds = group.models.map((model) => model.id);
+    const isFullySelected = groupIds.every((id) => selectedIds.includes(id));
+
+    if (isFullySelected) {
+      const groupIdSet = new Set(groupIds);
+      onChange(selectedIds.filter((id) => !groupIdSet.has(id)));
+      return;
+    }
+
+    const next = new Set(selectedIds);
+    groupIds.forEach((id) => next.add(id));
+    onChange(Array.from(next));
+  };
+
+  const toggleModel = (id: string) => {
     onChange(
       selectedIds.includes(id)
-        ? selectedIds.filter((i) => i !== id)
-        : [...selectedIds, id]
+        ? selectedIds.filter((existingId) => existingId !== id)
+        : [...selectedIds, id],
     );
+  };
+
+  const renderGroupIndicator = (group: ModelGroup) => {
+    const groupIds = group.models.map((model) => model.id);
+    const selectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
+    const isFullySelected = selectedCount > 0 && selectedCount === groupIds.length;
+    const isPartiallySelected = selectedCount > 0 && selectedCount < groupIds.length;
+
+    if (isFullySelected) return <CheckSquare className="h-3 w-3" />;
+    if (isPartiallySelected) {
+      return (
+        <span className="flex h-3 w-3 items-center justify-center rounded-[3px] border border-[var(--primary)] text-[var(--primary)]">
+          <Minus className="h-2.5 w-2.5" />
+        </span>
+      );
+    }
+    return <Square className="h-3 w-3" />;
   };
 
   return (
     <div>
-      {/* Search + Select All */}
-      <div className="flex items-center gap-2 mb-2">
+      <div className="mb-2 flex items-center gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search models..."
+            placeholder="Search models or groups..."
             className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] py-1.5 pl-7 pr-3 text-xs"
           />
         </div>
         <button
-          onClick={toggleAll}
+          onClick={toggleAllFiltered}
           className="flex items-center gap-1 rounded-lg border border-[var(--border)] px-2 py-1.5 text-[10px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
         >
-          {allSelected ? <CheckSquare className="h-3 w-3" /> : <Square className="h-3 w-3" />}
-          {allSelected ? 'Clear' : 'All'}
+          {allFilteredSelected ? <CheckSquare className="h-3 w-3" /> : <Square className="h-3 w-3" />}
+          {allFilteredSelected ? 'Clear' : 'All'}
         </button>
       </div>
 
-      {/* Count */}
+      {groupedModels.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {groupedModels.map((group) => (
+            <button
+              key={group.key}
+              onClick={() => toggleGroup(group)}
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] px-2 py-1 text-[10px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--primary)]/50 hover:text-[var(--text)]"
+              title={`Toggle ${group.label}`}
+            >
+              {renderGroupIndicator(group)}
+              <span className="max-w-28 truncate">{group.label}</span>
+              <span className="rounded-full bg-black/10 px-1.5 py-0.5 text-[9px] leading-none dark:bg-white/10">
+                {group.models.length}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="mb-2 text-[10px] text-[var(--text-muted)]">
         {selectedIds.length} of {models.length} selected
       </div>
 
-      {/* Model Grid */}
-      <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
-        {filtered.map((model) => {
-          const isSelected = selectedIds.includes(model.id);
-          const acctCount = accountCounts?.[model.id] || 0;
+      <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+        {filteredGroups.map((group) => {
+          const groupIds = group.models.map((model) => model.id);
+          const selectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
+          const isFullySelected = selectedCount > 0 && selectedCount === groupIds.length;
+          const groupActionLabel = isFullySelected ? 'Clear group' : 'Select group';
+
           return (
-            <button
-              key={model.id}
-              onClick={() => toggle(model.id)}
-              className={`flex items-center gap-2 rounded-lg border p-2 text-left transition-all ${
-                isSelected
-                  ? 'border-[var(--primary)] bg-[var(--primary)]/5'
-                  : 'border-[var(--border)] hover:border-[var(--primary)]/50'
-              }`}
-            >
-              {model.avatarUrl ? (
-                <img src={model.avatarUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
-              ) : (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--background)] text-xs font-bold text-[var(--text-muted)]">
-                  {model.name.charAt(0).toUpperCase()}
+            <div key={group.key} className="rounded-lg border border-[var(--border)] bg-[var(--background)]/50 p-2">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-semibold text-[var(--text)]">{group.label}</p>
+                  <p className="text-[10px] text-[var(--text-muted)]">
+                    {selectedCount}/{group.models.length} selected
+                  </p>
                 </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-medium">{model.name}</div>
-                {acctCount > 0 && (
-                  <div className="text-[10px] text-[var(--text-muted)]">{acctCount} account{acctCount !== 1 ? 's' : ''}</div>
-                )}
+                <button
+                  onClick={() => toggleGroup(group)}
+                  className="rounded-md border border-[var(--border)] px-2 py-1 text-[10px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--primary)]/50 hover:text-[var(--text)]"
+                >
+                  {groupActionLabel}
+                </button>
               </div>
-              {isSelected && (
-                <Check className="h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />
-              )}
-            </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                {group.models.map((model) => {
+                  const isSelected = selectedIds.includes(model.id);
+                  const accountCount = accountCounts?.[model.id] || 0;
+                  return (
+                    <button
+                      key={model.id}
+                      onClick={() => toggleModel(model.id)}
+                      className={`flex items-center gap-2 rounded-lg border p-2 text-left transition-all ${
+                        isSelected
+                          ? 'border-[var(--primary)] bg-[var(--primary)]/5'
+                          : 'border-[var(--border)] hover:border-[var(--primary)]/50'
+                      }`}
+                    >
+                      {model.avatarUrl ? (
+                        <img src={model.avatarUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
+                      ) : (
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--background)] text-xs font-bold text-[var(--text-muted)]">
+                          {model.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-medium">{model.name}</div>
+                        {accountCount > 0 && (
+                          <div className="text-[10px] text-[var(--text-muted)]">
+                            {accountCount} account{accountCount !== 1 ? 's' : ''}
+                          </div>
+                        )}
+                      </div>
+
+                      {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </div>
 
-      {filtered.length === 0 && (
+      {filteredGroups.length === 0 && (
         <div className="py-6 text-center text-xs text-[var(--text-muted)]">
-          {search ? 'No models match search' : 'No models available'}
+          {search ? 'No models or groups match search' : 'No models available'}
         </div>
       )}
     </div>

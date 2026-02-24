@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { config } from '@/lib/config';
 import { lateApiRequest, LateApiError } from '@/lib/lateApi';
 import { getApiKeyByIndex } from '@/lib/lateAccountPool';
-import { downloadToBuffer } from '@/lib/storage';
+import { getSignedUrlFromPublicUrl } from '@/lib/storage';
 import { createPost, updatePost, findRecentDuplicatePost, beginPostIdempotency, completePostIdempotency, clearPostIdempotency } from '@/lib/db';
 import { auth } from '@/lib/auth';
 export const maxDuration = 180;
@@ -247,19 +247,11 @@ export async function POST(request: NextRequest) {
       ext === '.webm' ? 'video/webm' :
       'video/mp4';
 
-    const downloadStart = Date.now();
-    let fileBuffer: Buffer;
+    // Prepare a fetchable URL (GCS needs a signed URL for direct streaming)
+    let fetchableVideoUrl = videoUrl;
     if (videoUrl.startsWith('https://storage.googleapis.com')) {
-      fileBuffer = await downloadToBuffer(videoUrl);
-    } else {
-      const response = await fetch(videoUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      fileBuffer = Buffer.from(arrayBuffer);
+      fetchableVideoUrl = await getSignedUrlFromPublicUrl(videoUrl, 15);
     }
-    const downloadMs = Date.now() - downloadStart;
 
     const session = await auth();
     const createdBy = session?.user?.name?.split(' ')[0] || null;
@@ -277,6 +269,26 @@ export async function POST(request: NextRequest) {
         apiKey,
       });
 
+      // Stream video: download → upload without buffering entire file in memory
+      const downloadResponse = await fetch(fetchableVideoUrl);
+      if (!downloadResponse.ok) {
+        throw new Error(`Failed to download video: ${downloadResponse.status} ${downloadResponse.statusText}`);
+      }
+
+      const videoContentLength = downloadResponse.headers.get('Content-Length');
+      let uploadBody: ReadableStream | Uint8Array;
+      let uploadContentLength: string;
+
+      if (videoContentLength && downloadResponse.body) {
+        uploadBody = downloadResponse.body;
+        uploadContentLength = videoContentLength;
+      } else {
+        // Fallback: buffer if Content-Length unknown or body not streamable
+        const arrayBuffer = await downloadResponse.arrayBuffer();
+        uploadBody = new Uint8Array(arrayBuffer);
+        uploadContentLength = String(arrayBuffer.byteLength);
+      }
+
       const uploadController = new AbortController();
       const uploadTimeout = setTimeout(() => uploadController.abort(), 120000);
       try {
@@ -284,10 +296,11 @@ export async function POST(request: NextRequest) {
           method: 'PUT',
           headers: {
             'Content-Type': contentType,
-            'Content-Length': String(fileBuffer.length),
+            'Content-Length': uploadContentLength,
           },
-          body: new Uint8Array(fileBuffer),
+          body: uploadBody as BodyInit,
           signal: uploadController.signal,
+          ...({ duplex: 'half' } as Record<string, unknown>),
         });
         clearTimeout(uploadTimeout);
         if (!uploadResponse.ok) {
@@ -301,8 +314,6 @@ export async function POST(request: NextRequest) {
         }
         throw uploadErr;
       }
-
-      await new Promise((r) => setTimeout(r, 2000));
 
       const latePlatforms = groupPlatforms.map((p) => {
         if (p.platform === 'tiktok') {
@@ -365,12 +376,29 @@ export async function POST(request: NextRequest) {
           break;
       }
 
-      const postData = await lateApiRequest<CreatePostResponse>('/posts', {
-        method: 'POST',
-        body: JSON.stringify(postBody),
-        timeout: 60000,
-        apiKey,
-      });
+      let postData: CreatePostResponse;
+      try {
+        postData = await lateApiRequest<CreatePostResponse>('/posts', {
+          method: 'POST',
+          body: JSON.stringify(postBody),
+          timeout: 60000,
+          apiKey,
+        });
+      } catch (postErr) {
+        // Retry once after 1s if media isn't ready yet
+        const isMediaNotReady = postErr instanceof LateApiError
+          && (postErr.status === 422 || postErr.status === 400)
+          && typeof postErr.body === 'object' && postErr.body !== null
+          && JSON.stringify(postErr.body).toLowerCase().includes('media');
+        if (!isMediaNotReady) throw postErr;
+        await new Promise((r) => setTimeout(r, 1000));
+        postData = await lateApiRequest<CreatePostResponse>('/posts', {
+          method: 'POST',
+          body: JSON.stringify(postBody),
+          timeout: 60000,
+          apiKey,
+        });
+      }
 
       const latePost = postData.post;
       const latePostId = latePost._id;
@@ -477,7 +505,6 @@ export async function POST(request: NextRequest) {
       results: dbResults,
       message,
       timing: {
-        downloadMs,
         uploadMs: Date.now() - uploadStart,
         totalMs,
       },

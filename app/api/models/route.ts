@@ -6,7 +6,13 @@ interface Model {
   id: string;
   name: string;
   description?: string;
+  groupName?: string;
   avatarUrl?: string;
+}
+
+function normalizeGroupName(groupName?: string | null): string | null {
+  const trimmed = typeof groupName === 'string' ? groupName.trim() : '';
+  return trimmed || null;
 }
 
 // GET /api/models - List all models with image counts and linked platforms
@@ -65,8 +71,9 @@ export async function GET() {
 // POST /api/models - Create a new model
 export async function POST(request: NextRequest) {
   try {
+    await ensureDatabaseReady();
     const body = await request.json();
-    const { name, description } = body as { name?: string; description?: string };
+    const { name, description, groupName } = body as { name?: string; description?: string; groupName?: string | null };
 
     if (!name?.trim()) {
       return NextResponse.json({ error: 'Model name is required' }, { status: 400 });
@@ -75,6 +82,7 @@ export async function POST(request: NextRequest) {
     const model = await createModel({
       name: name.trim(),
       description: description?.trim() || null,
+      groupName: normalizeGroupName(groupName),
       avatarUrl: null,
     });
 

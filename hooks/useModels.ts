@@ -28,7 +28,7 @@ export function useModels() {
       return;
     }
     try {
-      const res = await fetch('/api/models');
+      const res = await fetch('/api/models', { cache: 'no-store' });
       const data = await res.json();
       const result: Model[] = Array.isArray(data) ? data : [];
 

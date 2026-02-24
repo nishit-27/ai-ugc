@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Users, MessageSquare, Clock, Send, CalendarClock, FileText, ListOrdered } from 'lucide-react';
+import { useState } from 'react';
+import { Users, MessageSquare, Send, CalendarClock, FileText, ListOrdered } from 'lucide-react';
 import ModelSelector from '@/components/templates/ModelSelector';
 import type { Model } from '@/types';
 
@@ -79,8 +79,8 @@ export default function MasterCanvasPanel({
           <div>
             <h3 className="mb-3 text-sm font-semibold">Select Models</h3>
             <p className="mb-3 text-[10px] text-[var(--text-muted)]">
-              Each model will get their own video using their primary image.
-              Videos will be posted to their linked social accounts.
+              Select full groups or individual models. Each model gets its own video using its primary image,
+              then posts to linked social accounts.
             </p>
             <ModelSelector
               models={models}

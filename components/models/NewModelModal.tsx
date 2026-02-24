@@ -9,13 +9,15 @@ export default function NewModelModal({
   open,
   onClose,
   onCreated,
+  existingGroupNames = [],
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: () => void;
+  existingGroupNames?: string[];
 }) {
   const { showToast } = useToast();
-  const [form, setForm] = useState({ name: '', description: '' });
+  const [form, setForm] = useState({ name: '', description: '', groupName: '' });
   const [isCreating, setIsCreating] = useState(false);
 
   const handleCreate = async () => {
@@ -32,7 +34,7 @@ export default function NewModelModal({
       });
       if (res.ok) {
         onClose();
-        setForm({ name: '', description: '' });
+        setForm({ name: '', description: '', groupName: '' });
         showToast('Model created!', 'success');
         onCreated();
       } else {
@@ -68,6 +70,24 @@ export default function NewModelModal({
             placeholder="e.g., Main UGC persona"
             className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
           />
+        </div>
+        <div>
+          <label className="mb-2 block text-sm text-[var(--text-muted)]">Group / Folder (optional)</label>
+          <input
+            type="text"
+            list="model-group-suggestions"
+            value={form.groupName}
+            onChange={(e) => setForm((p) => ({ ...p, groupName: e.target.value }))}
+            placeholder="e.g., Education Creators"
+            className="w-full rounded-lg border border-[var(--border)] px-4 py-2"
+          />
+          {existingGroupNames.length > 0 && (
+            <datalist id="model-group-suggestions">
+              {existingGroupNames.map((groupName) => (
+                <option key={groupName} value={groupName} />
+              ))}
+            </datalist>
+          )}
         </div>
         <button
           onClick={handleCreate}
