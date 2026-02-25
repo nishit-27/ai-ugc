@@ -3,6 +3,8 @@ import { ensureDatabaseReady } from '@/lib/db';
 import { getAllAnalyticsAccounts } from '@/lib/db-analytics';
 import { syncAllAccounts } from '@/lib/analytics/sync';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * Daily analytics sync — called at 6 AM IST (00:30 UTC) via cron.
  * Syncs ALL accounts, ALL videos (old + new), full data.

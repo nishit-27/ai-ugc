@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { ensureDatabaseReady } from '@/lib/db';
 import { getAnalyticsAccount, deleteAnalyticsAccount, getMediaItemsByAccount, getAccountSnapshots } from '@/lib/db-analytics';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await ensureDatabaseReady();

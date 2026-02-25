@@ -352,7 +352,7 @@ function AnalyticsContent() {
         </div>
 
         {/* Tab 1: Overview */}
-        <TabsContent value="overview" className="mt-5 space-y-6">
+        <TabsContent value="overview" forceMount className="mt-5 space-y-6 data-[state=inactive]:hidden">
           {/* All 8 stats in a single row */}
           <div className="grid grid-cols-4 gap-3 xl:grid-cols-8">
             <OverviewCards overview={overview} history={filteredHistory} />
@@ -397,7 +397,7 @@ function AnalyticsContent() {
         </TabsContent>
 
         {/* Tab 2: Accounts */}
-        <TabsContent value="accounts" className="mt-4 space-y-4">
+        <TabsContent value="accounts" forceMount className="mt-4 space-y-4 data-[state=inactive]:hidden">
           {accounts.length > 0 && (
             <div className="flex items-center gap-3">
               <div className="relative max-w-xs flex-1">
@@ -571,7 +571,7 @@ function AnalyticsContent() {
         </TabsContent>
 
         {/* Tab 3: Content */}
-        <TabsContent value="content" className="mt-4 space-y-4">
+        <TabsContent value="content" forceMount className="mt-4 space-y-4 data-[state=inactive]:hidden">
           <div className="relative max-w-xs">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
@@ -596,7 +596,7 @@ function AnalyticsContent() {
         </TabsContent>
 
         {/* Tab 4: Variable Tracking */}
-        <TabsContent value="variables" className="mt-4">
+        <TabsContent value="variables" forceMount className="mt-4 data-[state=inactive]:hidden">
           <VariableTracking />
         </TabsContent>
 

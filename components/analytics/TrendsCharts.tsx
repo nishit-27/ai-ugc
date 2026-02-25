@@ -12,6 +12,7 @@ import EngagementTrend from '@/components/analytics/EngagementTrend';
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
 import NumberFlow from '@number-flow/react';
 import type { AnalyticsOverview } from '@/types';
+import { cachedFetch } from '@/lib/analytics-cache';
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -72,59 +73,34 @@ export default function TrendsCharts({
   // Re-fetch all charts when a sync completes (lastSyncedAt changes)
   const refreshKey = overview?.lastSyncedAt || '';
 
-  const fetchPiePlatforms = useCallback(async (days: number) => {
+  const fetchPlatformData = useCallback(async (
+    days: number,
+    setData: (d: PlatformData[]) => void,
+    setLoading: (b: boolean) => void,
+  ) => {
+    setLoading(true);
     try {
       const param = days > 0 ? `?days=${days}` : '';
-      const res = await fetch(`/api/analytics/platform-breakdown${param}`, { cache: 'no-store' });
-      const json = await res.json();
-      setPiePlatforms(json.platforms || []);
+      const json = await cachedFetch<{ platforms?: PlatformData[] }>(`/api/analytics/platform-breakdown${param}`);
+      setData(json.platforms || []);
     } catch (e) {
-      console.error('Failed to load platform breakdown:', e);
+      console.error('Failed to load platform data:', e);
     } finally {
-      setPieLoading(false);
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    setPieLoading(true);
-    fetchPiePlatforms(pieFilter);
-  }, [pieFilter, fetchPiePlatforms, refreshKey]);
-
-  const fetchPlatEngData = useCallback(async (days: number) => {
-    try {
-      const param = days > 0 ? `?days=${days}` : '';
-      const res = await fetch(`/api/analytics/platform-breakdown${param}`, { cache: 'no-store' });
-      const json = await res.json();
-      setPlatEngData(json.platforms || []);
-    } catch (e) {
-      console.error('Failed to load platform engagement:', e);
-    } finally {
-      setPlatEngLoading(false);
-    }
-  }, []);
+    fetchPlatformData(pieFilter, setPiePlatforms, setPieLoading);
+  }, [pieFilter, fetchPlatformData, refreshKey]);
 
   useEffect(() => {
-    setPlatEngLoading(true);
-    fetchPlatEngData(platEngFilter);
-  }, [platEngFilter, fetchPlatEngData, refreshKey]);
-
-  const fetchContentData = useCallback(async (days: number) => {
-    try {
-      const param = days > 0 ? `?days=${days}` : '';
-      const res = await fetch(`/api/analytics/platform-breakdown${param}`, { cache: 'no-store' });
-      const json = await res.json();
-      setContentData(json.platforms || []);
-    } catch (e) {
-      console.error('Failed to load content performance:', e);
-    } finally {
-      setContentLoading(false);
-    }
-  }, []);
+    fetchPlatformData(platEngFilter, setPlatEngData, setPlatEngLoading);
+  }, [platEngFilter, fetchPlatformData, refreshKey]);
 
   useEffect(() => {
-    setContentLoading(true);
-    fetchContentData(contentFilter);
-  }, [contentFilter, fetchContentData, refreshKey]);
+    fetchPlatformData(contentFilter, setContentData, setContentLoading);
+  }, [contentFilter, fetchPlatformData, refreshKey]);
 
   const breakdown = overview?.platformBreakdown || [];
   // Pie chart uses date-filtered platform data

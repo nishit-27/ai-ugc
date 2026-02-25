@@ -3,6 +3,8 @@ import { ensureDatabaseReady } from '@/lib/db';
 import { getAnalyticsAccount } from '@/lib/db-analytics';
 import { syncAccount } from '@/lib/analytics/sync';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await ensureDatabaseReady();

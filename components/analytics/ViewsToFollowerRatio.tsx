@@ -6,6 +6,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { TrendingUp } from 'lucide-react';
+import { cachedFetch } from '@/lib/analytics-cache';
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -44,12 +45,10 @@ export default function ViewsToFollowerRatio({ refreshKey }: { refreshKey: strin
     setLoading(true);
     try {
       const param = days > 0 ? `?days=${days}` : '';
-      const [metricsRes, followerRes] = await Promise.all([
-        fetch(`/api/analytics/daily-metrics${param}`, { cache: 'no-store' }),
-        fetch(`/api/analytics/follower-history${param}`, { cache: 'no-store' }),
+      const [metricsJson, followerJson] = await Promise.all([
+        cachedFetch<{ metrics?: DailyMetric[] }>(`/api/analytics/daily-metrics${param}`),
+        cachedFetch<{ history?: FollowerPoint[] }>(`/api/analytics/follower-history${param}`),
       ]);
-      const metricsJson = await metricsRes.json();
-      const followerJson = await followerRes.json();
       setDailyMetrics(metricsJson.metrics || []);
       setFollowerData(followerJson.history || []);
     } catch (e) {

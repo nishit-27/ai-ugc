@@ -3,6 +3,8 @@ import { ensureDatabaseReady } from '@/lib/db';
 import { fetchFromAllKeys } from '@/lib/lateAccountPool';
 import { createAnalyticsAccount, getAllAnalyticsAccounts } from '@/lib/db-analytics';
 
+export const dynamic = 'force-dynamic';
+
 type LateAccount = {
   _id: string;
   platform: string;

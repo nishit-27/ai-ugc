@@ -3,6 +3,8 @@ import { ensureDatabaseReady } from '@/lib/db';
 import { getAllAnalyticsAccounts, touchAllAccountsSyncTime } from '@/lib/db-analytics';
 import { syncAllAccounts } from '@/lib/analytics/sync';
 
+export const dynamic = 'force-dynamic';
+
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
 export async function POST(request: NextRequest) {

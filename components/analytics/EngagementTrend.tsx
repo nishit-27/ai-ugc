@@ -10,6 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import { cachedFetch } from '@/lib/analytics-cache';
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -51,8 +52,7 @@ export default function EngagementTrend({ refreshKey }: { refreshKey?: string })
   const fetchData = useCallback(async (days: number) => {
     try {
       const param = days > 0 ? `?days=${days}` : '';
-      const res = await fetch(`/api/analytics/daily-metrics${param}`, { cache: 'no-store' });
-      const json = await res.json();
+      const json = await cachedFetch<{ metrics?: DailyMetric[] }>(`/api/analytics/daily-metrics${param}`);
       setRawData(json.metrics || []);
     } catch (e) {
       console.error('Failed to load engagement data:', e);

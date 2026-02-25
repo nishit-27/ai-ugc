@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Clock } from 'lucide-react';
+import { cachedFetch } from '@/lib/analytics-cache';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -42,8 +43,7 @@ export default function BestPostingTimes({ refreshKey }: { refreshKey: string })
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch('/api/analytics/posting-times?days=90', { cache: 'no-store' });
-      const json = await res.json();
+      const json = await cachedFetch<{ postingTimes?: PostingTime[] }>('/api/analytics/posting-times?days=90');
       setData(json.postingTimes || []);
     } catch (e) {
       console.error('Failed to load posting times:', e);

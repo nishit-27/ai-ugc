@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import type { PostingActivityEntry } from '@/types';
+import { cachedFetch } from '@/lib/analytics-cache';
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -49,9 +50,7 @@ export default function PostingActivity({ refreshKey }: { refreshKey?: string })
   const fetchData = useCallback(async (days: number) => {
     try {
       const param = days > 0 ? `?days=${days}` : '';
-      const res = await fetch(`/api/analytics/posting-activity${param}`, { cache: 'no-store' });
-      const json = await res.json();
-      console.log('[PostingActivity] API response:', { entries: json.postingActivity?.length, totalVideos: json.totalVideos, sample: json.postingActivity?.slice(0, 3) });
+      const json = await cachedFetch<{ postingActivity?: PostingActivityEntry[]; totalVideos?: number }>(`/api/analytics/posting-activity${param}`);
       setRawData(json.postingActivity || []);
       setTotalVideos(json.totalVideos || 0);
     } catch (e) {

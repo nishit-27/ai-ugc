@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { ensureDatabaseReady } from '@/lib/db';
 import { getDailyMediaMetrics } from '@/lib/db-analytics';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: Request) {
   try {
     await ensureDatabaseReady();

@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, ReferenceLine,
 } from 'recharts';
 import { ChevronDown } from 'lucide-react';
+import { cachedFetch, invalidateAnalyticsCache } from '@/lib/analytics-cache';
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -188,59 +189,47 @@ export default function OverviewCharts({ refreshKey }: { refreshKey: string }) {
   const [dodFilter, setDodFilter] = useState(30);
   const [cumFilter, setCumFilter] = useState(0);
 
-  const [dailyMetrics, setDailyMetrics] = useState<DailyMetric[]>([]);
-  const [followerData, setFollowerData] = useState<FollowerPoint[]>([]);
-  const [dailyLoading, setDailyLoading] = useState(true);
-  const [followerLoading, setFollowerLoading] = useState(true);
-
-  // We need to fetch for both filters potentially
   const [dodDailyMetrics, setDodDailyMetrics] = useState<DailyMetric[]>([]);
   const [dodFollowerData, setDodFollowerData] = useState<FollowerPoint[]>([]);
   const [cumDailyMetrics, setCumDailyMetrics] = useState<DailyMetric[]>([]);
   const [cumFollowerData, setCumFollowerData] = useState<FollowerPoint[]>([]);
   const [dodLoading, setDodLoading] = useState(true);
   const [cumLoading, setCumLoading] = useState(true);
+  const prevRefreshKey = useRef(refreshKey);
 
-  const fetchDodData = useCallback(async (days: number) => {
-    setDodLoading(true);
+  const fetchChartData = useCallback(async (
+    days: number,
+    setMetrics: (d: DailyMetric[]) => void,
+    setFollowers: (d: FollowerPoint[]) => void,
+    setLoading: (b: boolean) => void,
+  ) => {
+    setLoading(true);
     try {
       const param = days > 0 ? `?days=${days}` : '';
-      const [metricsRes, followerRes] = await Promise.all([
-        fetch(`/api/analytics/daily-metrics${param}`, { cache: 'no-store' }),
-        fetch(`/api/analytics/follower-history${param}`, { cache: 'no-store' }),
+      const [metricsJson, followerJson] = await Promise.all([
+        cachedFetch<{ metrics?: DailyMetric[] }>(`/api/analytics/daily-metrics${param}`),
+        cachedFetch<{ history?: FollowerPoint[] }>(`/api/analytics/follower-history${param}`),
       ]);
-      const metricsJson = await metricsRes.json();
-      const followerJson = await followerRes.json();
-      setDodDailyMetrics(metricsJson.metrics || []);
-      setDodFollowerData(followerJson.history || []);
+      setMetrics(metricsJson.metrics || []);
+      setFollowers(followerJson.history || []);
     } catch (e) {
-      console.error('Failed to load DoD data:', e);
+      console.error('Failed to load chart data:', e);
     } finally {
-      setDodLoading(false);
+      setLoading(false);
     }
   }, []);
 
-  const fetchCumData = useCallback(async (days: number) => {
-    setCumLoading(true);
-    try {
-      const param = days > 0 ? `?days=${days}` : '';
-      const [metricsRes, followerRes] = await Promise.all([
-        fetch(`/api/analytics/daily-metrics${param}`, { cache: 'no-store' }),
-        fetch(`/api/analytics/follower-history${param}`, { cache: 'no-store' }),
-      ]);
-      const metricsJson = await metricsRes.json();
-      const followerJson = await followerRes.json();
-      setCumDailyMetrics(metricsJson.metrics || []);
-      setCumFollowerData(followerJson.history || []);
-    } catch (e) {
-      console.error('Failed to load cumulative data:', e);
-    } finally {
-      setCumLoading(false);
+  useEffect(() => {
+    if (prevRefreshKey.current !== refreshKey) {
+      invalidateAnalyticsCache();
+      prevRefreshKey.current = refreshKey;
     }
-  }, []);
+    fetchChartData(dodFilter, setDodDailyMetrics, setDodFollowerData, setDodLoading);
+  }, [dodFilter, fetchChartData, refreshKey]);
 
-  useEffect(() => { fetchDodData(dodFilter); }, [dodFilter, fetchDodData, refreshKey]);
-  useEffect(() => { fetchCumData(cumFilter); }, [cumFilter, fetchCumData, refreshKey]);
+  useEffect(() => {
+    fetchChartData(cumFilter, setCumDailyMetrics, setCumFollowerData, setCumLoading);
+  }, [cumFilter, fetchChartData, refreshKey]);
 
   const dodData = useMemo(
     () => buildChartData(dodMetric, dodDailyMetrics, dodFollowerData),
