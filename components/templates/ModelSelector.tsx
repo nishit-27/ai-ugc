@@ -15,12 +15,29 @@ type ModelGroup = {
 
 function groupModels(models: Model[]): ModelGroup[] {
   const grouped = new Map<string, Model[]>();
+  const seen = new Map<string, Set<string>>(); // group -> set of model IDs (dedup)
 
   for (const model of models) {
-    const groupName = model.groupName?.trim() || UNGROUPED_KEY;
-    const existing = grouped.get(groupName) || [];
-    existing.push(model);
-    grouped.set(groupName, existing);
+    const groups = model.groupNames?.filter((g) => g.trim()) || [];
+
+    if (groups.length === 0) {
+      // Ungrouped
+      const existing = grouped.get(UNGROUPED_KEY) || [];
+      existing.push(model);
+      grouped.set(UNGROUPED_KEY, existing);
+    } else {
+      // Model appears in each of its groups
+      for (const groupName of groups) {
+        const ids = seen.get(groupName) || new Set();
+        if (ids.has(model.id)) continue;
+        ids.add(model.id);
+        seen.set(groupName, ids);
+
+        const existing = grouped.get(groupName) || [];
+        existing.push(model);
+        grouped.set(groupName, existing);
+      }
+    }
   }
 
   return Array.from(grouped.entries())

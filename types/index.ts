@@ -70,6 +70,7 @@ export type Model = {
   name: string;
   description?: string;
   groupName?: string;
+  groupNames?: string[];
   avatarUrl?: string;
   avatarGcsUrl?: string;
   imageCount?: number;

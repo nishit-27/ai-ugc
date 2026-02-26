@@ -108,7 +108,8 @@ export default function ModelGrid({
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {models.map((model, index) => {
         const platforms = model.linkedPlatforms || [];
-        const groupName = model.groupName?.trim();
+        const groupNames = model.groupNames?.filter((g) => g.trim()) || [];
+        const groupLabel = groupNames.length > 0 ? groupNames.join(', ') : '';
         return (
           <div
             key={model.id}
@@ -151,9 +152,9 @@ export default function ModelGrid({
 
               {/* Bottom gradient with name overlay */}
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent px-3 pb-2.5 pt-8">
-                {groupName && (
+                {groupLabel && (
                   <span className="mb-1 inline-flex max-w-full truncate rounded-full bg-white/20 px-2 py-0.5 text-[9px] font-medium uppercase tracking-wide text-white/90 backdrop-blur-sm">
-                    {groupName}
+                    {groupLabel}
                   </span>
                 )}
                 <div className="truncate text-sm font-semibold text-white">{model.name}</div>

@@ -104,13 +104,13 @@ export default function ModelDetailModal({
   const [editName, setEditName] = useState('');
   const [isSavingName, setIsSavingName] = useState(false);
   const [isEditingGroup, setIsEditingGroup] = useState(false);
-  const [editGroupName, setEditGroupName] = useState('');
+  const [editGroupNames, setEditGroupNames] = useState<string[]>([]);
   const [isSavingGroup, setIsSavingGroup] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (!model) return;
-    setEditGroupName(model.groupName || '');
+    setEditGroupNames(model.groupNames?.filter((g) => g.trim()) || []);
     setIsEditingGroup(false);
   }, [model]);
 
@@ -145,10 +145,11 @@ export default function ModelDetailModal({
 
   const handleSaveGroup = async () => {
     if (!model) return;
-    const trimmedGroup = editGroupName.trim();
-    const currentGroup = (model.groupName || '').trim();
+    const currentGroups = model.groupNames?.filter((g) => g.trim()) || [];
+    const same = editGroupNames.length === currentGroups.length &&
+      editGroupNames.every((g) => currentGroups.includes(g));
 
-    if (trimmedGroup === currentGroup) {
+    if (same) {
       setIsEditingGroup(false);
       return;
     }
@@ -158,18 +159,18 @@ export default function ModelDetailModal({
       const res = await fetch(`/api/models/${model.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupName: trimmedGroup || null }),
+        body: JSON.stringify({ groupNames: editGroupNames }),
       });
       if (res.ok) {
-        showToast(trimmedGroup ? 'Group updated' : 'Group removed', 'success');
+        showToast(editGroupNames.length > 0 ? 'Groups updated' : 'Groups removed', 'success');
         await loadModels();
       } else {
-        let errMsg = 'Failed to update group';
+        let errMsg = 'Failed to update groups';
         try { const d = await res.json(); errMsg = d.error || errMsg; } catch { /* non-JSON */ }
         showToast(errMsg, 'error');
       }
     } catch {
-      showToast('Failed to update group', 'error');
+      showToast('Failed to update groups', 'error');
     } finally {
       setIsSavingGroup(false);
       setIsEditingGroup(false);
@@ -309,45 +310,59 @@ export default function ModelDetailModal({
                 <p className="text-[11px] text-[var(--text-muted)]">{model.description}</p>
               )}
               {isEditingGroup ? (
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  <input
-                    value={editGroupName}
-                    onChange={(e) => setEditGroupName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveGroup(); if (e.key === 'Escape') setIsEditingGroup(false); }}
-                    autoFocus
-                    placeholder="Ungrouped"
-                    list={`group-options-${model.id}`}
-                    className="w-40 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-0.5 text-xs text-[var(--text)] focus:border-[var(--primary)] focus:outline-none"
-                  />
-                  <button
-                    onClick={handleSaveGroup}
-                    disabled={isSavingGroup}
-                    className="rounded-md p-1 text-[var(--primary)] transition-colors hover:bg-[var(--accent)]"
-                  >
-                    {isSavingGroup ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                  </button>
-                  <button
-                    onClick={() => { setEditGroupName(model.groupName || ''); setIsEditingGroup(false); }}
-                    className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                  {existingGroupNames.length > 0 && (
-                    <datalist id={`group-options-${model.id}`}>
-                      {existingGroupNames.map((groupName) => (
-                        <option key={groupName} value={groupName} />
-                      ))}
-                    </datalist>
-                  )}
+                <div className="mt-1.5">
+                  <div className="flex flex-wrap gap-1.5 mb-1.5">
+                    {existingGroupNames.map((groupName) => {
+                      const checked = editGroupNames.includes(groupName);
+                      return (
+                        <button
+                          key={groupName}
+                          onClick={() => {
+                            setEditGroupNames((prev) =>
+                              prev.includes(groupName)
+                                ? prev.filter((g) => g !== groupName)
+                                : [...prev, groupName],
+                            );
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                            checked
+                              ? 'border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]'
+                              : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--primary)]/50'
+                          }`}
+                        >
+                          {checked && <Check className="h-2.5 w-2.5" />}
+                          {groupName}
+                        </button>
+                      );
+                    })}
+                    {existingGroupNames.length === 0 && (
+                      <span className="text-[10px] text-[var(--text-muted)]">No groups available</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={handleSaveGroup}
+                      disabled={isSavingGroup}
+                      className="rounded-md p-1 text-[var(--primary)] transition-colors hover:bg-[var(--accent)]"
+                    >
+                      {isSavingGroup ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => { setEditGroupNames(model.groupNames?.filter((g) => g.trim()) || []); setIsEditingGroup(false); }}
+                      className="rounded-md p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <button
-                  onClick={() => { setEditGroupName(model.groupName || ''); setIsEditingGroup(true); }}
+                  onClick={() => { setEditGroupNames(model.groupNames?.filter((g) => g.trim()) || []); setIsEditingGroup(true); }}
                   className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--background)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--primary)]/50 hover:text-[var(--text)]"
-                  title="Edit group"
+                  title="Edit groups"
                 >
                   <Folder className="h-2.5 w-2.5" />
-                  {model.groupName?.trim() || 'Ungrouped'}
+                  {(model.groupNames?.filter((g) => g.trim()) || []).join(', ') || 'Ungrouped'}
                   <Pencil className="h-2.5 w-2.5" />
                 </button>
               )}

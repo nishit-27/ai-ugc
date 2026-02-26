@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createModel, ensureDatabaseReady, getAllModels, getModelImageCountsForModels, getModelAccountMappingsForModels } from '@/lib/db';
+import { createModel, setModelGroups, ensureDatabaseReady, getAllModels, getModelImageCountsForModels, getModelAccountMappingsForModels } from '@/lib/db';
 import { getCachedSignedUrl } from '@/lib/signedUrlCache';
 
 interface Model {
@@ -7,6 +7,7 @@ interface Model {
   name: string;
   description?: string;
   groupName?: string;
+  groupNames?: string[];
   avatarUrl?: string;
 }
 
@@ -73,18 +74,33 @@ export async function POST(request: NextRequest) {
   try {
     await ensureDatabaseReady();
     const body = await request.json();
-    const { name, description, groupName } = body as { name?: string; description?: string; groupName?: string | null };
+    const { name, description, groupName, groupNames } = body as { name?: string; description?: string; groupName?: string | null; groupNames?: string[] };
 
     if (!name?.trim()) {
       return NextResponse.json({ error: 'Model name is required' }, { status: 400 });
     }
 
+    // Determine groups: prefer groupNames array, fall back to single groupName
+    let resolvedGroups: string[] = [];
+    if (Array.isArray(groupNames)) {
+      resolvedGroups = groupNames.map((g: string) => (typeof g === 'string' ? g.trim() : '')).filter(Boolean);
+    } else if (groupName) {
+      const normalized = normalizeGroupName(groupName);
+      if (normalized) resolvedGroups = [normalized];
+    }
+
     const model = await createModel({
       name: name.trim(),
       description: description?.trim() || null,
-      groupName: normalizeGroupName(groupName),
+      groupName: resolvedGroups[0] || null,
       avatarUrl: null,
     });
+
+    // If multiple groups, set them all via junction table
+    if (resolvedGroups.length > 1) {
+      await setModelGroups(model.id, resolvedGroups);
+      model.groupNames = resolvedGroups;
+    }
 
     return NextResponse.json(model, { status: 201 });
   } catch (err) {

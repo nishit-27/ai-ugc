@@ -27,12 +27,13 @@ export default function ModelsPage() {
     let ungroupedCount = 0;
 
     for (const model of models) {
-      const groupName = model.groupName?.trim();
-      if (!groupName) {
+      const groups = model.groupNames?.filter((g) => g.trim()) || [];
+      if (groups.length === 0) {
         ungroupedCount += 1;
-        continue;
       }
-      groupCounts.set(groupName, (groupCounts.get(groupName) || 0) + 1);
+      for (const groupName of groups) {
+        groupCounts.set(groupName, (groupCounts.get(groupName) || 0) + 1);
+      }
     }
 
     const existingGroupNames = Array.from(groupCounts.keys()).sort((a, b) => a.localeCompare(b));
@@ -68,20 +69,20 @@ export default function ModelsPage() {
   const filteredModels = useMemo(() => {
     const q = search.trim().toLowerCase();
     return models.filter((model) => {
-      const groupName = model.groupName?.trim() || '';
+      const groups = model.groupNames?.filter((g) => g.trim()) || [];
 
       const groupMatch = resolvedGroupKey === ALL_GROUPS_KEY
         ? true
         : resolvedGroupKey === UNGROUPED_KEY
-          ? !groupName
-          : groupName === resolvedGroupKey.slice('group:'.length);
+          ? groups.length === 0
+          : groups.includes(resolvedGroupKey.slice('group:'.length));
 
       if (!groupMatch) return false;
       if (!q) return true;
 
       return (
         model.name.toLowerCase().includes(q) ||
-        groupName.toLowerCase().includes(q) ||
+        groups.some((g) => g.toLowerCase().includes(q)) ||
         (model.linkedPlatforms || []).some((platform) => platform.toLowerCase().includes(q))
       );
     });

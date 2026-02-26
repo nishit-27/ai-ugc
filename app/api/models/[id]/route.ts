@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getModel, updateModel, deleteModel, getModelImages, ensureDatabaseReady } from '@/lib/db';
+import { getModel, updateModel, deleteModel, getModelImages, setModelGroups, ensureDatabaseReady } from '@/lib/db';
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -38,14 +38,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     await ensureDatabaseReady();
     const { id } = await params;
     const body = await request.json();
-    const payload = body as { name?: string; description?: string | null; groupName?: string | null };
+    const payload = body as { name?: string; description?: string | null; groupName?: string | null; groupNames?: string[] };
 
     const existing = await getModel(id);
     if (!existing) {
       return NextResponse.json({ error: 'Model not found' }, { status: 404 });
     }
 
-    const updates: { name?: string; description?: string | null; groupName?: string | null; avatarUrl?: string | null } = {
+    const updates: { name?: string; description?: string | null; avatarUrl?: string | null } = {
       avatarUrl: undefined,
     };
 
@@ -62,13 +62,19 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       updates.description = nextDescription || null;
     }
 
-    if ('groupName' in payload) {
-      updates.groupName = normalizeGroupName(payload.groupName);
+    // Handle multi-group assignment
+    if ('groupNames' in payload && Array.isArray(payload.groupNames)) {
+      const normalized = payload.groupNames
+        .map((g: string) => (typeof g === 'string' ? g.trim() : ''))
+        .filter(Boolean);
+      await setModelGroups(id, normalized);
+    } else if ('groupName' in payload) {
+      // Legacy single-group support: convert to array
+      const normalized = normalizeGroupName(payload.groupName);
+      await setModelGroups(id, normalized ? [normalized] : []);
     }
 
-    const updated = await updateModel(id, {
-      ...updates,
-    });
+    const updated = await updateModel(id, updates);
 
     return NextResponse.json(updated);
   } catch (err) {

@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ensureDatabaseReady, getAllModels, getSetting, setSetting, sql } from '@/lib/db';
+import { ensureDatabaseReady, getAllModelGroupMemberships, getSetting, setSetting, sql, removeAllMembershipsForGroup, renameGroupMemberships } from '@/lib/db';
 
 const MODEL_GROUPS_SETTING_KEY = 'model_groups';
 
-type ModelRow = { groupName?: string | null };
 type ModelGroupSummary = { name: string; count: number };
 
 function normalizeGroupName(value?: string | null): string | null {
@@ -44,10 +43,16 @@ async function saveConfiguredGroupNames(groupNames: string[]) {
   await setSetting(MODEL_GROUPS_SETTING_KEY, JSON.stringify(uniqueGroupNames(groupNames)));
 }
 
-function buildGroupSummary(models: ModelRow[], configuredGroupNames: string[]): ModelGroupSummary[] {
+async function getGroupSummary(): Promise<ModelGroupSummary[]> {
+  const [memberships, configuredGroupNames] = await Promise.all([
+    getAllModelGroupMemberships() as Promise<{ model_id: string; group_name: string }[]>,
+    loadConfiguredGroupNames(),
+  ]);
+
+  // Count memberships per group
   const counts = new Map<string, number>();
-  for (const model of models) {
-    const groupName = normalizeGroupName(model.groupName);
+  for (const row of memberships) {
+    const groupName = normalizeGroupName(row.group_name);
     if (!groupName) continue;
     counts.set(groupName, (counts.get(groupName) || 0) + 1);
   }
@@ -57,14 +62,6 @@ function buildGroupSummary(models: ModelRow[], configuredGroupNames: string[]): 
     name: groupName,
     count: counts.get(groupName) || 0,
   }));
-}
-
-async function getGroupSummary(): Promise<ModelGroupSummary[]> {
-  const [models, configuredGroupNames] = await Promise.all([
-    getAllModels() as Promise<ModelRow[]>,
-    loadConfiguredGroupNames(),
-  ]);
-  return buildGroupSummary(models, configuredGroupNames);
 }
 
 export async function GET() {
@@ -124,6 +121,9 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Target group name already exists' }, { status: 409 });
     }
 
+    // Rename in junction table
+    await renameGroupMemberships(fromName, toName);
+    // Also update legacy column
     await sql`
       UPDATE models
       SET group_name = ${toName}
@@ -155,6 +155,9 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Group name is required' }, { status: 400 });
     }
 
+    // Remove from junction table
+    await removeAllMembershipsForGroup(groupName);
+    // Also clear legacy column
     await sql`
       UPDATE models
       SET group_name = NULL
