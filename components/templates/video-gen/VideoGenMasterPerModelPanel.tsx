@@ -1,4 +1,4 @@
-import { Expand, ImageIcon, Sparkles, Upload, User, RefreshCw } from 'lucide-react';
+import { Expand, ImageIcon, Sparkles, Upload, User, RefreshCw, X } from 'lucide-react';
 import type { GeneratedImage, ModelImage, VideoGenConfig as VGC } from '@/types';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
 import type { FirstFrameOption, MasterPerModelActivePanel } from './types';
@@ -112,7 +112,15 @@ export default function VideoGenMasterPerModelPanel({
               />
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-[var(--text)] truncate">{model.modelName}</p>
-                {selected && <p className="text-[10px] text-green-600 dark:text-green-400 font-medium">First frame selected</p>}
+                {selected && (
+                  <button
+                    onClick={() => handleMasterSelectForModel(model.modelId, '')}
+                    className="flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400 font-medium hover:text-red-500 dark:hover:text-red-400 transition-colors group"
+                  >
+                    First frame selected
+                    <X className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </button>
+                )}
               </div>
               {isGenerating && <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin shrink-0" />}
               {!isGenerating && (

@@ -19,10 +19,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'videoUrl is required' }, { status: 400 });
     }
 
+    // Sign GCS URLs before downloading (they require auth)
+    let downloadUrl = videoUrl;
+    if (videoUrl.startsWith('https://storage.googleapis.com/') || videoUrl.startsWith('gs://')) {
+      downloadUrl = await getSignedUrlFromPublicUrl(videoUrl);
+    }
+
     // Download video to temp
     const tmpDir = os.tmpdir();
     tmpVideoPath = path.join(tmpDir, `extract-${uuidv4()}.mp4`);
-    await downloadFile(videoUrl, tmpVideoPath);
+    await downloadFile(downloadUrl, tmpVideoPath);
 
     // Extract 10 random frames
     const rawFrames = extractRandomFrames(tmpVideoPath, 10);

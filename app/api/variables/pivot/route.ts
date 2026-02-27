@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ensureDatabaseReady, getPivotData } from '@/lib/db';
+import { getPivotCache, setPivotCache } from '@/lib/pivot-cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,13 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Build cache key from all query params
+    const cacheKey = JSON.stringify({ rowFields, columnFields, metric, aggregation, filters, dateFrom, dateTo });
+    const cached = getPivotCache(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
+    }
+
     const data = await getPivotData({
       rowFields,
       columnFields,
@@ -35,6 +43,7 @@ export async function GET(request: NextRequest) {
       dateTo,
     });
 
+    setPivotCache(cacheKey, data);
     return NextResponse.json(data);
   } catch (err) {
     console.error('Pivot query error:', err);

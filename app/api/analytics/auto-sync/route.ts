@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { ensureDatabaseReady } from '@/lib/db';
 import { fetchFromAllKeys } from '@/lib/lateAccountPool';
-import { createAnalyticsAccount, getAllAnalyticsAccounts } from '@/lib/db-analytics';
+import { createAnalyticsAccount, getAllAnalyticsAccounts, updateAnalyticsAccount } from '@/lib/db-analytics';
+import { invalidatePivotCache } from '@/lib/pivot-cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,12 +36,14 @@ export async function POST() {
 
     // Get existing analytics accounts to avoid duplicates
     const existingAccounts = await getAllAnalyticsAccounts();
-    const existingSet = new Set(
-      existingAccounts.map((a: { platform: string; username: string }) => `${a.platform}:${a.username.toLowerCase()}`)
-    );
+    const existingMap = new Map<string, { id: string; late_account_id: string | null }>();
+    for (const a of existingAccounts) {
+      existingMap.set(`${a.platform}:${a.username.toLowerCase()}`, { id: a.id, late_account_id: a.late_account_id });
+    }
 
     const added: string[] = [];
     const skipped: string[] = [];
+    const updated: string[] = [];
     const errors: string[] = [];
 
     for (const la of lateAccounts) {
@@ -59,7 +62,17 @@ export async function POST() {
       const cleanUsername = username.replace(/^@/, '').toLowerCase();
       const key = `${platform}:${cleanUsername}`;
 
-      if (existingSet.has(key)) {
+      const existing = existingMap.get(key);
+      if (existing) {
+        // Back-fill late_account_id if it's missing on the existing analytics account
+        if (!existing.late_account_id && la._id) {
+          try {
+            await updateAnalyticsAccount(existing.id, { lateAccountId: la._id });
+            updated.push(`${platform}/@${cleanUsername} (linked late_account_id)`);
+          } catch (err) {
+            console.error(`[analytics] Failed to backfill late_account_id for ${existing.id}:`, err);
+          }
+        }
         skipped.push(`${platform}/@${cleanUsername} (already tracked)`);
         continue;
       }
@@ -82,16 +95,21 @@ export async function POST() {
         });
 
         added.push(`${platform}/@${cleanUsername}`);
-        existingSet.add(key);
+        existingMap.set(key, { id: '', late_account_id: la._id });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`${platform}/@${cleanUsername}: ${msg}`);
       }
     }
 
+    if (added.length > 0 || updated.length > 0) {
+      invalidatePivotCache();
+    }
+
     return NextResponse.json({
       totalLateAccounts: lateAccounts.length,
       added,
+      updated,
       skipped,
       errors,
     });

@@ -14,10 +14,13 @@ export default function ContentHighlights({
   if (!overview || items.length === 0) return null;
 
   const bestVideo = items[0];
-  const bestPlatform = overview.platformBreakdown.reduce(
-    (best, p) => (p.engagementRate > (best?.engagementRate || 0) ? p : best),
-    overview.platformBreakdown[0],
-  );
+  const breakdown = overview.platformBreakdown || [];
+  const bestPlatform = breakdown.length > 0
+    ? breakdown.reduce(
+        (best, p) => (p.engagementRate > (best?.engagementRate || 0) ? p : best),
+        breakdown[0],
+      )
+    : null;
   const totalVideos = overview.totalVideos || items.length;
   const avgViews = totalVideos > 0 ? Math.round(overview.totalViews / totalVideos) : 0;
   const recentPost = overview.latestPost;

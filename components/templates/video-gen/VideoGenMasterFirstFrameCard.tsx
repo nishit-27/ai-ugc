@@ -62,6 +62,26 @@ export default function VideoGenMasterFirstFrameCard({
               : 'Select models in the panel first'}
           </p>
         </div>
+        {masterModels && masterModels.length > 0 && (() => {
+          const selectedCount = masterModels.filter(m => config.masterFirstFrames?.[m.modelId]).length;
+          const total = masterModels.length;
+          return (
+            <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold`} style={{
+              background: selectedCount === total
+                ? 'var(--success-bg)'
+                : selectedCount > 0
+                  ? 'var(--master-light)'
+                  : 'var(--accent)',
+              color: selectedCount === total
+                ? 'var(--success)'
+                : selectedCount > 0
+                  ? 'var(--master-foreground)'
+                  : 'var(--text-muted)',
+            }}>
+              {selectedCount}/{total}
+            </span>
+          );
+        })()}
       </div>
 
       {masterModels && masterModels.length > 0 && (

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { ensureDatabaseReady } from '@/lib/db';
 import { getAnalyticsAccount } from '@/lib/db-analytics';
 import { syncAccount } from '@/lib/analytics/sync';
+import { invalidatePivotCache } from '@/lib/pivot-cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     }
 
     const result = await syncAccount(account);
+    invalidatePivotCache();
     return NextResponse.json(result);
   } catch (error) {
     console.error('[analytics] refresh account error:', error);

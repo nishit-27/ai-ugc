@@ -34,7 +34,7 @@ const metrics = [
     accent: '#f59e0b',
     getValue: (o: AnalyticsOverview) => o.totalViews,
     historyKey: 'totalViews' as keyof AnalyticsSnapshot,
-    getDetail: (o: AnalyticsOverview) => `${o.platformBreakdown.length} platform${o.platformBreakdown.length !== 1 ? 's' : ''}`,
+    getDetail: (o: AnalyticsOverview) => `${(o.platformBreakdown || []).length} platform${(o.platformBreakdown || []).length !== 1 ? 's' : ''}`,
   },
   {
     key: 'engagement',

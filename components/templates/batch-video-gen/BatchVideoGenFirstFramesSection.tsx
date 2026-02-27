@@ -180,7 +180,29 @@ export default function BatchVideoGenFirstFramesSection({
           {config.images.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-[11px] font-medium text-[var(--text-muted)]">2. Per image: Generate or Choose from library</label>
+                <label className="text-[11px] font-medium text-[var(--text-muted)]">
+                  2. Per image: Generate or Choose from library
+                  {(() => {
+                    const selectedCount = config.images.filter(e => !!(e.originalImageId || e.originalImageUrl) && !!e.imageUrl).length;
+                    const total = config.images.length;
+                    return (
+                      <span className="ml-1.5 inline-flex rounded-full px-1.5 py-0.5 text-[11px] font-bold" style={{
+                        background: selectedCount === total
+                          ? 'var(--success-bg)'
+                          : selectedCount > 0
+                            ? 'var(--accent)'
+                            : 'var(--accent)',
+                        color: selectedCount === total
+                          ? 'var(--success)'
+                          : selectedCount > 0
+                            ? 'var(--primary)'
+                            : 'var(--text-muted)',
+                      }}>
+                        {selectedCount}/{total}
+                      </span>
+                    );
+                  })()}
+                </label>
                 <button
                   onClick={handleGenerateAll}
                   disabled={isGeneratingAll || !config.extractedFrameUrl}

@@ -71,6 +71,13 @@ export default function NodeConfigPanel({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const step = selectedId && selectedId !== 'source' ? steps.find((s) => s.id === selectedId) : null;
 
+  // Compute source video URL — in library mode, use the first available library video
+  const resolvedSourceVideoUrl = sourceConfig.previewUrl || sourceConfig.videoUrl || (
+    sourceConfig.videoSource === 'library' && sourceConfig.libraryVideos
+      ? Object.values(sourceConfig.libraryVideos)[0] || undefined
+      : undefined
+  );
+
   /* ── Source node ── */
   if (selectedId === 'source') {
     return (
@@ -272,8 +279,8 @@ export default function NodeConfigPanel({
               </div>
             </div>
           )}
-          {step.type === 'video-generation' && <VideoGenConfig key={step.id} config={step.config as VGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} stepId={step.id} masterMode={masterMode} masterModels={masterModels} isExpanded={isExpanded} />}
-          {step.type === 'batch-video-generation' && <BatchVideoGenConfig key={step.id} config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={sourceConfig.previewUrl || sourceConfig.videoUrl} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
+          {step.type === 'video-generation' && <VideoGenConfig key={step.id} config={step.config as VGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={resolvedSourceVideoUrl} stepId={step.id} masterMode={masterMode} masterModels={masterModels} isExpanded={isExpanded} />}
+          {step.type === 'batch-video-generation' && <BatchVideoGenConfig key={step.id} config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={resolvedSourceVideoUrl} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
           {step.type === 'bg-music' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><BgMusicConfig config={step.config as BMC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
           {step.type === 'attach-video' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><AttachVideoConfig config={step.config as AVC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
           {step.type === 'compose' && <ComposeStepConfig config={step.config as CC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} isExpanded={isExpanded} masterModels={masterModels} />}

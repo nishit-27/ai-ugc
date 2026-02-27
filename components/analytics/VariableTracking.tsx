@@ -23,11 +23,13 @@ const BUILTIN_FILTER_OPTIONS: Record<string, string[]> = {
 };
 
 const METRIC_OPTIONS = [
+  { value: 'count', label: 'Count (Jobs)' },
   { value: 'views', label: 'Views' },
   { value: 'likes', label: 'Likes' },
   { value: 'comments', label: 'Comments' },
-  { value: 'posts', label: 'Posts' },
-  { value: 'engagement_rate', label: 'Engagement Rate' },
+  { value: 'shares', label: 'Shares' },
+  { value: 'posts', label: 'Posts (Media)' },
+  { value: 'engagement_rate', label: 'Engagement Rate (%)' },
 ];
 
 type PivotRow = {
@@ -54,7 +56,7 @@ export default function VariableTracking() {
   const { variables, loading: varsLoading } = useVariables();
   const [rowFields, setRowFields] = useState<PivotFieldData[]>([]);
   const [colFields, setColFields] = useState<PivotFieldData[]>([]);
-  const [metric, setMetric] = useState('views');
+  const [metric, setMetric] = useState('count');
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
   const [filterMenuOpen, setFilterMenuOpen] = useState<string | null>(null);
   const [pivotData, setPivotData] = useState<PivotRow[]>([]);

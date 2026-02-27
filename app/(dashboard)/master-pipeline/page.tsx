@@ -11,6 +11,7 @@ import type { MasterModel } from '@/components/templates/NodeConfigPanel';
 import MasterCanvasPanel from '@/components/templates/MasterCanvasPanel';
 import MasterPipelineHeader from '@/components/templates/master-pipeline/MasterPipelineHeader';
 import MasterPipelinePresetModals from '@/components/templates/master-pipeline/MasterPipelinePresetModals';
+import Modal from '@/components/ui/Modal';
 import type { MiniAppStep, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, Model } from '@/types';
 
 const MASTER_DRAFT_KEY = 'ai-ugc-master-pipeline-draft';
@@ -56,6 +57,7 @@ export default function MasterPipelinePage() {
   const [previewUrl, setPreviewUrl] = useState(() => draft.current?.previewUrl ?? '');
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showRunConfirm, setShowRunConfirm] = useState(false);
   const [isResolvingPreview, setIsResolvingPreview] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Map<string, string>>(new Map());
 
@@ -285,7 +287,7 @@ export default function MasterPipelinePage() {
       showToast('Failed to save preset', 'error');
     }
   };
-  const handleRun = async () => {
+  const handleRunClick = () => {
     const enabledSteps = steps.filter((s) => s.enabled);
     if (enabledSteps.length === 0) {
       showToast('Add at least one pipeline step', 'error');
@@ -355,7 +357,10 @@ export default function MasterPipelinePage() {
       return;
     }
     setValidationErrors(new Map());
-
+    setShowRunConfirm(true);
+  };
+  const handleRunConfirmed = async () => {
+    setShowRunConfirm(false);
     setIsSubmitting(true);
     try {
       const res = await fetch('/api/templates/master', {
@@ -419,7 +424,7 @@ export default function MasterPipelinePage() {
         onOpenPresets={() => setShowPresets(true)}
         onOpenSavePreset={() => setShowSavePreset(true)}
         onTogglePanel={() => setPanelOpen((prev) => !prev)}
-        onRun={handleRun}
+        onRun={handleRunClick}
       />
 
       {/* Main area: Canvas + Panel */}
@@ -541,6 +546,29 @@ export default function MasterPipelinePage() {
         onPresetNameChange={setPresetName}
         onSavePreset={handleSavePreset}
       />
+      {/* Run Confirmation Modal */}
+      <Modal open={showRunConfirm} onClose={() => setShowRunConfirm(false)} title="Run Master Pipeline" maxWidth="max-w-sm">
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-[var(--text)]">Are you sure you want to proceed?</p>
+          <p className="text-xs text-[var(--text-muted)]">
+            Make sure you have added <span className="font-semibold text-[var(--text)]">Text Overlay</span> and <span className="font-semibold text-[var(--text)]">First Frame</span> steps to your pipeline before running.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setShowRunConfirm(false)}
+              className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleRunConfirmed}
+              className="rounded-lg bg-master px-4 py-2 text-sm font-semibold text-white transition-all hover:opacity-90"
+            >
+              Yes, Proceed
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

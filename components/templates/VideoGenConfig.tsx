@@ -252,26 +252,35 @@ export default function VideoGenConfig({
     clearFirstFrameOptions(); setGenerateError(null); onChange({ ...config, imageUrl: img.gcsUrl }); setShowLibrary(false);
   };
 
-  useEffect(() => {
-    if (!masterMode || !sourceVideoUrl || masterAutoExtracted || isExtracting || extractedFrames.length > 0) return;
+  // Track which sourceVideoUrl we already auto-extracted for
+  const masterAutoExtractedUrlRef = useRef<string | null>(null);
 
-    setMasterAutoExtracted(true);
+  useEffect(() => {
+    if (!masterMode || !sourceVideoUrl || isExtracting) return;
+    // Skip if we already successfully extracted for this exact URL
+    if (masterAutoExtractedUrlRef.current === sourceVideoUrl && extractedFrames.length > 0) return;
+
+    masterAutoExtractedUrlRef.current = sourceVideoUrl;
     (async () => {
       setIsExtracting(true);
       setExtractError(null);
       try {
         const frames = await extractFramesFromVideo(sourceVideoUrl);
         setExtractedFrames(frames);
+        setMasterAutoExtracted(true);
         if (frames.length > 0) {
           onChange({ ...config, extractedFrameUrl: frames[0].gcsUrl, firstFrameEnabled: true });
         }
       } catch (error: unknown) {
+        // Reset so a retry is possible
+        masterAutoExtractedUrlRef.current = null;
         setExtractError(error instanceof Error ? error.message : 'Failed to extract frames');
       } finally {
         setIsExtracting(false);
       }
     })();
-  }, [config, extractedFrames.length, isExtracting, masterAutoExtracted, masterMode, onChange, sourceVideoUrl]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [masterMode, sourceVideoUrl]);
 
   const masterGenerateForModel = async (modelId: string, primaryGcsUrl: string): Promise<FirstFrameOption[] | null> => {
     if (!config.extractedFrameUrl) return null;
@@ -315,7 +324,12 @@ export default function VideoGenConfig({
   };
 
   const handleMasterSelectForModel = (modelId: string, gcsUrl: string) => {
-    const updated = { ...(config.masterFirstFrames || {}), [modelId]: gcsUrl };
+    const updated = { ...(config.masterFirstFrames || {}) };
+    if (gcsUrl) {
+      updated[modelId] = gcsUrl;
+    } else {
+      delete updated[modelId];
+    }
     onChange({ ...config, masterFirstFrames: updated });
   };
 

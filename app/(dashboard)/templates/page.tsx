@@ -45,6 +45,7 @@ export default function TemplatesPage() {
   const [previewUrl, setPreviewUrl] = useState(() => draft.current?.previewUrl ?? '');
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showRunConfirm, setShowRunConfirm] = useState(false);
   const [isResolvingPreview, setIsResolvingPreview] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Map<string, string>>(new Map());
   useEffect(() => {
@@ -198,7 +199,7 @@ export default function TemplatesPage() {
       showToast('Failed to save preset', 'error');
     }
   };
-  const handleRun = async () => {
+  const handleRunClick = () => {
     const enabledSteps = steps.filter((s) => s.enabled);
     if (enabledSteps.length === 0) {
       showToast('Add at least one pipeline step', 'error');
@@ -265,6 +266,10 @@ export default function TemplatesPage() {
       return;
     }
     setValidationErrors(new Map());
+    setShowRunConfirm(true);
+  };
+  const handleRunConfirmed = async () => {
+    setShowRunConfirm(false);
     setIsSubmitting(true);
     try {
       const res = await fetch('/api/templates', {
@@ -353,7 +358,7 @@ export default function TemplatesPage() {
           </div>
           {/* Run button */}
           <button
-            onClick={handleRun}
+            onClick={handleRunClick}
             disabled={isSubmitting || steps.filter((s) => s.enabled).length === 0}
             className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-4 py-1.5 text-xs font-semibold text-white transition-all hover:opacity-90 disabled:opacity-40 disabled:pointer-events-none"
           >
@@ -507,6 +512,29 @@ export default function TemplatesPage() {
             <button onClick={handleSavePreset} disabled={presetSaving} className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-white disabled:opacity-70">
               {presetSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {presetSaving ? 'Saving...' : 'Save Preset'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+      {/* Run Confirmation Modal */}
+      <Modal open={showRunConfirm} onClose={() => setShowRunConfirm(false)} title="Run Pipeline" maxWidth="max-w-sm">
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-[var(--text)]">Are you sure you want to proceed?</p>
+          <p className="text-xs text-[var(--text-muted)]">
+            Make sure you have added <span className="font-semibold text-[var(--text)]">Text Overlay</span> and <span className="font-semibold text-[var(--text)]">First Frame</span> steps to your pipeline before running.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setShowRunConfirm(false)}
+              className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleRunConfirmed}
+              className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white transition-all hover:opacity-90"
+            >
+              Yes, Proceed
             </button>
           </div>
         </div>

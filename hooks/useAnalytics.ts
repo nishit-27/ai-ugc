@@ -34,16 +34,19 @@ export function useAnalytics() {
         fetch('/api/analytics/media?limit=5000', { cache: 'no-store' }),
       ]);
 
-      const overviewData = await overviewRes.json();
-      const accountsData = await accountsRes.json();
-      const mediaData = await mediaRes.json();
+      const overviewData = overviewRes.ok ? await overviewRes.json() : null;
+      const accountsData = accountsRes.ok ? await accountsRes.json() : { accounts: [] };
+      const mediaData = mediaRes.ok ? await mediaRes.json() : { items: [] };
 
-      _overviewCache = overviewData;
+      // Only cache valid overview data (must have platformBreakdown, not an error object)
+      if (overviewData && !overviewData.error) {
+        _overviewCache = overviewData;
+        setOverview(overviewData);
+      }
       _accountsCache = accountsData.accounts || [];
       _mediaCache = mediaData.items || [];
       _cacheTime = Date.now();
 
-      setOverview(overviewData);
       setAccounts(accountsData.accounts || []);
       setMediaItems(mediaData.items || []);
       return _accountsCache;

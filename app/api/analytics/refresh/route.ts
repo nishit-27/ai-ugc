@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ensureDatabaseReady } from '@/lib/db';
 import { getAllAnalyticsAccounts, touchAllAccountsSyncTime } from '@/lib/db-analytics';
 import { syncAllAccounts } from '@/lib/analytics/sync';
+import { invalidatePivotCache } from '@/lib/pivot-cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,8 @@ export async function POST(request: NextRequest) {
     }
     // Always update last_synced_at for all accounts (even if some failed)
     await touchAllAccountsSyncTime();
+    // Invalidate pivot cache so Variable Tracking picks up fresh data
+    invalidatePivotCache();
     return NextResponse.json({ results });
   } catch (error) {
     console.error('[analytics] Hard Sync error:', error);
