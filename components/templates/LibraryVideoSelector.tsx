@@ -41,7 +41,6 @@ export default function LibraryVideoSelector({
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const requestedSignRef = useRef(new Set<string>());
 
   // Fetch template jobs once on mount
   useEffect(() => {
@@ -109,36 +108,19 @@ export default function LibraryVideoSelector({
     return map;
   }, [templateJobs]);
 
-  // Sign GCS URLs on demand — no infinite loop
-  const signUrls = useCallback((urls: string[]) => {
-    const toSign = urls.filter((u) => u && !requestedSignRef.current.has(u));
-    if (toSign.length === 0) return;
-    toSign.forEach((u) => requestedSignRef.current.add(u));
-
-    (async () => {
-      try {
-        const res = await fetch('/api/signed-url', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: toSign.slice(0, 100) }),
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.signed) {
-          setSignedUrls((prev) => ({ ...prev, ...data.signed }));
-        }
-      } catch {
-        // ignore
-      }
-    })();
-  }, []);
-
-  // Sign URLs when a model is expanded
+  // URLs are now R2 public — populate signedUrls directly
   useEffect(() => {
     if (!expandedModelId) return;
     const videos = videosByModel[expandedModelId];
-    if (videos) signUrls(videos.map((v) => v.url));
-  }, [expandedModelId, videosByModel, signUrls]);
+    if (!videos) return;
+    const updates: Record<string, string> = {};
+    for (const v of videos) {
+      if (v.url && !signedUrls[v.url]) updates[v.url] = v.url;
+    }
+    if (Object.keys(updates).length > 0) {
+      setSignedUrls((prev) => ({ ...prev, ...updates }));
+    }
+  }, [expandedModelId, videosByModel, signedUrls]);
 
   const filteredModels = masterModels.filter((m) => selectedModelIds.includes(m.modelId));
   const selectedCount = Object.keys(libraryVideos).filter((id) => selectedModelIds.includes(id)).length;

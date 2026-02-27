@@ -3,7 +3,8 @@ import { fal } from '@fal-ai/client';
 import { GoogleGenAI } from '@google/genai';
 import sharp from 'sharp';
 import { config } from '@/lib/config';
-import { uploadImage, getSignedUrlFromPublicUrl, downloadToBuffer } from '@/lib/storage.js';
+import { uploadImage, downloadToBuffer } from '@/lib/storage.js';
+import { isR2Url } from '@/lib/r2';
 import { initDatabase, createGeneratedImage } from '@/lib/db';
 import { auth } from '@/lib/auth';
 
@@ -173,7 +174,6 @@ async function processResult(
 ): Promise<{ url: string; gcsUrl: string }> {
   const compressed = await sharp(buf).jpeg({ quality: 85 }).toBuffer();
   const uploaded = await uploadImage(compressed, `first-frame-${variant.toLowerCase()}-${Date.now()}.jpg`);
-  const signed = await getSignedUrlFromPublicUrl(uploaded.url);
 
   try {
     await createGeneratedImage({
@@ -189,7 +189,8 @@ async function processResult(
     console.error(`Failed to persist generated image ${variant} to DB:`, dbErr);
   }
 
-  return { url: signed, gcsUrl: uploaded.url };
+  // R2 URLs are public — no signing needed
+  return { url: uploaded.url, gcsUrl: uploaded.url };
 }
 
 export async function POST(req: Request) {
@@ -223,8 +224,17 @@ export async function POST(req: Request) {
     const isGcsUrl = (url: string) =>
       url.includes('storage.googleapis.com') || url.includes('storage.cloud.google.com');
 
+    const isDirectlyFetchable = (url: string) => isR2Url(url) || (!isGcsUrl(url));
+
     const downloadImage = async (label: string, url: string): Promise<Buffer> => {
       const baseUrl = stripSignedParams(url);
+      // R2 URLs and external URLs can be fetched directly
+      if (isDirectlyFetchable(baseUrl)) {
+        console.log(`[FirstFrame] Downloading ${label} via fetch: ${url.slice(0, 80)}`);
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`Failed to fetch ${label}: ${r.status}`);
+        return Buffer.from(await r.arrayBuffer());
+      }
       if (isGcsUrl(baseUrl)) {
         console.log(`[FirstFrame] Downloading ${label} via GCS SDK: ${baseUrl.slice(0, 80)}`);
         return Buffer.from(await downloadToBuffer(baseUrl));

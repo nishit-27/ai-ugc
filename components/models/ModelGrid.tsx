@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import { type ReactNode, useState } from 'react';
 import { ImageIcon, Link2 } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaFacebook, FaXTwitter, FaLinkedin } from 'react-icons/fa6';
@@ -41,19 +40,19 @@ function ModelAvatar({
       {!loaded && (
         <Skeleton className="absolute inset-0 rounded-none" />
       )}
-      <Image
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
         src={src}
         alt={alt}
-        fill
-        priority={priority}
-        quality={70}
-        sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+        loading={priority ? 'eager' : 'lazy'}
+        decoding={priority ? 'sync' : 'async'}
+        fetchPriority={priority ? 'high' : 'auto'}
         onLoad={() => setLoaded(true)}
         onError={() => {
           setFailed(true);
           setLoaded(true);
         }}
-        className={`h-full w-full object-cover transition-[opacity,transform] duration-300 group-hover:scale-105 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 h-full w-full object-cover transition-[opacity,transform] duration-300 group-hover:scale-105 ${loaded ? 'opacity-100' : 'opacity-0'}`}
       />
     </div>
   );

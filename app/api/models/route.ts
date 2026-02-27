@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createModel, setModelGroups, ensureDatabaseReady, getAllModels, getModelImageCountsForModels, getModelAccountMappingsForModels } from '@/lib/db';
-import { getCachedSignedUrl } from '@/lib/signedUrlCache';
 
 interface Model {
   id: string;
@@ -40,24 +39,12 @@ export async function GET() {
       accountCountMap.set(mapping.modelId, (accountCountMap.get(mapping.modelId) || 0) + 1);
     }
 
-    const modelsWithCounts = await Promise.all(models.map(async (model: Model) => {
-      const avatarGcsUrl = model.avatarUrl;
-      let avatarUrl = avatarGcsUrl;
-      if (avatarGcsUrl && avatarGcsUrl.includes('storage.googleapis.com')) {
-        try {
-          avatarUrl = await getCachedSignedUrl(avatarGcsUrl);
-        } catch {
-          // Keep original URL on signing failure.
-        }
-      }
-      return {
-        ...model,
-        avatarGcsUrl,
-        avatarUrl,
-        imageCount: imageCountMap.get(model.id) || 0,
-        linkedPlatforms: platformsMap.get(model.id) || [],
-        accountCount: accountCountMap.get(model.id) || 0,
-      };
+    const modelsWithCounts = models.map((model: Model) => ({
+      ...model,
+      avatarGcsUrl: model.avatarUrl,
+      imageCount: imageCountMap.get(model.id) || 0,
+      linkedPlatforms: platformsMap.get(model.id) || [],
+      accountCount: accountCountMap.get(model.id) || 0,
     }));
 
     return NextResponse.json(modelsWithCounts, {

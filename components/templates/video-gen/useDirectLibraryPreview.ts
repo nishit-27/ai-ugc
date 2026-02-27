@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { signUrls } from '@/lib/signedUrlClient';
 import type { GeneratedImage } from '@/types';
 
 type Params = {
@@ -25,42 +24,14 @@ export function useDirectLibraryPreview({
       return;
     }
 
+    // Try to find in library first
     const matched = libraryImages.find((img) => img.gcsUrl === imageUrl);
-    if (matched?.signedUrl || matched?.gcsUrl) {
-      const resolved = matched.signedUrl || matched.gcsUrl;
-      if (selectedFirstFrameDisplayUrl !== resolved) setSelectedFirstFrameDisplayUrl(resolved);
-      setIsResolvingSelectedFirstFrame(false);
-      return;
+    const resolved = matched?.signedUrl || matched?.gcsUrl || imageUrl;
+
+    if (selectedFirstFrameDisplayUrl !== resolved) {
+      setSelectedFirstFrameDisplayUrl(resolved);
     }
-
-    const needsSigning = imageUrl.includes('storage.googleapis.com');
-    if (!needsSigning) {
-      if (selectedFirstFrameDisplayUrl !== imageUrl) setSelectedFirstFrameDisplayUrl(imageUrl);
-      setIsResolvingSelectedFirstFrame(false);
-      return;
-    }
-
-    let cancelled = false;
-    setIsResolvingSelectedFirstFrame(true);
-
-    signUrls([imageUrl])
-      .then((signed) => {
-        if (cancelled) return;
-        const resolved = signed.get(imageUrl) || imageUrl;
-        if (selectedFirstFrameDisplayUrl !== resolved) setSelectedFirstFrameDisplayUrl(resolved);
-      })
-      .catch(() => {
-        if (!cancelled && selectedFirstFrameDisplayUrl !== imageUrl) {
-          setSelectedFirstFrameDisplayUrl(imageUrl);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsResolvingSelectedFirstFrame(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    setIsResolvingSelectedFirstFrame(false);
   }, [
     imageUrl,
     isDirectLibraryFirstFrame,

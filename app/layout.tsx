@@ -16,8 +16,8 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="anonymous" />
-        <link rel="dns-prefetch" href="https://storage.googleapis.com" />
+        <link rel="preconnect" href="https://pub-dc1f12839d7f4746bd2b2974c8455b3d.r2.dev" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://pub-dc1f12839d7f4746bd2b2974c8455b3d.r2.dev" />
       </head>
       <body className="antialiased">
         <AuthSessionProvider>

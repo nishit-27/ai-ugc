@@ -7,6 +7,7 @@ import OpenAI from 'openai';
 import { config } from '@/lib/config';
 import { downloadFile, extractRandomFrames } from '@/lib/serverUtils';
 import { uploadImage, getSignedUrlFromPublicUrl } from '@/lib/storage.js';
+import { isR2Url } from '@/lib/r2';
 
 const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
 
@@ -19,9 +20,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'videoUrl is required' }, { status: 400 });
     }
 
-    // Sign GCS URLs before downloading (they require auth)
+    // R2 URLs are public — use directly. GCS URLs need signing.
     let downloadUrl = videoUrl;
-    if (videoUrl.startsWith('https://storage.googleapis.com/') || videoUrl.startsWith('gs://')) {
+    if (!isR2Url(videoUrl) && (videoUrl.startsWith('https://storage.googleapis.com/') || videoUrl.startsWith('gs://'))) {
       downloadUrl = await getSignedUrlFromPublicUrl(videoUrl);
     }
 
@@ -36,13 +37,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'No frames could be extracted' }, { status: 500 });
     }
 
-    // Upload each frame to GCS + get signed URLs
+    // Upload each frame to R2 — public URLs, no signing needed
     const uploaded = await Promise.all(
       rawFrames.map(async (frame, i) => {
         const filename = `extracted-frame-${uuidv4()}.jpg`;
         const { url: gcsUrl } = await uploadImage(frame.buffer, filename);
-        const signedUrl = await getSignedUrlFromPublicUrl(gcsUrl);
-        return { gcsUrl, signedUrl, timestamp: frame.timestamp, buffer: frame.buffer, index: i };
+        return { gcsUrl, signedUrl: gcsUrl, timestamp: frame.timestamp, buffer: frame.buffer, index: i };
       })
     );
 

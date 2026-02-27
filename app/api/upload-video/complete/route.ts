@@ -1,10 +1,7 @@
 import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { createMediaFile, getMediaFileByFilename } from '@/lib/db';
-import {
-  getSignedUrlFromPublicUrl,
-  getVideoObjectMetadata,
-} from '@/lib/storage';
+import { getVideoObjectMetadata } from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -48,13 +45,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const signedUrl = await getSignedUrlFromPublicUrl(metadata.gcsUrl);
+    // R2 URLs are public — no signing needed
     return NextResponse.json({
       success: true,
       filename,
       gcsUrl: metadata.gcsUrl,
-      url: signedUrl,
-      path: signedUrl,
+      url: metadata.gcsUrl,
+      path: metadata.gcsUrl,
       size: metadata.size,
       mimeType: metadata.contentType,
     });

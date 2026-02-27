@@ -5,12 +5,10 @@ import {
   getGeneratedImagesByModelId,
   getGeneratedImagesCount,
 } from '@/lib/db';
-import { getCachedSignedUrl } from '@/lib/signedUrlCache';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-const MAX_SIGNED_IMAGES_PER_RESPONSE = 100;
 const RESPONSE_CACHE_TTL_MS = 4_000;
 const MAX_CACHE_ENTRIES = 80;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -48,30 +46,11 @@ function setCachedPayload(cacheKey: string, payload: GeneratedImagesPayload) {
   if (oldest) responseCache.delete(oldest);
 }
 
-async function attachSignedUrls<T extends ImageLike>(images: T[]): Promise<Array<T & { signedUrl?: string }>> {
-  const uniqueGcsUrls = [...new Set(
-    images
-      .map((image) => image.gcsUrl)
-      .filter((url): url is string => !!url && url.includes('storage.googleapis.com'))
-  )];
-
-  if (uniqueGcsUrls.length === 0) return images;
-
-  const signedMap = new Map<string, string>();
-  await Promise.all(
-    uniqueGcsUrls.map(async (url) => {
-      try {
-        const signed = await getCachedSignedUrl(url);
-        signedMap.set(url, signed);
-      } catch {
-        signedMap.set(url, url);
-      }
-    })
-  );
-
+/** All URLs are now R2 public — set signedUrl = gcsUrl directly. */
+function resolveUrls<T extends ImageLike>(images: T[]): Array<T & { signedUrl?: string }> {
   return images.map((image) => ({
     ...image,
-    signedUrl: image.gcsUrl ? (signedMap.get(image.gcsUrl) || image.gcsUrl) : undefined,
+    signedUrl: image.gcsUrl || undefined,
   }));
 }
 
@@ -112,7 +91,6 @@ export async function GET(request: NextRequest) {
     const loadPromise = (async (): Promise<GeneratedImagesPayload> => {
       const modelId = searchParams.get('modelId');
       const hasPagination = searchParams.has('page') || searchParams.has('limit');
-      const includeSigned = searchParams.get('signed') === 'true';
       const fastMode = searchParams.get('fast') === 'true';
       const countOnly = searchParams.get('countOnly') === 'true';
       const dateRange = searchParams.get('dateRange');
@@ -129,10 +107,7 @@ export async function GET(request: NextRequest) {
 
       if (modelId && !hasPagination && !dateRange && !searchParams.has('sort')) {
         const images = await getGeneratedImagesByModelId(modelId);
-        const withSigned = includeSigned && images.length <= MAX_SIGNED_IMAGES_PER_RESPONSE
-          ? await attachSignedUrls(images)
-          : images;
-        return { images: withSigned, total: images.length };
+        return { images: resolveUrls(images), total: images.length };
       }
 
       const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -145,11 +120,8 @@ export async function GET(request: NextRequest) {
         createdAfter,
         sort,
       });
-      const withSigned = includeSigned && images.length <= MAX_SIGNED_IMAGES_PER_RESPONSE
-        ? await attachSignedUrls(images)
-        : images;
 
-      return { images: withSigned, total, page, limit };
+      return { images: resolveUrls(images), total, page, limit };
     })();
 
     inflightByKey.set(cacheKey, loadPromise);

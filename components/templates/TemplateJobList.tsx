@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Send, Download, Check, Loader2, AlertCircle, ChevronLeft, ChevronRight, Play, Trash2 } from 'lucide-react';
 import type { TemplateJob, StepResult } from '@/types';
@@ -10,8 +10,6 @@ import ProgressBar from '@/components/ui/ProgressBar';
 import Modal from '@/components/ui/Modal';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
 
-import { signUrls } from '@/lib/signedUrlClient';
-
 function SkeletonCard() {
   return (
     <div className="relative aspect-[9/16] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
@@ -20,55 +18,11 @@ function SkeletonCard() {
   );
 }
 
-function useSignedUrls(jobs: TemplateJob[]) {
-  const [signedMap, setSignedMap] = useState<Record<string, string>>({});
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  // Normalize + sign URLs for completed jobs.
-  useEffect(() => {
-    const needSigning = jobs.filter(
-      (job) =>
-        job.status === 'completed'
-        && !!job.outputUrl
-        && job.outputUrl.includes('storage.googleapis.com')
-        && !signedMap[job.id],
-    );
-    if (needSigning.length === 0) return;
-
-    let cancelled = false;
-
-    (async () => {
-      const urls = needSigning.map((job) => job.outputUrl!);
-      const signed = await signUrls(urls);
-      if (cancelled || !mountedRef.current) return;
-      const updates: Record<string, string> = {};
-      for (const job of needSigning) {
-        const url = signed.get(job.outputUrl!);
-        if (url) updates[job.id] = url;
-      }
-      if (Object.keys(updates).length > 0) {
-        setSignedMap((prev) => ({ ...prev, ...updates }));
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [jobs, signedMap]);
-
+function useResolvedUrls() {
   const getSignedUrl = useCallback(
-    (job: TemplateJob) => {
-      if (signedMap[job.id]) return signedMap[job.id];
-      if (job.signedUrl) return job.signedUrl;
-      if (job.outputUrl && !job.outputUrl.includes('storage.googleapis.com')) return job.outputUrl;
-      return undefined;
-    },
-    [signedMap],
+    (job: TemplateJob) => job.signedUrl || job.outputUrl || undefined,
+    [],
   );
-
   return { getSignedUrl };
 }
 
@@ -83,7 +37,7 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
   const [hiddenJobIds, setHiddenJobIds] = useState<Record<string, true>>({});
   // null = show final output, string = stepId to show
   const [viewingStepId, setViewingStepId] = useState<string | null>(null);
-  const { getSignedUrl } = useSignedUrls(jobs);
+  const { getSignedUrl } = useResolvedUrls();
 
   const markLoaded = (id: string) => {
     setLoadedById((prev) => (prev[id] ? prev : { ...prev, [id]: true }));

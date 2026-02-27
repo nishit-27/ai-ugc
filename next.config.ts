@@ -1,11 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['@google-cloud/storage', 'ffmpeg-static', '@ffprobe-installer/ffprobe'],
+  serverExternalPackages: ['@google-cloud/storage', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner', 'sharp', 'ffmpeg-static', '@ffprobe-installer/ffprobe'],
   images: {
     remotePatterns: [
-      { protocol: 'https', hostname: 'storage.googleapis.com' },
-      { protocol: 'https', hostname: 'storage.cloud.google.com' },
+      { protocol: 'https', hostname: '*.r2.dev' },
+      { protocol: 'https', hostname: '*.r2.cloudflarestorage.com' },
     ],
   },
   outputFileTracingIncludes: {

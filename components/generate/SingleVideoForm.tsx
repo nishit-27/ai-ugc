@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/hooks/useToast';
 import { useJobs } from '@/hooks/useJobs';
 import { useVideoUpload } from '@/hooks/useVideoUpload';
-import { signUrls } from '@/lib/signedUrlClient';
 import Spinner from '@/components/ui/Spinner';
 import type { Model, ModelImage, GeneratedImage } from '@/types';
 
@@ -57,14 +56,8 @@ export default function SingleVideoForm({
       const res = await fetch(`/api/generated-images?modelId=${modelId}`);
       const data = await res.json();
       const imgs: GeneratedImage[] = Array.isArray(data.images) ? data.images : [];
-      // Sign URLs
-      const gcsUrls = imgs.map((img) => img.gcsUrl).filter((url) => url?.includes('storage.googleapis.com'));
-      if (gcsUrls.length > 0) {
-        const signed = await signUrls(gcsUrls);
-        setLibraryImages(imgs.map((img) => ({ ...img, signedUrl: signed.get(img.gcsUrl) || img.gcsUrl })));
-      } else {
-        setLibraryImages(imgs);
-      }
+      // URLs are R2 public — resolve directly
+      setLibraryImages(imgs.map((img) => ({ ...img, signedUrl: img.signedUrl || img.gcsUrl })));
     } catch (e) {
       console.error('Failed to load generated images:', e);
     } finally {

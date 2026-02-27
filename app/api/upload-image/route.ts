@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
-import { uploadImage, getSignedUrlFromPublicUrl } from '@/lib/storage';
+import { uploadImage } from '@/lib/storage';
 import { createMediaFile } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Upload to GCS
+    // Upload to R2 (with compression)
     const { filename, url, contentType } = await uploadImage(buffer, file.name);
 
     // Store in database
@@ -36,15 +36,13 @@ export async function POST(request: NextRequest) {
       jobId: null,
     });
 
-    // Generate signed URL for immediate frontend preview
-    const signedUrl = await getSignedUrlFromPublicUrl(url);
-
+    // R2 URLs are public — no signing needed
     return NextResponse.json({
       success: true,
       filename,
-      url: signedUrl,      // Signed URL for frontend display
-      gcsUrl: url,         // Public URL reference
-      path: signedUrl,     // Backwards compat
+      url,
+      gcsUrl: url,
+      path: url,
     });
   } catch (err) {
     console.error('Upload image error:', err);

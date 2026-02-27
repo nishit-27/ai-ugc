@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { getSignedUrl, signUrls } from '@/lib/signedUrlClient';
 import { getDateFilterSortDirection } from '@/lib/media-filters';
 import type { GeneratedImage } from '@/types';
 import type { DateFilterValue } from '@/types/media-filters';
@@ -9,7 +8,6 @@ import type { DateFilterValue } from '@/types/media-filters';
 const PER_PAGE = 24;
 const CACHE_KEY = 'ai-ugc-generated-images-pages-v2';
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const SIGN_CHUNK_SIZE = 8;
 const EMPTY_RETRY_DELAYS_MS = [300, 700];
 
 type CachedPage = {
@@ -62,13 +60,12 @@ function setCachedPage(page: number, filters: NormalizedFilters, payload: { imag
   }
 }
 
-function withKnownSignedUrls(images: GeneratedImage[]): GeneratedImage[] {
-  return images.map((img) => {
-    if (img.signedUrl) return img;
-    if (!img.gcsUrl) return img;
-    const known = getSignedUrl(img.gcsUrl);
-    return known !== img.gcsUrl ? { ...img, signedUrl: known } : img;
-  });
+/** Ensure every image has a displayable URL (R2 URLs are public). */
+function withResolvedUrls(images: GeneratedImage[]): GeneratedImage[] {
+  return images.map((img) => ({
+    ...img,
+    signedUrl: img.signedUrl || img.gcsUrl || undefined,
+  }));
 }
 
 function buildQuery(page: number, filters: NormalizedFilters, options: { countOnly?: boolean } = {}) {
@@ -81,7 +78,6 @@ function buildQuery(page: number, filters: NormalizedFilters, options: { countOn
     params.set('page', String(page));
     params.set('limit', String(PER_PAGE));
     params.set('fast', 'true');
-    params.set('signed', 'false');
     params.set('sort', getDateFilterSortDirection(filters.dateFilter));
   }
 
@@ -153,7 +149,7 @@ export function useGeneratedImages(options: UseGeneratedImagesOptions = {}) {
 
       const result: GeneratedImage[] = Array.isArray(data.images) ? data.images : [];
       const totalFromApi = typeof data.total === 'number' ? data.total : null;
-      const initialImages = withKnownSignedUrls(result);
+      const resolvedImages = withResolvedUrls(result);
 
       if (retryOnEmpty && p === 1 && result.length === 0) {
         let knownCount = totalFromApi;
@@ -167,7 +163,7 @@ export function useGeneratedImages(options: UseGeneratedImagesOptions = {}) {
             const countData = await countRes.json();
             if (typeof countData.total === 'number') knownCount = countData.total;
           } catch {
-            // Ignore fallback count failures and continue with current payload.
+            // Ignore fallback count failures.
           }
         }
 
@@ -185,40 +181,12 @@ export function useGeneratedImages(options: UseGeneratedImagesOptions = {}) {
       if (typeof totalFromApi === 'number') {
         setTotal(totalFromApi);
       }
-      setImages(initialImages);
+      setImages(resolvedImages);
       setIsLoadingPage(false);
       setCachedPage(p, normalizedFilters, {
-        images: initialImages,
+        images: resolvedImages,
         total: typeof totalFromApi === 'number' ? totalFromApi : totalRef.current,
       });
-
-      const missingUrls = [...new Set(
-        result
-          .filter((img) => !img.signedUrl)
-          .map((img) => img.gcsUrl)
-          .filter((url): url is string => !!url && url.includes('storage.googleapis.com'))
-      )];
-
-      if (missingUrls.length > 0) {
-        for (let i = 0; i < missingUrls.length; i += SIGN_CHUNK_SIZE) {
-          if (!isActiveRequest()) return;
-          const chunk = missingUrls.slice(i, i + SIGN_CHUNK_SIZE);
-          const signedChunk = await signUrls(chunk);
-          if (!isActiveRequest()) return;
-
-          setImages((prev) => {
-            const next = prev.map((img) => ({
-              ...img,
-              signedUrl: signedChunk.get(img.gcsUrl) || img.signedUrl || img.gcsUrl,
-            }));
-            setCachedPage(p, normalizedFilters, {
-              images: next,
-              total: typeof totalFromApi === 'number' ? totalFromApi : totalRef.current,
-            });
-            return next;
-          });
-        }
-      }
 
       if (typeof totalFromApi !== 'number' && !loadingTotalRef.current) {
         loadingTotalRef.current = true;
@@ -229,7 +197,7 @@ export function useGeneratedImages(options: UseGeneratedImagesOptions = {}) {
             if (!isActiveRequest()) return;
             if (typeof countData.total === 'number') {
               setTotal(countData.total);
-              setCachedPage(p, normalizedFilters, { images: initialImages, total: countData.total });
+              setCachedPage(p, normalizedFilters, { images: resolvedImages, total: countData.total });
             }
           })
           .catch(() => {})

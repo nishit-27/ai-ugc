@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import Image from 'next/image';
+import { useState, useCallback } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { GeneratedImage } from '@/types';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
@@ -37,11 +36,11 @@ export default function ImageGallery({
   const [loadedById, setLoadedById] = useState<Record<string, true>>({});
   const [loadedSrcById, setLoadedSrcById] = useState<Record<string, string>>({});
 
-  const markLoaded = (id: string, src?: string) => {
+  const markLoaded = useCallback((id: string, src?: string) => {
     setLoadedById((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
     if (!src) return;
     setLoadedSrcById((prev) => (prev[id] === src ? prev : { ...prev, [id]: src }));
-  };
+  }, []);
 
   if (isLoading) {
     return (
@@ -67,9 +66,9 @@ export default function ImageGallery({
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {images.map((image, index) => {
-        const displayUrl = image.signedUrl
-          || (image.gcsUrl && !image.gcsUrl.includes('storage.googleapis.com') ? image.gcsUrl : '');
+        const displayUrl = image.signedUrl || image.gcsUrl || '';
         const isLoaded = !!loadedById[image.id];
+        const isAboveFold = index < 4;
         return (
         <div
           key={image.id}
@@ -79,14 +78,14 @@ export default function ImageGallery({
           <div className="relative aspect-[9/16] overflow-hidden bg-[var(--accent)]">
             {displayUrl ? (
               <>
-                <Image
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
                   src={displayUrl}
                   alt={image.filename}
-                  fill
-                  priority={index < 4}
-                  quality={70}
-                  sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-                  className={`h-full w-full object-cover transition-[opacity,transform] duration-300 group-hover:scale-105 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+                  loading={isAboveFold ? 'eager' : 'lazy'}
+                  decoding={isAboveFold ? 'sync' : 'async'}
+                  fetchPriority={isAboveFold ? 'high' : 'auto'}
+                  className={`absolute inset-0 h-full w-full object-cover transition-[opacity,transform] duration-300 group-hover:scale-105 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
                   onLoad={(e) => markLoaded(image.id, e.currentTarget.currentSrc || e.currentTarget.src)}
                   onError={() => markLoaded(image.id)}
                 />

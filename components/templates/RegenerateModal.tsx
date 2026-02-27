@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { X, Loader2, RotateCcw, Check, ImageIcon, Sparkles, RefreshCw } from 'lucide-react';
-import { signUrls } from '@/lib/signedUrlClient';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
 import type { TemplateJob, ModelImage, MasterConfigModel, VideoGenConfig } from '@/types';
 
@@ -46,25 +45,8 @@ export default function RegenerateModal({
   const [selectedFirstFrame, setSelectedFirstFrame] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  // Resolve source video URL (sign GCS URLs so extract-frames API can download)
-  const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Always use the raw videoUrl — job.signedUrl may be expired and
-    // passing an already-signed URL to signUrls produces a bad path (404).
-    const rawUrl = job.videoUrl;
-    if (!rawUrl) return;
-
-    if (rawUrl.includes('storage.googleapis.com')) {
-      signUrls([rawUrl]).then((signed) => {
-        setResolvedVideoUrl(signed.get(rawUrl) || rawUrl);
-      }).catch(() => {
-        setResolvedVideoUrl(rawUrl);
-      });
-    } else {
-      setResolvedVideoUrl(rawUrl);
-    }
-  }, [job.videoUrl]);
+  // URLs are now R2 public — use directly
+  const resolvedVideoUrl = job.videoUrl || null;
 
   // Get current pipeline config
   const videoGenStep = job.pipeline.find((s) => s.type === 'video-generation');

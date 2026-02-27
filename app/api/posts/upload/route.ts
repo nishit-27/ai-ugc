@@ -247,9 +247,11 @@ export async function POST(request: NextRequest) {
       ext === '.webm' ? 'video/webm' :
       'video/mp4';
 
-    // Prepare a fetchable URL (GCS needs a signed URL for direct streaming)
+    // R2 URLs are public — use directly. GCS URLs need signing for download.
     let fetchableVideoUrl = videoUrl;
-    if (videoUrl.startsWith('https://storage.googleapis.com')) {
+    if (videoUrl.includes('.r2.dev/') || videoUrl.includes('r2.cloudflarestorage.com')) {
+      // R2 URL — already public
+    } else if (videoUrl.startsWith('https://storage.googleapis.com')) {
       fetchableVideoUrl = await getSignedUrlFromPublicUrl(videoUrl, 15);
     }
 

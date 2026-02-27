@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { Post } from '@/types';
 import { derivePostStatus, isActiveStatus, postMatchesFilter } from '@/lib/postStatus';
-import { signUrls } from '@/lib/signedUrlClient';
 import { getDateFilterCutoffMs, getDateFilterSortDirection, toMillis } from '@/lib/media-filters';
 import type { DateFilterValue } from '@/types/media-filters';
 import { usePageVisibility } from './usePageVisibility';
@@ -145,31 +144,9 @@ function getPostTimeMs(post: Post): number {
   return toMillis(post.createdAt || post.updatedAt || post.publishedAt || post.scheduledFor || null);
 }
 
-async function signPostMedia(posts: Post[]): Promise<Post[]> {
-  const urlsToSign = new Set<string>();
-  for (const post of posts) {
-    for (const media of post.mediaItems || []) {
-      if (media.url?.includes('storage.googleapis.com')) urlsToSign.add(media.url);
-      if (media.thumbnailUrl?.includes('storage.googleapis.com')) urlsToSign.add(media.thumbnailUrl);
-    }
-  }
-  if (urlsToSign.size === 0) return posts;
-
-  let signed: Map<string, string>;
-  try {
-    signed = await signUrls(Array.from(urlsToSign));
-  } catch {
-    return posts;
-  }
-
-  return posts.map((post) => ({
-    ...post,
-    mediaItems: (post.mediaItems || []).map((media) => ({
-      ...media,
-      url: media.url ? (signed.get(media.url) || media.url) : media.url,
-      thumbnailUrl: media.thumbnailUrl ? (signed.get(media.thumbnailUrl) || media.thumbnailUrl) : media.thumbnailUrl,
-    })),
-  }));
+/** URLs are now all R2 public — no signing needed. */
+function resolvePostMedia(posts: Post[]): Post[] {
+  return posts;
 }
 
 async function fetchPostsOnce(signal: AbortSignal, forceModelRefresh = false): Promise<Post[] | null> {
@@ -177,8 +154,8 @@ async function fetchPostsOnce(signal: AbortSignal, forceModelRefresh = false): P
   const res = await fetch(endpoint, { signal, cache: 'no-store' });
   if (!res.ok) return null;
   const data = await res.json();
-  const signedPosts: Post[] = await signPostMedia(data.posts || []);
-  return enrichPostsWithModelInfo(signedPosts, forceModelRefresh);
+  const posts: Post[] = resolvePostMedia(data.posts || []);
+  return enrichPostsWithModelInfo(posts, forceModelRefresh);
 }
 
 export function usePosts(options: UsePostsOptions = {}) {

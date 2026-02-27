@@ -2,7 +2,6 @@
 
 import { useState, useRef } from 'react';
 import { Film, ImageIcon, UserCircle, Upload, Link2, Layers } from 'lucide-react';
-import { signUrls } from '@/lib/signedUrlClient';
 import type { LayerSource, StepResult, Model } from '@/types';
 
 type Tab = 'pipeline' | 'videos' | 'images' | 'models' | 'upload' | 'url';
@@ -88,17 +87,11 @@ export default function ComposeAssetPanel({
       const end = page * VIDEOS_PER_PAGE;
       const pageVideos = rawVideos.slice(start, end);
 
-      const gcsUrls = pageVideos
-        .map((v: { url?: string; path?: string }) => v.url || v.path || '')
-        .filter((url: string) => url.includes('storage.googleapis.com'));
-
-      const signed = gcsUrls.length > 0 ? await signUrls(gcsUrls) : new Map<string, string>();
-
       const items: VideoItem[] = pageVideos.map((v: { url?: string; path?: string; name?: string }) => {
         const gcsUrl = v.url || v.path || '';
         return {
           gcsUrl,
-          url: signed.get(gcsUrl) || gcsUrl,
+          url: gcsUrl,
           name: v.name || 'Video',
         };
       });
@@ -135,20 +128,11 @@ export default function ComposeAssetPanel({
       const rawImages = data.images;
       if (!Array.isArray(rawImages)) return;
 
-      // The API returns signedUrl for each image when signed=true.
-      // Fall back to client-side signing for any that are missing.
-      const needsSigning = rawImages
-        .filter((img: { gcsUrl?: string; signedUrl?: string }) => !img.signedUrl && img.gcsUrl)
-        .map((img: { gcsUrl?: string }) => img.gcsUrl!)
-        .filter((url: string) => url.includes('storage.googleapis.com'));
-
-      const signed = needsSigning.length > 0 ? await signUrls(needsSigning) : new Map<string, string>();
-
       const items: ImageItem[] = rawImages.map((img: { gcsUrl?: string; signedUrl?: string; filename?: string }) => {
         const gcsUrl = img.gcsUrl || '';
         return {
           gcsUrl,
-          url: img.signedUrl || signed.get(gcsUrl) || gcsUrl,
+          url: img.signedUrl || gcsUrl,
           name: img.filename || 'Image',
         };
       });
@@ -178,16 +162,10 @@ export default function ComposeAssetPanel({
       const data = await res.json();
       const rawModels: Model[] = Array.isArray(data) ? data : [];
 
-      const avatarGcsUrls = rawModels
-        .map((m) => m.avatarUrl || '')
-        .filter((url) => url.includes('storage.googleapis.com') && !url.includes('X-Goog-Signature='));
-
-      const signed = avatarGcsUrls.length > 0 ? await signUrls(avatarGcsUrls) : new Map<string, string>();
-
       setModels(rawModels.map((m) => ({
         id: m.id,
         name: m.name,
-        avatarUrl: m.avatarUrl ? (signed.get(m.avatarUrl) || m.avatarUrl) : undefined,
+        avatarUrl: m.avatarUrl || undefined,
         images: [],
       })));
     } catch (err) {
@@ -204,16 +182,9 @@ export default function ComposeAssetPanel({
       const data = await res.json();
       const rawImages: { gcsUrl: string; signedUrl?: string; filename: string }[] = Array.isArray(data) ? data : [];
 
-      const gcsUrls = rawImages
-        .filter((img) => !img.signedUrl)
-        .map((img) => img.gcsUrl)
-        .filter((url) => url.includes('storage.googleapis.com'));
-
-      const signed = gcsUrls.length > 0 ? await signUrls(gcsUrls) : new Map<string, string>();
-
       const withSigned = rawImages.map((img) => ({
         ...img,
-        signedUrl: img.signedUrl || signed.get(img.gcsUrl) || img.gcsUrl,
+        signedUrl: img.signedUrl || img.gcsUrl,
       }));
 
       setModels((prev) => prev.map((m) =>

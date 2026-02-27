@@ -62,11 +62,11 @@ export async function POST(request: NextRequest) {
     }
 
     const objectPath = buildVideoObjectPath(filename);
-    const origin = request.headers.get('origin') || undefined;
+
+    // Returns a presigned PUT URL for R2 (replaces GCS resumable session)
     const sessionUrl = await createVideoResumableUploadSession({
       objectPath,
       contentType,
-      origin,
     });
 
     return NextResponse.json({

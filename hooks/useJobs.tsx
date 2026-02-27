@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef, createContext, useContext, type ReactNode } from 'react';
 import type { Job } from '@/types';
-import { signUrls, getSignedUrl } from '@/lib/signedUrlClient';
 import { useStuckJobRecovery } from './useStuckJobRecovery';
 import { usePageVisibility } from './usePageVisibility';
 
@@ -55,48 +54,29 @@ function useJobsInternal() {
       const res = await fetch('/api/jobs', { signal: ac.signal });
       clearTimeout(timeout);
       if (!mountedRef.current) return;
-      if (!res.ok) return; // silently skip bad responses
+      if (!res.ok) return;
       const data = await res.json();
       const arr: Job[] = Array.isArray(data) ? data : [];
 
-      // Attach cached signed URLs to completed jobs immediately
-      const withSigned = arr.map((j) => {
+      // URLs are public R2 — set signedUrl directly
+      const withUrls = arr.map((j) => {
         if (j.status === 'completed' && j.outputUrl) {
-          const cached = getSignedUrl(j.outputUrl);
-          if (cached !== j.outputUrl) return { ...j, signedUrl: cached };
+          return { ...j, signedUrl: j.outputUrl };
         }
         return j;
       });
 
-      const snapshot = withSigned.map((j) => `${j.id}:${j.status}:${j.step}`).join('|');
+      const snapshot = withUrls.map((j) => `${j.id}:${j.status}:${j.step}`).join('|');
       if (snapshot !== lastSnapshotRef.current) {
         lastSnapshotRef.current = snapshot;
-        setJobs(withSigned);
-        setCachedJobs(withSigned);
-      }
-
-      // Sign any new completed URLs in background (non-blocking)
-      const unsignedUrls = withSigned
-        .filter((j) => j.status === 'completed' && j.outputUrl && !j.signedUrl && j.outputUrl.includes('storage.googleapis.com'))
-        .map((j) => j.outputUrl!);
-
-      if (unsignedUrls.length > 0) {
-        signUrls(unsignedUrls).then((signed) => {
-          if (!mountedRef.current) return;
-          setJobs((prev) => prev.map((j) => {
-            if (j.outputUrl && signed.has(j.outputUrl)) {
-              return { ...j, signedUrl: signed.get(j.outputUrl) };
-            }
-            return j;
-          }));
-        });
+        setJobs(withUrls);
+        setCachedJobs(withUrls);
       }
 
       // Check for stuck jobs and trigger recovery if needed
       checkAndRecover(arr);
     } catch {
       clearTimeout(timeout);
-      // Silently ignore — cached data stays visible
     }
   }, [checkAndRecover]);
 

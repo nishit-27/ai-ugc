@@ -3,7 +3,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Canvas as FabricCanvas, Rect, FabricText } from 'fabric';
 import { createFabricVideo, createFabricImage } from '@/lib/fabricVideoElement';
-import { signUrls } from '@/lib/signedUrlClient';
 import { ASPECT_RATIO_DIMENSIONS, PRESETS } from '@/components/compose/presets';
 import type {
   ComposeConfig, ComposeLayer, ComposeAspectRatio, ComposePresetId,
@@ -27,16 +26,8 @@ function defaultConfig(): ComposeConfig {
   };
 }
 
-async function resolveDisplayUrl(url: string): Promise<string> {
-  if (!url) return url;
-  if (url.includes('storage.googleapis.com') && !url.includes('X-Goog-')) {
-    try {
-      const signed = await signUrls([url]);
-      return signed.get(url) || url;
-    } catch {
-      return url;
-    }
-  }
+/** URLs are now R2 public — return as-is. */
+function resolveDisplayUrl(url: string): string {
   return url;
 }
 
@@ -251,7 +242,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       let fabricObj: FabricObject;
 
       // Sign GCS URLs before loading into canvas
-      const displayUrl = source.url ? await resolveDisplayUrl(source.url) : '';
+      const displayUrl = source.url ? resolveDisplayUrl(source.url) : '';
 
       // For step-output layers, the URL is typically an image preview of the video to be generated.
       const isStepOutputPreview = source.type === 'step-output' && displayUrl && !/\.(mp4|webm|mov|avi)(\?|$)/i.test(displayUrl);

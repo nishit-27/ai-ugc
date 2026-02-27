@@ -4,7 +4,7 @@ import os from 'os';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { downloadFile, extractEvenlySpacedFrames, getVideoDuration } from '@/lib/serverUtils';
-import { uploadImage, getSignedUrlFromPublicUrl } from '@/lib/storage.js';
+import { uploadImage } from '@/lib/storage.js';
 
 export async function POST(req: Request) {
   let tmpVideoPath: string | null = null;
@@ -30,9 +30,9 @@ export async function POST(req: Request) {
     const uploaded = await Promise.all(
       rawFrames.map(async (frame) => {
         const filename = `timeline-frame-${uuidv4()}.jpg`;
-        const { url: gcsUrl } = await uploadImage(frame.buffer, filename);
-        const signedUrl = await getSignedUrlFromPublicUrl(gcsUrl);
-        return { signedUrl, timestamp: frame.timestamp };
+        const { url } = await uploadImage(frame.buffer, filename);
+        // R2 URLs are public — no signing needed
+        return { signedUrl: url, timestamp: frame.timestamp };
       })
     );
 

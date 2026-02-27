@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { ensureDatabaseReady, getModel, getModelImages, createModelImage } from '@/lib/db';
 import { uploadImage } from '@/lib/storage';
-import { getCachedSignedUrl } from '@/lib/signedUrlCache';
 
 type RouteParams = { params: Promise<{ id: string }> };
 type ModelImageRecord = {
@@ -29,14 +28,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     }
 
     const images = await getModelImages(id) as ModelImageRecord[];
-    const withSigned = await Promise.all(images.map(async (image: ModelImageRecord) => {
-      if (!image.gcsUrl?.includes('storage.googleapis.com')) return image;
-      try {
-        const signedUrl = await getCachedSignedUrl(image.gcsUrl);
-        return { ...image, signedUrl };
-      } catch {
-        return image;
-      }
+    // URLs are R2 public — set signedUrl directly
+    const withSigned = images.map((image) => ({
+      ...image,
+      signedUrl: image.gcsUrl,
     }));
 
     return NextResponse.json(withSigned, {

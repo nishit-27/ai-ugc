@@ -6,7 +6,6 @@ import Link from 'next/link';
 import type { Batch } from '@/types';
 import { useToast } from '@/hooks/useToast';
 import { downloadVideo } from '@/lib/dateUtils';
-import { signUrls } from '@/lib/signedUrlClient';
 import { ChevronLeft, ChevronRight, RefreshCw, Trash2, Download, Send, Loader2, AlertCircle, CheckCircle2, XCircle, Clock, ArrowLeft, Layers } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -33,28 +32,17 @@ export default function BatchDetailPage() {
       const res = await fetch(`/api/batches/${id}`, { cache: 'no-store' });
       const data = await res.json();
 
-      // Show data immediately, then sign output URLs
-      _cache[id] = data;
-      setBatch(data);
+      // URLs are R2 public — resolve directly
+      const withResolved = {
+        ...data,
+        jobs: (data.jobs || []).map((j: { outputUrl?: string; [key: string]: unknown }) => ({
+          ...j,
+          signedUrl: j.outputUrl || undefined,
+        })),
+      };
+      _cache[id] = withResolved;
+      setBatch(withResolved);
       setIsLoading(false);
-
-      // Batch-sign job output URLs
-      const outputUrls = (data.jobs || [])
-        .map((j: { outputUrl?: string }) => j.outputUrl)
-        .filter((url: string | undefined): url is string => !!url && url.includes('storage.googleapis.com'));
-
-      if (outputUrls.length > 0) {
-        const signed = await signUrls(outputUrls);
-        const withSigned = {
-          ...data,
-          jobs: (data.jobs || []).map((j: { outputUrl?: string; [key: string]: unknown }) => ({
-            ...j,
-            signedUrl: j.outputUrl ? (signed.get(j.outputUrl) || j.outputUrl) : undefined,
-          })),
-        };
-        _cache[id] = withSigned;
-        setBatch(withSigned);
-      }
     } catch {
       showToast('Failed to load batch', 'error');
     } finally {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
-import { uploadVideo, getSignedUrlFromPublicUrl } from '@/lib/storage';
+import { uploadVideo } from '@/lib/storage';
 import { createMediaFile } from '@/lib/db';
 
 export const maxDuration = 120;
@@ -22,15 +22,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Read file into buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Upload directly to GCS
+    // Upload to R2
     const result = await uploadVideo(buffer, file.name);
-
-    // Get signed URL for frontend preview
-    const signedUrl = await getSignedUrlFromPublicUrl(result.url);
 
     // Store in database
     await createMediaFile({
@@ -43,12 +39,13 @@ export async function POST(request: NextRequest) {
       jobId: null,
     });
 
+    // R2 URLs are public — no signing needed
     return NextResponse.json({
       success: true,
       filename: result.filename,
-      url: signedUrl,
+      url: result.url,
       gcsUrl: result.url,
-      path: signedUrl,
+      path: result.url,
       size: buffer.length,
     });
   } catch (err) {

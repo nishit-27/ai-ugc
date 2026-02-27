@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { getSignedUrl, signUrls } from '@/lib/signedUrlClient';
 import { getDateFilterCutoffMs, getDateFilterSortDirection, toMillis } from '@/lib/media-filters';
 import type { DateFilterValue } from '@/types/media-filters';
 
@@ -44,12 +43,11 @@ type UseGeneratedVideosOptions = {
 function normalizeVideo(item: ApiVideo, idx: number): GeneratedVideo | null {
   const gcsUrl = item.path || item.url || '';
   if (!gcsUrl) return null;
-  const signed = getSignedUrl(gcsUrl);
   return {
     id: gcsUrl || `${item.jobId || 'video'}-${idx}`,
     filename: item.name || `video-${idx + 1}.mp4`,
     gcsUrl,
-    signedUrl: signed !== gcsUrl ? signed : undefined,
+    signedUrl: gcsUrl,
     fileSize: item.size ?? null,
     createdAt: item.created || new Date(0).toISOString(),
     jobId: item.jobId || null,
@@ -121,23 +119,6 @@ export function useGeneratedVideos(options: UseGeneratedVideosOptions = {}) {
       _cache = normalized;
       _cacheTime = Date.now();
       setAllVideos(normalized);
-
-      const urlsToSign = [...new Set(
-        normalized
-          .filter((video) => !video.signedUrl && video.gcsUrl.includes('storage.googleapis.com'))
-          .map((video) => video.gcsUrl)
-      )];
-
-      if (urlsToSign.length > 0) {
-        const signed = await signUrls(urlsToSign);
-        const withSigned = normalized.map((video) => ({
-          ...video,
-          signedUrl: signed.get(video.gcsUrl) || video.signedUrl || video.gcsUrl,
-        }));
-        _cache = withSigned;
-        _cacheTime = Date.now();
-        setAllVideos(withSigned);
-      }
     } catch (error) {
       console.error('Failed to load videos:', error);
     } finally {

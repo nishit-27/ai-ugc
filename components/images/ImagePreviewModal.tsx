@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import Modal from '@/components/ui/Modal';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
 import type { GeneratedImage } from '@/types';
@@ -28,8 +27,7 @@ export default function ImagePreviewModal({
   previewSrc?: string;
 }) {
   if (!image) return null;
-  const displayUrl = image.signedUrl
-    || (image.gcsUrl && !image.gcsUrl.includes('storage.googleapis.com') ? image.gcsUrl : '');
+  const displayUrl = image.signedUrl || image.gcsUrl || '';
   const src = previewSrc || displayUrl;
 
   return (
@@ -37,26 +35,14 @@ export default function ImagePreviewModal({
       <div className="p-4">
         <div className="relative w-full overflow-hidden rounded-lg" style={{ aspectRatio: '3/4' }}>
           {src ? (
-            previewSrc ? (
-              // Reuse the already-loaded gallery source to avoid a second network fetch on modal open.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={src}
-                alt={image.filename}
-                className="h-full w-full object-contain"
-                loading="eager"
-                decoding="async"
-              />
-            ) : (
-              <Image
-                src={src}
-                alt={image.filename}
-                fill
-                quality={85}
-                sizes="(max-width: 768px) 92vw, 42rem"
-                className="object-contain"
-              />
-            )
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={image.filename}
+              className="h-full w-full object-contain"
+              loading="eager"
+              decoding="async"
+            />
           ) : (
             <div className="relative h-full w-full overflow-hidden bg-[var(--accent)]">
               <LoadingShimmer />

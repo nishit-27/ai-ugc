@@ -19,9 +19,6 @@ function saveCache(tracks: MusicTrack[]) {
   } catch {}
 }
 
-// In-memory signed URL cache (survives re-renders but not full page reload)
-const signedUrlCache = new Map<string, string>();
-
 export function useMusicTracks() {
   const [tracks, setTracks] = useState<MusicTrack[]>(loadCache);
   const fetchedRef = useRef(false);
@@ -65,25 +62,9 @@ export function useMusicTracks() {
     return track;
   }, []);
 
-  // Sign a GCS URL lazily (cached in-memory)
-  const getSignedUrl = useCallback(async (gcsUrl: string): Promise<string> => {
-    if (!gcsUrl.includes('storage.googleapis.com')) return gcsUrl;
-    const cached = signedUrlCache.get(gcsUrl);
-    if (cached) return cached;
-
-    try {
-      const res = await fetch('/api/music-tracks/sign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: gcsUrl }),
-      });
-      const data = await res.json();
-      const signed = data.signedUrl || gcsUrl;
-      signedUrlCache.set(gcsUrl, signed);
-      return signed;
-    } catch {
-      return gcsUrl;
-    }
+  /** URLs are now R2 public — return as-is. */
+  const getSignedUrl = useCallback(async (url: string): Promise<string> => {
+    return url;
   }, []);
 
   // Add an existing GCS track to library (e.g. from trending)

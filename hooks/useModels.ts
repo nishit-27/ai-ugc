@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { signUrls } from '@/lib/signedUrlClient';
 import type { Model, ModelImage } from '@/types';
 import { usePageVisibility } from './usePageVisibility';
 
@@ -32,27 +31,10 @@ export function useModels() {
       const data = await res.json();
       const result: Model[] = Array.isArray(data) ? data : [];
 
-      // Show data immediately
       _cache = result;
       _cacheTime = Date.now();
       setModels(result);
       setIsLoadingPage(false);
-
-      // Batch-sign avatar URLs client-side
-      const avatarUrls = result
-        .filter((m) => !m.avatarUrl?.includes('X-Goog-Signature='))
-        .map((m) => m.avatarUrl)
-        .filter((url): url is string => !!url && url.includes('storage.googleapis.com'));
-
-      if (avatarUrls.length > 0) {
-        const signed = await signUrls(avatarUrls);
-        const withSigned = result.map((m) => ({
-          ...m,
-          avatarUrl: m.avatarUrl ? (signed.get(m.avatarUrl) || m.avatarUrl) : m.avatarUrl,
-        }));
-        _cache = withSigned;
-        setModels(withSigned);
-      }
     } catch (e) {
       console.error('Failed to load models:', e);
     } finally {
@@ -74,25 +56,13 @@ export function useModels() {
       const data = await res.json();
       const images: ModelImage[] = Array.isArray(data) ? data : [];
 
-      // Show images immediately, then sign in batch
-      setModelImages(images);
-
-      const gcsUrls = images
-        .filter((img) => !img.signedUrl)
-        .map((img) => img.gcsUrl)
-        .filter((url) => url?.includes('storage.googleapis.com'));
-
-      if (gcsUrls.length > 0) {
-        const signed = await signUrls(gcsUrls);
-        const withSigned = images.map((img) => ({
-          ...img,
-          signedUrl: signed.get(img.gcsUrl) || img.gcsUrl,
-        }));
-        _imageCache.set(modelId, withSigned);
-        setModelImages(withSigned);
-      } else {
-        _imageCache.set(modelId, images);
-      }
+      // Ensure all images have a displayable URL
+      const withUrls = images.map((img) => ({
+        ...img,
+        signedUrl: img.signedUrl || img.gcsUrl,
+      }));
+      _imageCache.set(modelId, withUrls);
+      setModelImages(withUrls);
     } catch (e) {
       console.error('Failed to load model images:', e);
     } finally {

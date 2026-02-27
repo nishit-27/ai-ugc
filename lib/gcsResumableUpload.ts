@@ -1,3 +1,10 @@
+/**
+ * Direct browser → R2 upload via presigned PUT URL.
+ * Replaces the old GCS resumable upload approach.
+ * For R2, we upload the entire file in one PUT request using the presigned URL.
+ * The function name is kept as uploadVideoDirectToGcs for backward compat with callers.
+ */
+
 type UploadProgressHandler = (uploadedBytes: number, totalBytes: number) => void;
 
 type SessionResponse = {
@@ -26,19 +33,10 @@ type UploadOptions = {
   onProgress?: UploadProgressHandler;
 };
 
-const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB
 const DEFAULT_RETRIES = 3;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function parseUploadedBytes(rangeHeader: string | null): number {
-  if (!rangeHeader) return 0;
-  const match = rangeHeader.match(/bytes=0-(\d+)/i);
-  if (!match) return 0;
-  const lastByte = Number(match[1]);
-  return Number.isFinite(lastByte) ? lastByte + 1 : 0;
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -77,99 +75,66 @@ async function completeUpload(objectPath: string, originalName: string): Promise
   return data;
 }
 
-async function uploadChunk(
-  sessionUrl: string,
-  chunk: Blob,
-  contentType: string,
-  startByte: number,
-  endByteExclusive: number,
-  totalBytes: number,
-  signal?: AbortSignal
-): Promise<Response> {
-  return fetch(sessionUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': contentType,
-      'Content-Range': `bytes ${startByte}-${endByteExclusive - 1}/${totalBytes}`,
-    },
-    body: chunk,
-    signal,
-  });
-}
-
 export async function uploadVideoDirectToGcs(
   file: File,
   options: UploadOptions = {}
 ): Promise<CompleteResponse> {
   const {
-    chunkSizeBytes = DEFAULT_CHUNK_SIZE,
     maxRetriesPerChunk = DEFAULT_RETRIES,
     signal,
     onProgress,
   } = options;
 
+  // 1. Get a presigned PUT URL from the server
   const { sessionUrl, objectPath } = await createSession(file);
   const totalBytes = file.size;
   const contentType = file.type || 'video/mp4';
-  let uploadedBytes = 0;
 
   if (onProgress) onProgress(0, totalBytes);
 
-  while (uploadedBytes < totalBytes) {
-    const nextEnd = Math.min(uploadedBytes + chunkSizeBytes, totalBytes);
-    const chunk = file.slice(uploadedBytes, nextEnd);
+  // 2. Upload the entire file via presigned PUT
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await fetch(sessionUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': contentType,
+        },
+        body: file,
+        signal,
+      });
 
-    let attempt = 0;
-    while (true) {
-      try {
-        const res = await uploadChunk(
-          sessionUrl,
-          chunk,
-          contentType,
-          uploadedBytes,
-          nextEnd,
-          totalBytes,
-          signal
-        );
-
-        if (res.status === 308) {
-          const resumedBytes = parseUploadedBytes(res.headers.get('Range'));
-          uploadedBytes = resumedBytes > uploadedBytes ? resumedBytes : nextEnd;
-          if (onProgress) onProgress(uploadedBytes, totalBytes);
-          break;
-        }
-
-        if (res.ok) {
-          uploadedBytes = totalBytes;
-          if (onProgress) onProgress(uploadedBytes, totalBytes);
-          break;
-        }
-
-        const body = await res.text();
-        if (isRetryableStatus(res.status) && attempt < maxRetriesPerChunk) {
-          attempt += 1;
-          await sleep(400 * 2 ** attempt);
-          continue;
-        }
-
-        throw new Error(`Upload failed (${res.status}): ${body || 'Unknown error'}`);
-      } catch (err) {
-        const isAbort = err instanceof Error && err.name === 'AbortError';
-        if (isAbort) throw err;
-
-        if (attempt < maxRetriesPerChunk) {
-          attempt += 1;
-          await sleep(400 * 2 ** attempt);
-          continue;
-        }
-
-        if (err instanceof Error && err.message.toLowerCase().includes('failed to fetch')) {
-          throw new Error('Direct upload failed. Check Google Cloud Storage CORS settings and network connectivity.');
-        }
-        throw err instanceof Error ? err : new Error('Upload failed');
+      if (res.ok) {
+        if (onProgress) onProgress(totalBytes, totalBytes);
+        break;
       }
+
+      const body = await res.text();
+      if (isRetryableStatus(res.status) && attempt < maxRetriesPerChunk) {
+        attempt += 1;
+        await sleep(400 * 2 ** attempt);
+        continue;
+      }
+
+      throw new Error(`Upload failed (${res.status}): ${body || 'Unknown error'}`);
+    } catch (err) {
+      const isAbort = err instanceof Error && err.name === 'AbortError';
+      if (isAbort) throw err;
+
+      if (attempt < maxRetriesPerChunk) {
+        attempt += 1;
+        await sleep(400 * 2 ** attempt);
+        continue;
+      }
+
+      if (err instanceof Error && err.message.toLowerCase().includes('failed to fetch')) {
+        throw new Error('Direct upload failed. Check R2 CORS settings and network connectivity.');
+      }
+      throw err instanceof Error ? err : new Error('Upload failed');
     }
   }
 
+  // 3. Tell the server to finalize (verify object exists, save to DB)
   return completeUpload(objectPath, file.name);
 }
