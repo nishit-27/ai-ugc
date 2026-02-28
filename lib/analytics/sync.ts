@@ -7,6 +7,7 @@ import {
   upsertAccountSnapshot,
   upsertMediaSnapshot,
   getAccountMediaTotals,
+  linkMediaItemToJob,
 } from '../db-analytics';
 
 type AccountRow = {
@@ -62,6 +63,9 @@ async function syncInstagram(accountDbId: string, username: string, existingUser
       engagementRate: mediaEngagement,
       metadata: null,
     });
+    if (!mediaItem.template_job_id) {
+      await linkMediaItemToJob(mediaItem.id, mediaItem.external_id, accountDbId);
+    }
     await upsertMediaSnapshot(mediaItem.id, {
       views: r.views,
       likes: r.likes,
@@ -125,6 +129,9 @@ async function syncTikTok(accountDbId: string, username: string, existingSecUid?
       engagementRate: mediaEngagement,
       metadata: null,
     });
+    if (!mediaItem.template_job_id) {
+      await linkMediaItemToJob(mediaItem.id, mediaItem.external_id, accountDbId);
+    }
     await upsertMediaSnapshot(mediaItem.id, {
       views: p.views,
       likes: p.likes,
@@ -187,6 +194,9 @@ async function syncYouTube(accountDbId: string, identifier: string, existingChan
       engagementRate: mediaEngagement,
       metadata: null,
     });
+    if (!mediaItem.template_job_id) {
+      await linkMediaItemToJob(mediaItem.id, mediaItem.external_id, accountDbId);
+    }
     await upsertMediaSnapshot(mediaItem.id, {
       views: v.views,
       likes: v.likes,
