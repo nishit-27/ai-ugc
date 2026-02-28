@@ -70,7 +70,9 @@ export function createFabricImage(
 ): Promise<FabricImage> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    // Don't set crossOrigin — compose canvas is preview-only (export is server-side FFmpeg).
+    // Setting crossOrigin='anonymous' causes CORS-blocked pixel reads on R2/GCS URLs,
+    // resulting in black frames on the Fabric.js canvas.
 
     const timeout = setTimeout(() => {
       reject(new Error(`Image load timeout: ${url}`));

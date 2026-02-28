@@ -30,6 +30,7 @@ type ComposeTimelineProps = {
   onSelectLayer: (layerId: string) => void;
   onUpdateTrim: (layerId: string, trimStart: number, trimEnd: number) => void;
   onRemoveLayer: (layerId: string) => void;
+  onDuplicateLayer: (layerId: string) => void;
   onToggleVisibility: (layerId: string) => void;
   onToggleAudio?: (layerId: string) => void;
   onPlayPause: () => void;
@@ -128,6 +129,7 @@ export default function ComposeTimeline({
   onSelectLayer,
   onUpdateTrim,
   onRemoveLayer,
+  onDuplicateLayer,
   onToggleVisibility,
   onToggleAudio,
   onPlayPause,
@@ -342,25 +344,36 @@ export default function ComposeTimeline({
         <div className="flex items-center gap-0.5">
           <button
             onClick={() => {
-              if (selectedLayerId) {
-                const layer = layers.find((l) => l.id === selectedLayerId);
-                if (layer?.type === 'video') {
-                  const dur = videoDurations.get(layer.id) ?? 10;
-                  const currentEnd = layer.trim?.endSec ?? dur;
-                  if (currentTime > (layer.trim?.startSec ?? 0) && currentTime < currentEnd) {
-                    onUpdateTrim(layer.id, currentTime, currentEnd);
-                  }
-                }
-              }
+              if (!selectedLayerId) return;
+              const layer = layers.find((l) => l.id === selectedLayerId);
+              if (!layer || layer.type !== 'video') return;
+              const dur = videoDurations.get(layer.id) ?? 10;
+              const trimStart = layer.trim?.startSec ?? 0;
+              const trimEnd = layer.trim?.endSec ?? dur;
+              // Only trim if playhead is within the clip range
+              if (currentTime <= trimStart || currentTime >= trimEnd) return;
+              // Trim: set new start to playhead position (remove everything before playhead)
+              onUpdateTrim(layer.id, currentTime, trimEnd);
             }}
-            title="Split at playhead [ [ ]"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--text)]"
+            disabled={!selectedLayerId || !layers.find((l) => l.id === selectedLayerId && l.type === 'video')}
+            title="Trim start to playhead"
+            className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+              selectedLayerId && layers.find((l) => l.id === selectedLayerId && l.type === 'video')
+                ? 'text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
+                : 'text-[var(--text-muted)] opacity-30 cursor-not-allowed'
+            }`}
           >
             <Scissors className="h-3.5 w-3.5" />
           </button>
           <button
+            onClick={() => selectedLayerId && onDuplicateLayer(selectedLayerId)}
+            disabled={!selectedLayerId}
             title="Duplicate layer"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--text)]"
+            className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+              selectedLayerId
+                ? 'text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
+                : 'text-[var(--text-muted)] opacity-30 cursor-not-allowed'
+            }`}
           >
             <Copy className="h-3.5 w-3.5" />
           </button>

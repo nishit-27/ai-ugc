@@ -66,7 +66,9 @@ export function composeMedia(
     if (!filePath) continue;
 
     if (layer.type === 'image') {
-      inputs.push('-loop', '1', '-t', String(maxDuration), '-i', filePath);
+      // Don't use -loop (not available in all FFmpeg builds).
+      // Instead, loop the single frame in the filter_complex below.
+      inputs.push('-i', filePath);
     } else {
       if (layer.trim?.startSec) {
         inputs.push('-ss', String(layer.trim.startSec));
@@ -95,17 +97,22 @@ export function composeMedia(
     const pixelY = Math.round(layer.y * canvasHeight);
     const outLabel = i === sortedLayers.length - 1 ? 'vout' : `v${i}`;
 
+    // For image layers, loop the single frame to fill the duration via filter
+    const imageLoopPrefix = layer.type === 'image'
+      ? `loop=-1:size=1:start=0,setpts=N/(30*TB),trim=duration=${maxDuration},`
+      : '';
+
     let scaleFilter: string;
     switch (layer.fit) {
       case 'stretch':
-        scaleFilter = `[${idx}:v]scale=${pixelW}:${pixelH}`;
+        scaleFilter = `[${idx}:v]${imageLoopPrefix}scale=${pixelW}:${pixelH}`;
         break;
       case 'contain':
-        scaleFilter = `[${idx}:v]scale=${pixelW}:${pixelH}:force_original_aspect_ratio=decrease,pad=${pixelW}:${pixelH}:(ow-iw)/2:(oh-ih)/2:color=0x${bgHex}`;
+        scaleFilter = `[${idx}:v]${imageLoopPrefix}scale=${pixelW}:${pixelH}:force_original_aspect_ratio=decrease,pad=${pixelW}:${pixelH}:(ow-iw)/2:(oh-ih)/2:color=0x${bgHex}`;
         break;
       case 'cover':
       default:
-        scaleFilter = `[${idx}:v]scale=${pixelW}:${pixelH}:force_original_aspect_ratio=increase,crop=${pixelW}:${pixelH}`;
+        scaleFilter = `[${idx}:v]${imageLoopPrefix}scale=${pixelW}:${pixelH}:force_original_aspect_ratio=increase,crop=${pixelW}:${pixelH}`;
         break;
     }
 

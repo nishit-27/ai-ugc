@@ -286,7 +286,7 @@ export default function NodeConfigPanel({
           {step.type === 'bg-music' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><BgMusicConfig config={step.config as BMC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
           {step.type === 'attach-video' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><AttachVideoConfig config={step.config as AVC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
           {step.type === 'compose' && <ComposeStepConfig config={step.config as CC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} isExpanded={isExpanded} masterModels={masterModels} libraryVideos={sourceConfig.videoSource === 'library' ? sourceConfig.libraryVideos : undefined} />}
-          {step.type === 'carousel' && <CarouselStepConfig config={step.config as CRC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
+          {step.type === 'carousel' && <CarouselStepConfig config={step.config as CRC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} stepId={step.id} masterMode={masterMode} masterModels={masterModels} isExpanded={isExpanded} />}
         </div>
       </div>
     );

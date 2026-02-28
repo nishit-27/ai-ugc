@@ -318,6 +318,7 @@ export default function ComposePage() {
             onSelectLayer={compose.setSelectedLayerId}
             onUpdateTrim={handleTimelineTrimUpdate}
             onRemoveLayer={compose.removeLayer}
+            onDuplicateLayer={compose.duplicateLayer}
             onToggleVisibility={compose.toggleLayerVisibility}
             onToggleAudio={compose.toggleAudioDetach}
             onPlayPause={() => compose.isPlaying ? compose.pauseAll() : compose.playAll()}

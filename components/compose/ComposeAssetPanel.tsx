@@ -1,14 +1,32 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Film, ImageIcon, UserCircle, Upload, Link2, Layers, Type, Music, Scissors } from 'lucide-react';
+import { Film, ImageIcon, UserCircle, Upload, Link2, Layers, Type, Music, Scissors, Briefcase, ChevronRight } from 'lucide-react';
 import type { LayerSource, StepResult, Model } from '@/types';
 
-type Tab = 'pipeline' | 'videos' | 'images' | 'models' | 'upload' | 'url';
+type Tab = 'pipeline' | 'videos' | 'images' | 'models' | 'jobs' | 'upload' | 'url';
 
 type VideoItem = { url: string; gcsUrl: string; name: string };
 type ImageItem = { url: string; gcsUrl: string; name: string };
 type ModelItem = { id: string; name: string; avatarUrl?: string; images: { gcsUrl: string; signedUrl?: string; filename: string }[] };
+
+type JobBatchItem = {
+  id: string;
+  name?: string;
+  status?: string;
+  isMaster?: boolean;
+  totalJobs?: number;
+  completedJobs?: number;
+  createdAt?: string;
+};
+
+type ExpandedJob = {
+  id: string;
+  name?: string;
+  status?: string;
+  outputUrl?: string;
+  signedUrl?: string;
+};
 
 const VIDEOS_PER_PAGE = 40;
 const IMAGES_PER_PAGE = 40;
@@ -50,15 +68,23 @@ export default function ComposeAssetPanel({
   const [isLoadingModelGenContent, setIsLoadingModelGenContent] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [jobBatches, setJobBatches] = useState<JobBatchItem[]>([]);
+  const [standaloneJobs, setStandaloneJobs] = useState<{ id: string; name?: string; outputUrl?: string }[]>([]);
+  const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null);
+  const [expandedBatchJobs, setExpandedBatchJobs] = useState<ExpandedJob[]>([]);
+  const [isLoadingJobs, setIsLoadingJobs] = useState(false);
+  const [isLoadingBatchJobs, setIsLoadingBatchJobs] = useState(false);
   const videosLoaded = useRef(false);
   const imagesLoaded = useRef(false);
   const modelsLoaded = useRef(false);
+  const jobsLoaded = useRef(false);
 
   const tabs: { id: Tab; label: string; icon: typeof Film }[] = [
     ...(mode === 'pipeline' ? [{ id: 'pipeline' as Tab, label: 'Pipeline', icon: Layers }] : []),
     { id: 'videos', label: 'Videos', icon: Film },
     { id: 'images', label: 'Images', icon: ImageIcon },
     { id: 'models', label: 'Models', icon: UserCircle },
+    { id: 'jobs', label: 'Jobs', icon: Briefcase },
     { id: 'upload', label: 'Upload', icon: Upload },
     { id: 'url', label: 'URL', icon: Link2 },
   ];
@@ -238,11 +264,49 @@ export default function ComposeAssetPanel({
     }
   };
 
+  const loadJobs = async () => {
+    if (jobsLoaded.current || isLoadingJobs) return;
+    setIsLoadingJobs(true);
+    jobsLoaded.current = true;
+    try {
+      const res = await fetch('/api/compose-jobs');
+      const data = await res.json();
+      if (Array.isArray(data.batches)) setJobBatches(data.batches);
+      if (Array.isArray(data.standaloneJobs)) setStandaloneJobs(data.standaloneJobs);
+    } catch (err) {
+      console.error('Failed to load jobs:', err);
+    } finally {
+      setIsLoadingJobs(false);
+    }
+  };
+
+  const expandBatch = async (batchId: string) => {
+    if (expandedBatchId === batchId) {
+      setExpandedBatchId(null);
+      return;
+    }
+    setExpandedBatchId(batchId);
+    setIsLoadingBatchJobs(true);
+    setExpandedBatchJobs([]);
+    try {
+      const res = await fetch(`/api/pipeline-batches/${batchId}`);
+      const data = await res.json();
+      if (Array.isArray(data.jobs)) {
+        setExpandedBatchJobs(data.jobs);
+      }
+    } catch (err) {
+      console.error('Failed to load batch jobs:', err);
+    } finally {
+      setIsLoadingBatchJobs(false);
+    }
+  };
+
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
     if (tab === 'videos') loadVideos();
     if (tab === 'images') loadImages();
     if (tab === 'models') loadModels();
+    if (tab === 'jobs') loadJobs();
   };
 
   const handleModelExpand = (modelId: string) => {
@@ -733,6 +797,142 @@ export default function ComposeAssetPanel({
                   )}
                 </div>
               ))
+            )}
+          </div>
+        )}
+
+        {activeTab === 'jobs' && (
+          <div className="space-y-3">
+            {isLoadingJobs ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--primary)]" />
+              </div>
+            ) : (
+              <>
+                {/* Standalone completed jobs */}
+                {standaloneJobs.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Standalone Jobs</div>
+                    <div className="space-y-1">
+                      {standaloneJobs.map((job) => (
+                        <button
+                          key={job.id}
+                          onClick={() => onAddLayer(
+                            { type: 'gallery-video', url: job.outputUrl || '', label: job.name || 'Job output' },
+                            'video',
+                          )}
+                          className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] p-2 text-left transition-colors hover:bg-[var(--accent)]"
+                        >
+                          <video
+                            src={job.outputUrl}
+                            className="h-10 w-10 shrink-0 rounded-md object-cover"
+                            muted
+                            preload="metadata"
+                            onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.5; }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-medium text-[var(--text)]">{job.name || 'Job'}</div>
+                            <div className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              Single
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Batch / Master jobs */}
+                {jobBatches.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Batches</div>
+                    <div className="space-y-1.5">
+                      {jobBatches.map((batch) => {
+                        const typeBadge = batch.isMaster ? 'Master' : (batch.totalJobs ?? 0) > 1 ? 'Batch' : 'Single';
+                        const statusColor = batch.status === 'completed' ? 'bg-emerald-500'
+                          : batch.status === 'failed' ? 'bg-red-500'
+                          : 'bg-amber-500';
+                        const isExpanded = expandedBatchId === batch.id;
+
+                        return (
+                          <div key={batch.id}>
+                            <button
+                              onClick={() => expandBatch(batch.id)}
+                              className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] p-2 text-left transition-colors hover:bg-[var(--accent)]"
+                            >
+                              <ChevronRight className={`h-3 w-3 shrink-0 text-[var(--text-muted)] transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate text-xs font-medium text-[var(--text)]">{batch.name || 'Batch'}</span>
+                                  <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold leading-none ${
+                                    typeBadge === 'Master' ? 'bg-purple-500/20 text-purple-400'
+                                    : typeBadge === 'Batch' ? 'bg-blue-500/20 text-blue-400'
+                                    : 'bg-gray-500/20 text-gray-400'
+                                  }`}>{typeBadge}</span>
+                                </div>
+                                <div className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusColor}`} />
+                                  {batch.status || 'pending'}
+                                  {(batch.totalJobs ?? 0) > 0 && (
+                                    <span className="ml-1">{batch.completedJobs ?? 0}/{batch.totalJobs} completed</span>
+                                  )}
+                                </div>
+                              </div>
+                            </button>
+
+                            {isExpanded && (
+                              <div className="ml-3 mt-1 space-y-1 border-l border-[var(--border)] pl-2">
+                                {isLoadingBatchJobs ? (
+                                  <div className="flex items-center justify-center py-3">
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--primary)]" />
+                                  </div>
+                                ) : expandedBatchJobs.length === 0 ? (
+                                  <p className="py-2 text-[10px] text-[var(--text-muted)]">No jobs in this batch.</p>
+                                ) : (
+                                  <div className="grid grid-cols-2 gap-1">
+                                    {expandedBatchJobs.filter((j) => j.status === 'completed' && (j.signedUrl || j.outputUrl)).map((job) => {
+                                      const videoUrl = job.signedUrl || job.outputUrl || '';
+                                      return (
+                                        <button
+                                          key={job.id}
+                                          onClick={() => onAddLayer(
+                                            { type: 'gallery-video', url: videoUrl, label: job.name || 'Job output' },
+                                            'video',
+                                          )}
+                                          className="group relative overflow-hidden rounded-md border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
+                                        >
+                                          <video
+                                            src={videoUrl}
+                                            className="aspect-video w-full object-cover"
+                                            muted
+                                            preload="metadata"
+                                            onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.5; }}
+                                          />
+                                          <div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5">
+                                            <span className="block truncate text-[8px] text-white leading-tight">{job.name || 'Output'}</span>
+                                          </div>
+                                          <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
+                                            <Film className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {standaloneJobs.length === 0 && jobBatches.length === 0 && (
+                  <p className="text-xs text-[var(--text-muted)]">No completed jobs found.</p>
+                )}
+              </>
             )}
           </div>
         )}

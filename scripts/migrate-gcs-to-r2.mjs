@@ -255,6 +255,60 @@ const TABLE_CONFIGS = [
   },
 ];
 
+// ─── JSONB migration for step_results ────────────────────────────────────────
+
+async function migrateStepResults() {
+  console.log('\n━━━ template_jobs_step_results (JSONB) ━━━');
+  const rows = await sql`SELECT id, step_results FROM template_jobs WHERE step_results::text LIKE '%storage.googleapis.com%'`;
+  console.log(`  ${rows.length} rows with GCS URLs in step_results`);
+
+  if (rows.length === 0 || DRY_RUN) return;
+
+  let updated = 0;
+  const pool = createPool(10);
+
+  await Promise.all(
+    rows.map(row =>
+      pool(async () => {
+        try {
+          const sr = typeof row.step_results === 'string' ? JSON.parse(row.step_results) : row.step_results;
+          if (!Array.isArray(sr)) return;
+
+          let changed = false;
+          const fixed = sr.map(step => {
+            const s = { ...step };
+            if (s.outputUrl && s.outputUrl.includes('storage.googleapis.com')) {
+              const parsed = parseGcsUrl(s.outputUrl);
+              if (parsed) { s.outputUrl = r2PublicUrl(parsed.key); changed = true; }
+            }
+            if (Array.isArray(s.outputUrls)) {
+              s.outputUrls = s.outputUrls.map(u => {
+                if (u && u.includes('storage.googleapis.com')) {
+                  const p = parseGcsUrl(u);
+                  if (p) { changed = true; return r2PublicUrl(p.key); }
+                }
+                return u;
+              });
+            }
+            return s;
+          });
+
+          if (changed) {
+            await sql`UPDATE template_jobs SET step_results = ${JSON.stringify(fixed)}::jsonb WHERE id = ${row.id}`;
+            updated++;
+            globalStats.dbUpdated++;
+          }
+        } catch (err) {
+          console.error(`  FAIL step_results row ${row.id}: ${err.message}`);
+          globalStats.failed++;
+        }
+      })
+    )
+  );
+
+  console.log(`  [template_jobs_step_results] Updated: ${updated}/${rows.length} rows`);
+}
+
 // ─── Batch DB updates (parallel batches of 50) ─────────────────────────────
 
 async function batchUpdateDb(config, rows, urlToNewUrl) {
@@ -363,6 +417,11 @@ async function main() {
 
   // Run ALL tables in parallel!
   await Promise.all(tables.map(config => migrateTable(config)));
+
+  // Fix JSONB step_results URLs (text replacement only, no file transfer needed)
+  if (!TABLE_FILTER || TABLE_FILTER === 'template_jobs_step_results') {
+    await migrateStepResults();
+  }
 
   const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
   const savedMB = (globalStats.savedBytes / 1024 / 1024).toFixed(1);

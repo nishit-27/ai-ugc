@@ -48,7 +48,13 @@ function applyFit(
   slotW: number,
   slotH: number,
   fit: ComposeLayerFit,
+  borderRadius = 0,
 ) {
+  // borderRadius 0-50 maps to 0%-50% of the shorter slot side (display coords).
+  // Convert to a visual radius, then to source-image coordinates for the clipPath.
+  const minSlotDim = Math.min(slotW, slotH);
+  const visualRadius = (borderRadius / 100) * minSlotDim;
+
   switch (fit) {
     case 'cover': {
       const scale = Math.max(slotW / sourceW, slotH / sourceH);
@@ -64,6 +70,8 @@ function applyFit(
       obj.clipPath = new Rect({
         width: slotW / scale,
         height: slotH / scale,
+        rx: visualRadius / scale,
+        ry: visualRadius / scale,
         originX: 'center',
         originY: 'center',
       });
@@ -72,18 +80,42 @@ function applyFit(
     case 'contain': {
       const scale = Math.min(slotW / sourceW, slotH / sourceH);
       obj.set({ scaleX: scale, scaleY: scale, left: slotLeft, top: slotTop });
-      obj.clipPath = undefined;
+      if (borderRadius > 0) {
+        obj.clipPath = new Rect({
+          width: sourceW,
+          height: sourceH,
+          rx: visualRadius / scale,
+          ry: visualRadius / scale,
+          originX: 'center',
+          originY: 'center',
+        });
+      } else {
+        obj.clipPath = undefined;
+      }
       break;
     }
     case 'stretch':
     default: {
+      const sx = slotW / sourceW;
+      const sy = slotH / sourceH;
       obj.set({
-        scaleX: slotW / sourceW,
-        scaleY: slotH / sourceH,
+        scaleX: sx,
+        scaleY: sy,
         left: slotLeft,
         top: slotTop,
       });
-      obj.clipPath = undefined;
+      if (borderRadius > 0) {
+        obj.clipPath = new Rect({
+          width: sourceW,
+          height: sourceH,
+          rx: visualRadius / sx,
+          ry: visualRadius / sy,
+          originX: 'center',
+          originY: 'center',
+        });
+      } else {
+        obj.clipPath = undefined;
+      }
       break;
     }
   }
@@ -208,7 +240,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
         canvas.add(obj);
         const sourceW = obj.width || 100;
         const sourceH = obj.height || 100;
-        applyFit(obj as FabricImage, sourceW, sourceH, layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit);
+        applyFit(obj as FabricImage, sourceW, sourceH, layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit, layer.borderRadius ?? 0);
       }
     });
     canvas.renderAll();
@@ -226,7 +258,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
             left: layer.x * cw, top: layer.y * ch, scaleX: 1, scaleY: 1,
           });
           applyFit(fabricObj, videoEl.videoWidth || 640, videoEl.videoHeight || 360,
-            layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit);
+            layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit, layer.borderRadius ?? 0);
           (fabricObj as FabricObject & { layerId?: string }).layerId = layer.id;
           fabricObj.set({ opacity: layer.opacity ?? 1 });
           fabricObjectsRef.current.set(layer.id, fabricObj);
@@ -246,7 +278,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
             left: layer.x * cw, top: layer.y * ch, scaleX: 1, scaleY: 1,
           });
           applyFit(imgObj, imgObj.width || 100, imgObj.height || 100,
-            layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit);
+            layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit, layer.borderRadius ?? 0);
           (imgObj as FabricObject & { layerId?: string }).layerId = layer.id;
           imgObj.set({ opacity: layer.opacity ?? 1 });
           fabricObjectsRef.current.set(layer.id, imgObj);
@@ -263,33 +295,36 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
 
   useEffect(() => {
     const render = () => {
-      if (fabricRef.current && videoElementsRef.current.size > 0) {
+      if (fabricRef.current) {
         const cfg = configRef.current;
         const hidden = hiddenLayerIdsRef.current;
+
         videoElementsRef.current.forEach((videoEl, layerId) => {
           const obj = fabricObjectsRef.current.get(layerId);
           if (!obj) return;
           (obj as FabricImage & { dirty?: boolean }).dirty = true;
 
-          // Show/hide based on trim range (only while playing)
+          const manuallyHidden = hidden.has(layerId);
+          obj.set({ visible: !manuallyHidden });
+
+          // Pause video when it reaches trim end (while playing)
           if (isPlayingRef.current) {
             const layer = cfg.layers.find((l) => l.id === layerId);
             if (layer) {
               const trimEnd = layer.trim?.endSec ?? (videoEl.duration || 60);
-              const trimStart = layer.trim?.startSec ?? 0;
-              const t = videoEl.currentTime;
-              const inRange = t >= trimStart && t < trimEnd;
-              // Respect manual hide from the eye toggle
-              const manuallyHidden = hidden.has(layerId);
-              obj.set({ visible: inRange && !manuallyHidden });
-
-              // Pause video when it reaches trim end
-              if (t >= trimEnd) {
+              if (videoEl.currentTime >= trimEnd) {
                 videoEl.pause();
               }
             }
           }
         });
+
+        fabricObjectsRef.current.forEach((obj, layerId) => {
+          if (videoElementsRef.current.has(layerId)) return; // already handled above
+          const manuallyHidden = hidden.has(layerId);
+          obj.set({ visible: !manuallyHidden });
+        });
+
         fabricRef.current.renderAll();
       }
       rafRef.current = requestAnimationFrame(render);
@@ -552,9 +587,10 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
 
     if (updates.opacity !== undefined) obj.set({ opacity: updates.opacity });
 
-    const needsReposition = updates.x !== undefined || updates.y !== undefined
-      || updates.width !== undefined || updates.height !== undefined || updates.fit !== undefined;
-    if (needsReposition) {
+    const needsRefit = updates.x !== undefined || updates.y !== undefined
+      || updates.width !== undefined || updates.height !== undefined
+      || updates.fit !== undefined || updates.borderRadius !== undefined;
+    if (needsRefit) {
       const sourceW = obj.width || 100;
       const sourceH = obj.height || 100;
       const slotLeft = (updates.x ?? currentLayer.x) * cw;
@@ -562,7 +598,8 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       const slotW = (updates.width ?? currentLayer.width) * cw;
       const slotH = (updates.height ?? currentLayer.height) * ch;
       const fit = updates.fit ?? currentLayer.fit;
-      applyFit(obj, sourceW, sourceH, slotLeft, slotTop, slotW, slotH, fit);
+      const br = updates.borderRadius ?? currentLayer.borderRadius ?? 0;
+      applyFit(obj, sourceW, sourceH, slotLeft, slotTop, slotW, slotH, fit, br);
     }
 
     canvas.renderAll();
@@ -601,7 +638,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
 
       const sourceW = obj.width || 100;
       const sourceH = obj.height || 100;
-      applyFit(obj, sourceW, sourceH, pos.x * cw, pos.y * ch, pos.width * cw, pos.height * ch, fitMode);
+      applyFit(obj, sourceW, sourceH, pos.x * cw, pos.y * ch, pos.width * cw, pos.height * ch, fitMode, layer.borderRadius ?? 0);
     });
 
     canvas.renderAll();
@@ -708,6 +745,32 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     return videoElementsRef.current;
   }, []);
 
+  const duplicateLayer = useCallback(async (layerId: string) => {
+    const cfg = configRef.current;
+    const layer = cfg.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+    // Add a new layer with the same source, then apply position/size offsets
+    await addLayer(layer.source, layer.type);
+    // The new layer was added at the end — update it with the original's config + slight offset
+    setConfig((prev) => {
+      const newLayers = [...prev.layers];
+      const newLayer = newLayers[newLayers.length - 1];
+      if (newLayer) {
+        const offset = 0.02; // slight offset so it's visible
+        newLayer.x = Math.min(1, layer.x + offset);
+        newLayer.y = Math.min(1, layer.y + offset);
+        newLayer.width = layer.width;
+        newLayer.height = layer.height;
+        newLayer.fit = layer.fit;
+        newLayer.opacity = layer.opacity;
+        newLayer.borderRadius = layer.borderRadius;
+        newLayer.trim = layer.trim ? { ...layer.trim } : undefined;
+        newLayer.audioDetached = layer.audioDetached;
+      }
+      return { ...prev, layers: newLayers };
+    });
+  }, [addLayer]);
+
   const toggleAudioDetach = useCallback((layerId: string) => {
     const videoEl = videoElementsRef.current.get(layerId);
     setConfig((prev) => ({
@@ -794,7 +857,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       const ch = cfg.canvasHeight * scale;
       const sourceW = obj.width || 100;
       const sourceH = obj.height || 100;
-      applyFit(obj, sourceW, sourceH, layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit);
+      applyFit(obj, sourceW, sourceH, layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit, layer.borderRadius ?? 0);
     });
 
     canvas.renderAll();
@@ -843,6 +906,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     getVideoElements,
     toggleLayerVisibility,
     toggleAudioDetach,
+    duplicateLayer,
     resizeCanvas,
   };
 }
