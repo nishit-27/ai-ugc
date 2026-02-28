@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { lateApiRequest } from '@/lib/lateApi';
-import { getPostByLateId, updatePostByLateId } from '@/lib/db';
+import { getPostByLateId, updatePostByLateId, linkMediaItemsByExternalPostId } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -89,6 +89,16 @@ export async function GET(
       }
 
       await updatePostByLateId(latePostId, updates);
+
+      // Link media items to job when external_post_id is first set
+      if (platformPostId && localPost.jobId) {
+        try {
+          await linkMediaItemsByExternalPostId(platformPostId, localPost.jobId);
+        } catch (e) {
+          console.error('[Post Status] Failed to link media items:', e);
+        }
+      }
+
       console.log(`[Post Status] Updated local DB: ${dbStatus}`);
     }
 

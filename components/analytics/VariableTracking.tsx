@@ -12,23 +12,20 @@ import { RefreshCw, Filter, X, ChevronDown, Calendar } from 'lucide-react';
 const BUILTIN_FIELDS: PivotFieldData[] = [
   { id: 'platform', label: 'Platform', type: 'builtin' },
   { id: 'model', label: 'Model', type: 'builtin' },
-  { id: 'status', label: 'Status', type: 'builtin' },
   { id: 'week', label: 'Week', type: 'builtin' },
   { id: 'month', label: 'Month', type: 'builtin' },
 ];
 
 const BUILTIN_FILTER_OPTIONS: Record<string, string[]> = {
   platform: ['tiktok', 'instagram', 'youtube'],
-  status: ['queued', 'processing', 'completed', 'failed'],
 };
 
 const METRIC_OPTIONS = [
-  { value: 'count', label: 'Count (Jobs)' },
+  { value: 'count', label: 'Count (Videos)' },
   { value: 'views', label: 'Views' },
   { value: 'likes', label: 'Likes' },
   { value: 'comments', label: 'Comments' },
   { value: 'shares', label: 'Shares' },
-  { value: 'posts', label: 'Posts (Media)' },
   { value: 'engagement_rate', label: 'Engagement Rate (%)' },
 ];
 
@@ -215,7 +212,7 @@ export default function VariableTracking() {
   // Filterable fields = all fields that have discrete options
   const filterableFields = useMemo(() => {
     return allFields.filter(f => {
-      if (f.id === 'platform' || f.id === 'status') return true;
+      if (f.id === 'platform') return true;
       if (f.type === 'variable' && (f.variableType === 'boolean' || f.variableType === 'categorical')) return true;
       return false;
     });
