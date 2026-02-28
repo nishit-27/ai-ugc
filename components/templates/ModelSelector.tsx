@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Search, CheckSquare, Square, Check, Minus } from 'lucide-react';
+import { Search, CheckSquare, Square, Check, Minus, Loader2 } from 'lucide-react';
 import type { Model } from '@/types';
 
 const UNGROUPED_KEY = '__ungrouped__';
@@ -55,11 +55,13 @@ function groupModels(models: Model[]): ModelGroup[] {
 
 export default function ModelSelector({
   models,
+  isLoading,
   selectedIds,
   onChange,
   accountCounts,
 }: {
   models: Model[];
+  isLoading?: boolean;
   selectedIds: string[];
   onChange: (ids: string[]) => void;
   accountCounts?: Record<string, number>;
@@ -143,6 +145,26 @@ export default function ModelSelector({
     return <Square className="h-3 w-3" />;
   };
 
+  if (isLoading) {
+    return (
+      <div className="space-y-3 py-4">
+        <div className="flex items-center justify-center gap-2 text-xs text-[var(--text-muted)]">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading models...
+        </div>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-2 rounded-lg border border-[var(--border)] p-2">
+            <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-[var(--accent)]" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-3 w-20 animate-pulse rounded bg-[var(--accent)]" />
+              <div className="h-2 w-14 animate-pulse rounded bg-[var(--accent)]" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
@@ -187,7 +209,7 @@ export default function ModelSelector({
         {selectedIds.length} of {models.length} selected
       </div>
 
-      <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+      <div className="space-y-2 pr-1">
         {filteredGroups.map((group) => {
           const groupIds = group.models.map((model) => model.id);
           const selectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;

@@ -86,7 +86,7 @@ async function getVideoModelLookup(force = false): Promise<Map<string, VideoMode
   }
 
   try {
-    const res = await fetch('/api/videos?mode=generated', { cache: 'no-store' });
+    const res = await fetch('/api/videos?mode=generated');
     if (!res.ok) return _videoModelLookupCache;
 
     const data = await res.json();
@@ -149,13 +149,33 @@ function resolvePostMedia(posts: Post[]): Post[] {
   return posts;
 }
 
-async function fetchPostsOnce(signal: AbortSignal, forceModelRefresh = false): Promise<Post[] | null> {
+async function fetchPostsOnce(signal: AbortSignal): Promise<Post[] | null> {
   const endpoint = '/api/late/posts';
-  const res = await fetch(endpoint, { signal, cache: 'no-store' });
+  const res = await fetch(endpoint, { signal });
   if (!res.ok) return null;
   const data = await res.json();
-  const posts: Post[] = resolvePostMedia(data.posts || []);
-  return enrichPostsWithModelInfo(posts, forceModelRefresh);
+  return resolvePostMedia(data.posts || []);
+}
+
+function buildSnapshot(arr: Post[]): string {
+  return arr.map((p) => {
+    const normalizedStatus = p.derivedStatus || derivePostStatus(p);
+    const platformState = p.platforms
+      ?.map((platform) => `${platform.platform}:${platform.status || ''}:${platform.platformPostUrl || ''}`)
+      .sort()
+      .join(',') || '';
+    return [
+      p._id,
+      p.status || '',
+      normalizedStatus,
+      p.modelId || '',
+      p.updatedAt || '',
+      p.publishedAt || '',
+      p.scheduledFor || '',
+      platformState,
+      p.content?.slice(0, 40) || '',
+    ].join(':');
+  }).join('|');
 }
 
 export function usePosts(options: UsePostsOptions = {}) {
@@ -205,7 +225,7 @@ export function usePosts(options: UsePostsOptions = {}) {
       const fetchWithTimeout = async () => {
         const timeout = setTimeout(() => ac.abort(), 15_000);
         try {
-          return await fetchPostsOnce(ac.signal, forceModelRefresh);
+          return await fetchPostsOnce(ac.signal);
         } finally {
           clearTimeout(timeout);
         }
@@ -214,45 +234,36 @@ export function usePosts(options: UsePostsOptions = {}) {
       let arr = await fetchWithTimeout();
       if (!arr || !mountedRef.current || ac.signal.aborted) return;
 
+      // Single retry on empty (instead of multiple delayed retries)
       if (arr.length === 0) {
-        for (const delay of EMPTY_RETRY_DELAYS_MS) {
-          if (ac.signal.aborted || !mountedRef.current) return;
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          if (ac.signal.aborted || !mountedRef.current) return;
-          const retry = await fetchWithTimeout();
-          if (!retry || ac.signal.aborted || !mountedRef.current) return;
+        const retry = await fetchWithTimeout();
+        if (retry && retry.length > 0 && !ac.signal.aborted && mountedRef.current) {
           arr = retry;
-          if (arr.length > 0) break;
         }
       }
 
       // Keep prior content visible when API momentarily returns empty.
       if (arr.length === 0 && postsRef.current.length > 0) return;
 
-      const snapshot = arr.map((p) => {
-        const normalizedStatus = p.derivedStatus || derivePostStatus(p);
-        const platformState = p.platforms
-          ?.map((platform) => `${platform.platform}:${platform.status || ''}:${platform.platformPostUrl || ''}`)
-          .sort()
-          .join(',') || '';
-
-        return [
-          p._id,
-          p.status || '',
-          normalizedStatus,
-          p.modelId || '',
-          p.updatedAt || '',
-          p.publishedAt || '',
-          p.scheduledFor || '',
-          platformState,
-          p.content?.slice(0, 40) || '',
-        ].join(':');
-      }).join('|');
-
+      // Show posts immediately, then enrich with model info async
+      const snapshot = buildSnapshot(arr);
       if (snapshot !== lastSnapshotRef.current) {
         lastSnapshotRef.current = snapshot;
         setPostsAll(arr);
         setCachedPosts(arr);
+      }
+
+      // Enrich with model info in the background (non-blocking)
+      if (arr.length > 0) {
+        enrichPostsWithModelInfo(arr, forceModelRefresh).then((enriched) => {
+          if (!mountedRef.current || ac.signal.aborted) return;
+          const enrichedSnapshot = buildSnapshot(enriched);
+          if (enrichedSnapshot !== lastSnapshotRef.current) {
+            lastSnapshotRef.current = enrichedSnapshot;
+            setPostsAll(enriched);
+            setCachedPosts(enriched);
+          }
+        }).catch(() => {});
       }
 
       if (arr.length === 0 && postsRef.current.length === 0) {

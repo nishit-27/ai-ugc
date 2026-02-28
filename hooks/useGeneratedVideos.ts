@@ -107,7 +107,7 @@ export function useGeneratedVideos(options: UseGeneratedVideosOptions = {}) {
 
     setIsLoadingPage(true);
     try {
-      const res = await fetch('/api/videos?mode=generated', { cache: 'no-store' });
+      const res = await fetch('/api/videos?mode=generated');
       const data = await res.json();
       const rows: ApiVideo[] = Array.isArray(data.videos) ? data.videos : [];
 

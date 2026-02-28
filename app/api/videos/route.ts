@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
+  ensureDatabaseReady,
   getAllMediaFiles,
-  getAllJobs,
-  getAllTemplateJobs,
   getAllModels,
+  getCompletedJobVideos,
+  getCompletedTemplateJobVideos,
 } from '@/lib/db';
 
 type MediaFile = {
@@ -45,6 +46,8 @@ function filenameFromUrl(url: string): string {
 
 export async function GET(request: NextRequest) {
   try {
+    await ensureDatabaseReady();
+
     const mode = request.nextUrl.searchParams.get('mode') || 'all';
 
     // Keep default behavior for existing consumers (e.g. Create Post modal).
@@ -65,10 +68,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ videos: formattedVideos });
     }
 
+    // Fetch only completed jobs with output URLs + media metadata + models in parallel.
     const [mediaRows, jobs, templateJobs, models] = await Promise.all([
       getAllMediaFiles('video') as Promise<(MediaFile | null)[]>,
-      getAllJobs(),
-      getAllTemplateJobs(),
+      getCompletedJobVideos(),
+      getCompletedTemplateJobVideos(),
       getAllModels(),
     ]);
 
@@ -87,7 +91,7 @@ export async function GET(request: NextRequest) {
     const byUrl = new Map<string, OutputVideo>();
 
     for (const job of jobs) {
-      if (job.status !== 'completed' || !job.outputUrl) continue;
+      if (!job.outputUrl) continue;
       const media = mediaByUrl.get(job.outputUrl);
       const created = job.completedAt || job.createdAt || media?.createdAt || null;
       const next: OutputVideo = {
@@ -109,7 +113,7 @@ export async function GET(request: NextRequest) {
     }
 
     for (const job of templateJobs) {
-      if (job.status !== 'completed' || !job.outputUrl) continue;
+      if (!job.outputUrl) continue;
       const media = mediaByUrl.get(job.outputUrl);
       const created = job.completedAt || job.createdAt || media?.createdAt || null;
       const next: OutputVideo = {

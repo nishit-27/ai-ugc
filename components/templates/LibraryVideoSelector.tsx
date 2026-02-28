@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Check, ChevronDown, Expand, Film, Sparkles, Video } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Expand, Film, Sparkles, Video } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
 import type { MasterModel } from './NodeConfigPanel';
 
@@ -306,22 +306,64 @@ function VideoCard({
   onSelect: () => void;
   onPreview: () => void;
 }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  // Show first frame, then pause. Play on hover only.
+  const handleLoaded = useCallback(() => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    vid.pause();
+    setLoaded(true);
+  }, []);
+
+  const handleError = useCallback(() => {
+    setErrored(true);
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    if (!errored) videoRef.current?.play().catch(() => {});
+  }, [errored]);
+
+  const handleMouseLeave = useCallback(() => {
+    videoRef.current?.pause();
+  }, []);
+
+  if (errored) {
+    return (
+      <div className="relative aspect-[9/16] overflow-hidden rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--accent)] flex flex-col items-center justify-center gap-1 opacity-50">
+        <AlertTriangle className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+        <span className="text-[8px] text-[var(--text-muted)] text-center px-1">Unavailable</span>
+      </div>
+    );
+  }
+
   return (
     <button
       onClick={onSelect}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       className={`group relative aspect-[9/16] overflow-hidden rounded-xl border-2 transition-all duration-150 ${
         isSelected ? 'border-master shadow-md' : 'border-[var(--border)] hover:border-master-muted'
       }`}
     >
       <video
+        ref={videoRef}
         src={displayUrl}
-        className="h-full w-full object-cover bg-black"
+        className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}
         muted
         loop
-        autoPlay
         playsInline
-        preload="metadata"
+        preload="auto"
+        onLoadedData={handleLoaded}
+        onError={handleError}
       />
+      {!loaded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[var(--accent)]">
+          <Film className="h-4 w-4 text-[var(--text-muted)]/40" />
+        </div>
+      )}
       {/* Expand button */}
       <div
         onClick={(e) => { e.stopPropagation(); onPreview(); }}

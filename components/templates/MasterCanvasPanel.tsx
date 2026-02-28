@@ -18,6 +18,7 @@ const TIMEZONES = [
 
 export default function MasterCanvasPanel({
   models,
+  isLoadingModels,
   selectedModelIds,
   onSelectedModelIdsChange,
   caption,
@@ -31,6 +32,7 @@ export default function MasterCanvasPanel({
   accountCounts,
 }: {
   models: Model[];
+  isLoadingModels?: boolean;
   selectedModelIds: string[];
   onSelectedModelIdsChange: (ids: string[]) => void;
   caption: string;
@@ -84,6 +86,7 @@ export default function MasterCanvasPanel({
             </p>
             <ModelSelector
               models={models}
+              isLoading={isLoadingModels}
               selectedIds={selectedModelIds}
               onChange={onSelectedModelIdsChange}
               accountCounts={accountCounts}

@@ -38,7 +38,7 @@ export function useModelFilterOptions() {
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/models', { cache: 'no-store' });
+      const res = await fetch('/api/models');
       const data = await res.json();
       const rows: ApiModel[] = Array.isArray(data) ? data : [];
       const normalized = normalizeOptions(rows);

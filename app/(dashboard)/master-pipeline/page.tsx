@@ -63,6 +63,7 @@ export default function MasterPipelinePage() {
 
   // Master-specific state
   const [allModels, setAllModels] = useState<Model[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const [masterCaption, setMasterCaption] = useState('');
   const [publishMode, setPublishMode] = useState<'now' | 'schedule' | 'queue' | 'draft'>('now');
@@ -76,7 +77,7 @@ export default function MasterPipelinePage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/models', { cache: 'no-store' });
+        const res = await fetch('/api/models');
         if (!res.ok) return;
         const data = await res.json();
         const models: Model[] = Array.isArray(data) ? data : data.models || [];
@@ -100,6 +101,9 @@ export default function MasterPipelinePage() {
           setModelPrimaryImages(images);
         }
       } catch {}
+      finally {
+        if (!cancelled) setIsLoadingModels(false);
+      }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -513,6 +517,7 @@ export default function MasterPipelinePage() {
               ) : (
                 <MasterCanvasPanel
                   models={allModels}
+                  isLoadingModels={isLoadingModels}
                   selectedModelIds={selectedModelIds}
                   onSelectedModelIdsChange={setSelectedModelIds}
                   caption={masterCaption}

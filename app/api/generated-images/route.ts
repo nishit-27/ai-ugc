@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   ensureDatabaseReady,
   getGeneratedImagesPage,
-  getGeneratedImagesByModelId,
   getGeneratedImagesCount,
 } from '@/lib/db';
 
@@ -90,8 +89,6 @@ export async function GET(request: NextRequest) {
 
     const loadPromise = (async (): Promise<GeneratedImagesPayload> => {
       const modelId = searchParams.get('modelId');
-      const hasPagination = searchParams.has('page') || searchParams.has('limit');
-      const fastMode = searchParams.get('fast') === 'true';
       const countOnly = searchParams.get('countOnly') === 'true';
       const dateRange = searchParams.get('dateRange');
       const createdAfter = parseDateRange(dateRange);
@@ -105,17 +102,12 @@ export async function GET(request: NextRequest) {
         return { total };
       }
 
-      if (modelId && !hasPagination && !dateRange && !searchParams.has('sort')) {
-        const images = await getGeneratedImagesByModelId(modelId);
-        return { images: resolveUrls(images), total: images.length };
-      }
-
       const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
       const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '24', 10)));
       const offset = (page - 1) * limit;
 
+      // Data + count run in parallel inside getGeneratedImagesPage.
       const { images, total } = await getGeneratedImagesPage(limit, offset, {
-        includeTotal: !fastMode,
         modelId: modelId || null,
         createdAfter,
         sort,
