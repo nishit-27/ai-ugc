@@ -228,9 +228,10 @@ async function recoverTemplateJob(job: {
               step: `Step ${globalIdx + 1}/${enabledSteps.length}: ${stepLabel} (recovering)`,
             });
 
-            const newVideoPath = await processStep(step, currentVideoPath, job.id, globalIdx, stepOutputs);
+            const result = await processStep(step, currentVideoPath, job.id, globalIdx, stepOutputs);
+            const newVideoPath = Array.isArray(result) ? result[0] : result;
             stepOutputs.set(step.id, newVideoPath);
-            tempFiles.push(newVideoPath);
+            if (Array.isArray(result)) tempFiles.push(...result); else tempFiles.push(newVideoPath);
 
             const { url: stepUrl } = await uploadVideoFromPath(newVideoPath, `template-${job.id}-step-${globalIdx}.mp4`);
             stepResults.push({ stepId: step.id, type: step.type, label: stepLabel, outputUrl: stepUrl });

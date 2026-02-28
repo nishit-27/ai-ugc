@@ -31,45 +31,97 @@ function resolveDisplayUrl(url: string): string {
   return url;
 }
 
+/**
+ * Position, scale, and clip a FabricImage to fit a target slot.
+ *
+ * For 'cover': scales uniformly to fill the slot, clips overflow, and adjusts
+ * left/top so the visible (clipped) area aligns exactly with the slot rect.
+ *
+ * For 'contain' / 'stretch': positions at the slot's top-left corner.
+ */
 function applyFit(
   obj: FabricImage,
   sourceW: number,
   sourceH: number,
-  targetW: number,
-  targetH: number,
+  slotLeft: number,
+  slotTop: number,
+  slotW: number,
+  slotH: number,
   fit: ComposeLayerFit,
 ) {
   switch (fit) {
     case 'cover': {
-      const scale = Math.max(targetW / sourceW, targetH / sourceH);
-      obj.set({ scaleX: scale, scaleY: scale });
+      const scale = Math.max(slotW / sourceW, slotH / sourceH);
+      // Offset so that the centered clipPath aligns with the slot rect
+      const offsetX = (sourceW * scale - slotW) / 2;
+      const offsetY = (sourceH * scale - slotH) / 2;
+      obj.set({
+        scaleX: scale,
+        scaleY: scale,
+        left: slotLeft - offsetX,
+        top: slotTop - offsetY,
+      });
       obj.clipPath = new Rect({
-        width: targetW / scale,
-        height: targetH / scale,
+        width: slotW / scale,
+        height: slotH / scale,
         originX: 'center',
         originY: 'center',
       });
       break;
     }
     case 'contain': {
-      const scale = Math.min(targetW / sourceW, targetH / sourceH);
-      obj.set({ scaleX: scale, scaleY: scale });
+      const scale = Math.min(slotW / sourceW, slotH / sourceH);
+      obj.set({ scaleX: scale, scaleY: scale, left: slotLeft, top: slotTop });
       obj.clipPath = undefined;
       break;
     }
     case 'stretch':
     default: {
-      obj.set({ scaleX: targetW / sourceW, scaleY: targetH / sourceH });
+      obj.set({
+        scaleX: slotW / sourceW,
+        scaleY: slotH / sourceH,
+        left: slotLeft,
+        top: slotTop,
+      });
       obj.clipPath = undefined;
       break;
     }
   }
 }
 
+/** Reverse-compute slot position from a fabric object (handles cover offset). */
+function extractSlotFromObj(obj: FabricObject, cw: number, ch: number) {
+  const clip = (obj as FabricImage).clipPath;
+  if (clip && clip.width && clip.height) {
+    // Cover mode — the slot dimensions come from the clipPath
+    const slotW = clip.width * (obj.scaleX ?? 1);
+    const slotH = clip.height * (obj.scaleY ?? 1);
+    const offsetX = ((obj.width ?? 0) * (obj.scaleX ?? 1) - slotW) / 2;
+    const offsetY = ((obj.height ?? 0) * (obj.scaleY ?? 1) - slotH) / 2;
+    return {
+      x: ((obj.left ?? 0) + offsetX) / cw,
+      y: ((obj.top ?? 0) + offsetY) / ch,
+      width: slotW / cw,
+      height: slotH / ch,
+    };
+  }
+  // Contain / stretch — direct mapping
+  return {
+    x: (obj.left ?? 0) / cw,
+    y: (obj.top ?? 0) / ch,
+    width: ((obj.width ?? 0) * (obj.scaleX ?? 1)) / cw,
+    height: ((obj.height ?? 0) * (obj.scaleY ?? 1)) / ch,
+  };
+}
+
 export function useComposeCanvas(initialConfig?: ComposeConfig) {
   const [config, setConfig] = useState<ComposeConfig>(initialConfig ?? defaultConfig());
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [videoDurations, setVideoDurations] = useState<Map<string, number>>(new Map());
+  const [hiddenLayerIds, setHiddenLayerIds] = useState<Set<string>>(new Set());
+  const [pendingSlotIndex, setPendingSlotIndex] = useState<number | null>(null);
+  const pendingSlotIndexRef = useRef<number | null>(null);
   const fabricRef = useRef<FabricCanvas | null>(null);
   const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const fabricObjectsRef = useRef<Map<string, FabricImage>>(new Map());
@@ -80,6 +132,13 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
   configRef.current = config;
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
+  const hiddenLayerIdsRef = useRef(hiddenLayerIds);
+  hiddenLayerIdsRef.current = hiddenLayerIds;
+
+  const updatePendingSlotIndex = useCallback((idx: number | null) => {
+    pendingSlotIndexRef.current = idx;
+    setPendingSlotIndex(idx);
+  }, []);
 
   const initCanvas = useCallback((canvasEl: HTMLCanvasElement, containerWidth: number) => {
     canvasElRef.current = canvasEl;
@@ -106,18 +165,11 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       const c = configRef.current;
       const cw = c.canvasWidth * s;
       const ch = c.canvasHeight * s;
+      const slot = extractSlotFromObj(obj, cw, ch);
       setConfig((prev) => ({
         ...prev,
         layers: prev.layers.map((l) =>
-          l.id === layerId
-            ? {
-                ...l,
-                x: (obj.left ?? 0) / cw,
-                y: (obj.top ?? 0) / ch,
-                width: ((obj.width ?? 0) * (obj.scaleX ?? 1)) / cw,
-                height: ((obj.height ?? 0) * (obj.scaleY ?? 1)) / ch,
-              }
-            : l,
+          l.id === layerId ? { ...l, ...slot } : l,
         ),
       }));
     });
@@ -150,16 +202,61 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     const ch = currentCfg.canvasHeight * scale;
     currentCfg.layers.forEach((layer) => {
       const obj = fabricObjectsRef.current.get(layer.id);
-      if (!obj) return;
-      const label = (obj as FabricObject & { _placeholderLabel?: FabricObject })._placeholderLabel;
-      if (label) canvas.add(label);
-      canvas.add(obj);
-      obj.set({ left: layer.x * cw, top: layer.y * ch });
-      const sourceW = obj.width || 100;
-      const sourceH = obj.height || 100;
-      applyFit(obj as FabricImage, sourceW, sourceH, layer.width * cw, layer.height * ch, layer.fit);
+      if (obj) {
+        const label = (obj as FabricObject & { _placeholderLabel?: FabricObject })._placeholderLabel;
+        if (label) canvas.add(label);
+        canvas.add(obj);
+        const sourceW = obj.width || 100;
+        const sourceH = obj.height || 100;
+        applyFit(obj as FabricImage, sourceW, sourceH, layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit);
+      }
     });
     canvas.renderAll();
+
+    // Recreate fabric objects for config layers that have no fabric object yet
+    // (happens when the component remounts with a saved / updated config).
+    currentCfg.layers.forEach(async (layer) => {
+      if (fabricObjectsRef.current.has(layer.id)) return;
+      const displayUrl = layer.source.url ? resolveDisplayUrl(layer.source.url) : '';
+      if (!displayUrl) return;
+      try {
+        const isImageUrl = /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?|$)/i.test(displayUrl);
+        if (layer.type === 'video' && !isImageUrl) {
+          const { fabricObj, videoEl } = await createFabricVideo(displayUrl, {
+            left: layer.x * cw, top: layer.y * ch, scaleX: 1, scaleY: 1,
+          });
+          applyFit(fabricObj, videoEl.videoWidth || 640, videoEl.videoHeight || 360,
+            layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit);
+          (fabricObj as FabricObject & { layerId?: string }).layerId = layer.id;
+          fabricObj.set({ opacity: layer.opacity ?? 1 });
+          fabricObjectsRef.current.set(layer.id, fabricObj);
+          videoElementsRef.current.set(layer.id, videoEl);
+          if (layer.audioDetached) videoEl.muted = true;
+          canvas.add(fabricObj);
+          if (videoEl.duration && isFinite(videoEl.duration)) {
+            setVideoDurations((prev) => new Map(prev).set(layer.id, videoEl.duration));
+          } else {
+            videoEl.addEventListener('loadedmetadata', () => {
+              if (isFinite(videoEl.duration))
+                setVideoDurations((prev) => new Map(prev).set(layer.id, videoEl.duration));
+            }, { once: true });
+          }
+        } else {
+          const imgObj = await createFabricImage(displayUrl, {
+            left: layer.x * cw, top: layer.y * ch, scaleX: 1, scaleY: 1,
+          });
+          applyFit(imgObj, imgObj.width || 100, imgObj.height || 100,
+            layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit);
+          (imgObj as FabricObject & { layerId?: string }).layerId = layer.id;
+          imgObj.set({ opacity: layer.opacity ?? 1 });
+          fabricObjectsRef.current.set(layer.id, imgObj);
+          canvas.add(imgObj);
+        }
+        canvas.renderAll();
+      } catch (err) {
+        console.warn('Failed to restore layer:', layer.id, err);
+      }
+    });
 
     return canvas;
   }, []);
@@ -167,6 +264,32 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
   useEffect(() => {
     const render = () => {
       if (fabricRef.current && videoElementsRef.current.size > 0) {
+        const cfg = configRef.current;
+        const hidden = hiddenLayerIdsRef.current;
+        videoElementsRef.current.forEach((videoEl, layerId) => {
+          const obj = fabricObjectsRef.current.get(layerId);
+          if (!obj) return;
+          (obj as FabricImage & { dirty?: boolean }).dirty = true;
+
+          // Show/hide based on trim range (only while playing)
+          if (isPlayingRef.current) {
+            const layer = cfg.layers.find((l) => l.id === layerId);
+            if (layer) {
+              const trimEnd = layer.trim?.endSec ?? (videoEl.duration || 60);
+              const trimStart = layer.trim?.startSec ?? 0;
+              const t = videoEl.currentTime;
+              const inRange = t >= trimStart && t < trimEnd;
+              // Respect manual hide from the eye toggle
+              const manuallyHidden = hidden.has(layerId);
+              obj.set({ visible: inRange && !manuallyHidden });
+
+              // Pause video when it reaches trim end
+              if (t >= trimEnd) {
+                videoEl.pause();
+              }
+            }
+          }
+        });
         fabricRef.current.renderAll();
       }
       rafRef.current = requestAnimationFrame(render);
@@ -175,7 +298,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
-  const addLayer = useCallback(async (source: LayerSource, type: 'video' | 'image') => {
+  const addLayer = useCallback(async (source: LayerSource, type: 'video' | 'image', slotIndex?: number) => {
     const canvas = fabricRef.current;
     if (!canvas) {
       console.error('Canvas not initialized');
@@ -188,10 +311,34 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     const cw = cfg.canvasWidth * s;
     const ch = cfg.canvasHeight * s;
 
-    const layerW = 0.5;
-    const layerH = 0.5;
-    const layerX = 0.25;
-    const layerY = 0.25;
+    // Determine position: snap to preset slot if available, otherwise free placement
+    let layerX = 0.25;
+    let layerY = 0.25;
+    let layerW = 0.5;
+    let layerH = 0.5;
+    let layerFit: ComposeLayerFit = 'cover';
+
+    const preset = cfg.preset && cfg.preset !== 'free-canvas' ? PRESETS[cfg.preset] : null;
+    if (preset) {
+      const positions = preset.getPositions();
+      // Use explicit slot index, pending slot from click (via ref for fresh value), or find the next empty slot
+      const currentPendingSlot = pendingSlotIndexRef.current;
+      const targetSlot = slotIndex ?? currentPendingSlot ?? cfg.layers.length;
+      // Clear pending slot after use
+      if (currentPendingSlot !== null) {
+        pendingSlotIndexRef.current = null;
+        setPendingSlotIndex(null);
+      }
+      if (targetSlot < positions.length) {
+        const pos = positions[targetSlot];
+        layerX = pos.x;
+        layerY = pos.y;
+        layerW = pos.width;
+        layerH = pos.height;
+        // Use 'cover' for preset slots so content fills the slot completely
+        layerFit = 'cover';
+      }
+    }
 
     const layer: ComposeLayer = {
       id,
@@ -202,7 +349,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       width: layerW,
       height: layerH,
       zIndex: cfg.layers.length,
-      fit: 'cover',
+      fit: layerFit,
       opacity: 1,
     };
 
@@ -231,8 +378,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
         selectable: false,
         evented: false,
       });
-      canvas.add(rect);
-      canvas.add(label);
+      // Store label reference but DON'T add to canvas here — the caller handles canvas.add
       (rect as FabricObject & { layerId?: string; _placeholderLabel?: FabricObject }).layerId = id;
       (rect as FabricObject & { layerId?: string; _placeholderLabel?: FabricObject })._placeholderLabel = label;
       return rect;
@@ -241,44 +387,19 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     try {
       let fabricObj: FabricObject;
 
-      // Sign GCS URLs before loading into canvas
+      // Resolve display URL
       const displayUrl = source.url ? resolveDisplayUrl(source.url) : '';
 
-      // For step-output layers, the URL is typically an image preview of the video to be generated.
-      const isStepOutputPreview = source.type === 'step-output' && displayUrl && !/\.(mp4|webm|mov|avi)(\?|$)/i.test(displayUrl);
+      // Detect if URL looks like an image (known image extensions)
+      const isImageUrl = /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?|$)/i.test(displayUrl);
 
       if (!displayUrl) {
         fabricObj = createPlaceholder();
-      } else if (isStepOutputPreview) {
-        try {
-          const imgObj = await createFabricImage(displayUrl, {
-            left: layerX * cw,
-            top: layerY * ch,
-            scaleX: 1,
-            scaleY: 1,
-          });
-          const ow = imgObj.width || 100;
-          const oh = imgObj.height || 100;
-          applyFit(imgObj, ow, oh, layerW * cw, layerH * ch, 'cover');
-          fabricObj = imgObj;
-        } catch {
-          fabricObj = createPlaceholder();
-        }
       } else if (type === 'video') {
-        try {
-          const { fabricObj: obj, videoEl } = await createFabricVideo(displayUrl, {
-            left: layerX * cw,
-            top: layerY * ch,
-            scaleX: 1,
-            scaleY: 1,
-          });
-          const vw = videoEl.videoWidth || 640;
-          const vh = videoEl.videoHeight || 360;
-          applyFit(obj, vw, vh, layerW * cw, layerH * ch, 'cover');
-          fabricObj = obj;
-          videoElementsRef.current.set(id, videoEl);
-          if (isPlayingRef.current) videoEl.play().catch(() => {});
-        } catch {
+        // For video layers: if URL is clearly an image, load as image preview.
+        // Otherwise, try loading as video first, then fall back to image.
+        if (isImageUrl) {
+          // Known image URL — show as static preview
           try {
             const imgObj = await createFabricImage(displayUrl, {
               left: layerX * cw,
@@ -288,13 +409,56 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
             });
             const ow = imgObj.width || 100;
             const oh = imgObj.height || 100;
-            applyFit(imgObj, ow, oh, layerW * cw, layerH * ch, 'cover');
+            applyFit(imgObj, ow, oh, layerX * cw, layerY * ch, layerW * cw, layerH * ch, layerFit);
             fabricObj = imgObj;
           } catch {
             fabricObj = createPlaceholder();
           }
+        } else {
+          // Try loading as actual video (R2/GCS URLs often have no extension)
+          try {
+            const { fabricObj: obj, videoEl } = await createFabricVideo(displayUrl, {
+              left: layerX * cw,
+              top: layerY * ch,
+              scaleX: 1,
+              scaleY: 1,
+            });
+            const vw = videoEl.videoWidth || 640;
+            const vh = videoEl.videoHeight || 360;
+            applyFit(obj, vw, vh, layerX * cw, layerY * ch, layerW * cw, layerH * ch, layerFit);
+            fabricObj = obj;
+            videoElementsRef.current.set(id, videoEl);
+            // Track video duration once metadata is loaded
+            if (videoEl.duration && isFinite(videoEl.duration)) {
+              setVideoDurations((prev) => new Map(prev).set(id, videoEl.duration));
+            } else {
+              videoEl.addEventListener('loadedmetadata', () => {
+                if (isFinite(videoEl.duration)) {
+                  setVideoDurations((prev) => new Map(prev).set(id, videoEl.duration));
+                }
+              }, { once: true });
+            }
+            if (isPlayingRef.current) videoEl.play().catch((err) => console.warn('Auto-play failed:', err));
+          } catch {
+            // Video load failed — fall back to image
+            try {
+              const imgObj = await createFabricImage(displayUrl, {
+                left: layerX * cw,
+                top: layerY * ch,
+                scaleX: 1,
+                scaleY: 1,
+              });
+              const ow = imgObj.width || 100;
+              const oh = imgObj.height || 100;
+              applyFit(imgObj, ow, oh, layerX * cw, layerY * ch, layerW * cw, layerH * ch, layerFit);
+              fabricObj = imgObj;
+            } catch {
+              fabricObj = createPlaceholder();
+            }
+          }
         }
       } else {
+        // Image type
         try {
           const imgObj = await createFabricImage(displayUrl, {
             left: layerX * cw,
@@ -304,7 +468,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
           });
           const ow = imgObj.width || 100;
           const oh = imgObj.height || 100;
-          applyFit(imgObj, ow, oh, layerW * cw, layerH * ch, 'cover');
+          applyFit(imgObj, ow, oh, layerX * cw, layerY * ch, layerW * cw, layerH * ch, layerFit);
           fabricObj = imgObj;
         } catch {
           fabricObj = createPlaceholder();
@@ -314,12 +478,20 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       (fabricObj as FabricObject & { layerId?: string }).layerId = id;
       fabricObj.set({ opacity: layer.opacity ?? 1 });
       fabricObjectsRef.current.set(id, fabricObj as FabricImage);
-      if (source.url) {
-        canvas.add(fabricObj);
+
+      // Add to canvas — placeholder label first if present, then the object itself
+      const placeholderLabel = (fabricObj as FabricObject & { _placeholderLabel?: FabricObject })._placeholderLabel;
+      if (placeholderLabel) canvas.add(placeholderLabel);
+      canvas.add(fabricObj);
+
+      try {
+        canvas.setActiveObject(fabricObj);
+      } catch {
+        // setActiveObject may fail in some edge cases — not critical
       }
-      canvas.setActiveObject(fabricObj);
       canvas.renderAll();
 
+      // Always save the layer to config
       setConfig((prev) => ({ ...prev, layers: [...prev.layers, layer] }));
       setSelectedLayerId(id);
     } catch (err) {
@@ -345,6 +517,9 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       videoEl.src = '';
       videoElementsRef.current.delete(id);
     }
+
+    setVideoDurations((prev) => { const next = new Map(prev); next.delete(id); return next; });
+    setHiddenLayerIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
 
     setConfig((prev) => ({
       ...prev,
@@ -375,18 +550,19 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     const obj = fabricObjectsRef.current.get(id);
     if (!obj) return;
 
-    if (updates.x !== undefined) obj.set({ left: updates.x * cw });
-    if (updates.y !== undefined) obj.set({ top: updates.y * ch });
     if (updates.opacity !== undefined) obj.set({ opacity: updates.opacity });
 
-    const needsFitUpdate = updates.width !== undefined || updates.height !== undefined || updates.fit !== undefined;
-    if (needsFitUpdate) {
+    const needsReposition = updates.x !== undefined || updates.y !== undefined
+      || updates.width !== undefined || updates.height !== undefined || updates.fit !== undefined;
+    if (needsReposition) {
       const sourceW = obj.width || 100;
       const sourceH = obj.height || 100;
-      const targetW = (updates.width ?? currentLayer.width) * cw;
-      const targetH = (updates.height ?? currentLayer.height) * ch;
+      const slotLeft = (updates.x ?? currentLayer.x) * cw;
+      const slotTop = (updates.y ?? currentLayer.y) * ch;
+      const slotW = (updates.width ?? currentLayer.width) * cw;
+      const slotH = (updates.height ?? currentLayer.height) * ch;
       const fit = updates.fit ?? currentLayer.fit;
-      applyFit(obj, sourceW, sourceH, targetW, targetH, fit);
+      applyFit(obj, sourceW, sourceH, slotLeft, slotTop, slotW, slotH, fit);
     }
 
     canvas.renderAll();
@@ -405,11 +581,14 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     const cw = cfg.canvasWidth * s;
     const ch = cfg.canvasHeight * s;
 
+    const isFreeCanvas = presetId === 'free-canvas';
+    const fitMode: ComposeLayerFit = 'cover';
+
     setConfig((prev) => {
       const newLayers = prev.layers.map((layer, i) => {
         if (i >= positions.length) return layer;
         const pos = positions[i];
-        return { ...layer, x: pos.x, y: pos.y, width: pos.width, height: pos.height };
+        return { ...layer, x: pos.x, y: pos.y, width: pos.width, height: pos.height, fit: fitMode };
       });
       return { ...prev, preset: presetId, layers: newLayers };
     });
@@ -422,8 +601,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
 
       const sourceW = obj.width || 100;
       const sourceH = obj.height || 100;
-      obj.set({ left: pos.x * cw, top: pos.y * ch });
-      applyFit(obj, sourceW, sourceH, pos.width * cw, pos.height * ch, layer.fit);
+      applyFit(obj, sourceW, sourceH, pos.x * cw, pos.y * ch, pos.width * cw, pos.height * ch, fitMode);
     });
 
     canvas.renderAll();
@@ -479,13 +657,88 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
   }, []);
 
   const playAll = useCallback(() => {
-    videoElementsRef.current.forEach((v) => v.play().catch(() => {}));
+    const cfg = configRef.current;
+    videoElementsRef.current.forEach((v, layerId) => {
+      const layer = cfg.layers.find((l) => l.id === layerId);
+      const trimStart = layer?.trim?.startSec ?? 0;
+      const trimEnd = layer?.trim?.endSec ?? (v.duration || 60);
+      // If video is at or past trim end, seek back to trim start
+      if (v.currentTime >= trimEnd || v.ended) {
+        v.currentTime = trimStart;
+      }
+      // Make the fabric object visible again
+      const obj = fabricObjectsRef.current.get(layerId);
+      if (obj && !hiddenLayerIdsRef.current.has(layerId)) {
+        obj.set({ visible: true });
+      }
+      v.play().catch((err) => console.warn(`Play failed for layer ${layerId}:`, err));
+    });
     setIsPlaying(true);
   }, []);
 
   const pauseAll = useCallback(() => {
-    videoElementsRef.current.forEach((v) => v.pause());
+    videoElementsRef.current.forEach((v, layerId) => {
+      v.pause();
+      // Restore visibility when paused (so user can see all layers)
+      const obj = fabricObjectsRef.current.get(layerId);
+      if (obj && !hiddenLayerIdsRef.current.has(layerId)) {
+        obj.set({ visible: true });
+      }
+    });
+    fabricRef.current?.renderAll();
     setIsPlaying(false);
+  }, []);
+
+  const seekTo = useCallback((layerId: string, timeSec: number) => {
+    const videoEl = videoElementsRef.current.get(layerId);
+    if (videoEl) {
+      videoEl.currentTime = timeSec;
+      fabricRef.current?.renderAll();
+    }
+  }, []);
+
+  const seekGlobal = useCallback((timeSec: number) => {
+    videoElementsRef.current.forEach((videoEl) => {
+      videoEl.currentTime = timeSec;
+    });
+    fabricRef.current?.renderAll();
+  }, []);
+
+  const getVideoElements = useCallback(() => {
+    return videoElementsRef.current;
+  }, []);
+
+  const toggleAudioDetach = useCallback((layerId: string) => {
+    const videoEl = videoElementsRef.current.get(layerId);
+    setConfig((prev) => ({
+      ...prev,
+      layers: prev.layers.map((l) => {
+        if (l.id !== layerId) return l;
+        const detached = !l.audioDetached;
+        if (videoEl) videoEl.muted = detached;
+        return { ...l, audioDetached: detached };
+      }),
+    }));
+  }, []);
+
+  const toggleLayerVisibility = useCallback((layerId: string) => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const obj = fabricObjectsRef.current.get(layerId);
+    if (!obj) return;
+
+    setHiddenLayerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(layerId)) {
+        next.delete(layerId);
+        obj.set({ visible: true });
+      } else {
+        next.add(layerId);
+        obj.set({ visible: false });
+      }
+      canvas.renderAll();
+      return next;
+    });
   }, []);
 
   const selectLayer = useCallback((id: string | null) => {
@@ -500,6 +753,23 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     const obj = fabricObjectsRef.current.get(id);
     if (obj) {
       canvas.setActiveObject(obj);
+      canvas.renderAll();
+    }
+  }, []);
+
+  const nudgeLayer = useCallback((id: string, dx: number, dy: number) => {
+    const currentLayer = configRef.current.layers.find((l) => l.id === id);
+    if (!currentLayer) return;
+    const newX = Math.max(0, Math.min(1, currentLayer.x + dx));
+    const newY = Math.max(0, Math.min(1, currentLayer.y + dy));
+    updateLayer(id, { x: newX, y: newY });
+  }, [updateLayer]);
+
+  const deselectAll = useCallback(() => {
+    setSelectedLayerId(null);
+    const canvas = fabricRef.current;
+    if (canvas) {
+      canvas.discardActiveObject();
       canvas.renderAll();
     }
   }, []);
@@ -524,8 +794,7 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
       const ch = cfg.canvasHeight * scale;
       const sourceW = obj.width || 100;
       const sourceH = obj.height || 100;
-      obj.set({ left: layer.x * cw, top: layer.y * ch });
-      applyFit(obj, sourceW, sourceH, layer.width * cw, layer.height * ch, layer.fit);
+      applyFit(obj, sourceW, sourceH, layer.x * cw, layer.y * ch, layer.width * cw, layer.height * ch, layer.fit);
     });
 
     canvas.renderAll();
@@ -553,16 +822,27 @@ export function useComposeCanvas(initialConfig?: ComposeConfig) {
     selectedLayerId,
     setSelectedLayerId: selectLayer,
     isPlaying,
+    videoDurations,
+    hiddenLayerIds,
+    pendingSlotIndex,
+    setPendingSlotIndex: updatePendingSlotIndex,
     initCanvas,
     addLayer,
     removeLayer,
     updateLayer,
+    nudgeLayer,
+    deselectAll,
     applyPreset,
     setAspectRatio,
     setBackgroundColor,
     reorderLayers,
     playAll,
     pauseAll,
+    seekTo,
+    seekGlobal,
+    getVideoElements,
+    toggleLayerVisibility,
+    toggleAudioDetach,
     resizeCanvas,
   };
 }

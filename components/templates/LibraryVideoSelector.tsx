@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { AlertTriangle, Check, ChevronDown, Expand, Film, Sparkles, Video } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Expand, Film, RefreshCw, Sparkles, Video } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
 import type { MasterModel } from './NodeConfigPanel';
 
@@ -23,6 +23,11 @@ type TemplateJobData = {
   completedAt?: string;
 };
 
+// Module-level cache so data persists across re-mounts (e.g. switching steps)
+let _cachedJobs: TemplateJobData[] | null = null;
+let _cacheTimestamp = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 export default function LibraryVideoSelector({
   masterModels,
   selectedModelIds,
@@ -36,29 +41,39 @@ export default function LibraryVideoSelector({
   onSelect: (modelId: string, gcsUrl: string) => void;
   onRemove: (modelId: string) => void;
 }) {
-  const [templateJobs, setTemplateJobs] = useState<TemplateJobData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [templateJobs, setTemplateJobs] = useState<TemplateJobData[]>(_cachedJobs ?? []);
+  const [loading, setLoading] = useState(_cachedJobs === null);
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // Fetch template jobs once on mount
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/templates');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) setTemplateJobs(Array.isArray(data) ? data : []);
-      } catch {
-        // ignore
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+  const fetchJobs = useCallback(async (force = false) => {
+    // Use cache if fresh and not forced
+    if (!force && _cachedJobs && Date.now() - _cacheTimestamp < CACHE_TTL) {
+      setTemplateJobs(_cachedJobs);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/templates');
+      if (!res.ok) return;
+      const data = await res.json();
+      const jobs = Array.isArray(data) ? data : [];
+      _cachedJobs = jobs;
+      _cacheTimestamp = Date.now();
+      setTemplateJobs(jobs);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  // Fetch template jobs on mount (uses cache if available)
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
 
   // Build per-model video lists
   const videosByModel = useMemo(() => {
@@ -141,11 +156,21 @@ export default function LibraryVideoSelector({
             {selectedCount} of {selectedModelIds.length} videos picked
           </span>
         </div>
-        {selectedCount === selectedModelIds.length && selectedModelIds.length > 0 && (
-          <span className="flex items-center gap-1 rounded-full bg-master/10 px-2 py-0.5 text-[10px] font-semibold text-master dark:text-master-muted">
-            <Check className="h-3 w-3" /> Ready
-          </span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {selectedCount === selectedModelIds.length && selectedModelIds.length > 0 && (
+            <span className="flex items-center gap-1 rounded-full bg-master/10 px-2 py-0.5 text-[10px] font-semibold text-master dark:text-master-muted">
+              <Check className="h-3 w-3" /> Ready
+            </span>
+          )}
+          <button
+            onClick={() => fetchJobs(true)}
+            disabled={loading}
+            title="Refresh videos"
+            className="flex h-6 w-6 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--text)] disabled:opacity-40"
+          >
+            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -307,13 +332,44 @@ function VideoCard({
   onPreview: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLButtonElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
+  const [visible, setVisible] = useState(false);
 
-  // Show first frame, then pause. Play on hover only.
+  // Lazy load: only set video src when card scrolls into view
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '100px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Once visible, load only metadata (first frame) instead of full video
+  useEffect(() => {
+    if (!visible || !videoRef.current) return;
+    const vid = videoRef.current;
+    vid.preload = 'metadata';
+    vid.src = displayUrl;
+    vid.load();
+  }, [visible, displayUrl]);
+
   const handleLoaded = useCallback(() => {
     const vid = videoRef.current;
     if (!vid) return;
+    // Seek to 0.5s for a better thumbnail frame
+    if (vid.currentTime === 0 && vid.duration > 0.5) {
+      vid.currentTime = 0.5;
+    }
     vid.pause();
     setLoaded(true);
   }, []);
@@ -323,7 +379,11 @@ function VideoCard({
   }, []);
 
   const handleMouseEnter = useCallback(() => {
-    if (!errored) videoRef.current?.play().catch(() => {});
+    if (!errored && videoRef.current) {
+      // Switch to full preload on hover for smooth playback
+      videoRef.current.preload = 'auto';
+      videoRef.current.play().catch(() => {});
+    }
   }, [errored]);
 
   const handleMouseLeave = useCallback(() => {
@@ -341,6 +401,7 @@ function VideoCard({
 
   return (
     <button
+      ref={containerRef}
       onClick={onSelect}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -350,12 +411,10 @@ function VideoCard({
     >
       <video
         ref={videoRef}
-        src={displayUrl}
         className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}
         muted
         loop
         playsInline
-        preload="auto"
         onLoadedData={handleLoaded}
         onError={handleError}
       />

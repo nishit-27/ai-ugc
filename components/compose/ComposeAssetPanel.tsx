@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Film, ImageIcon, UserCircle, Upload, Link2, Layers } from 'lucide-react';
+import { Film, ImageIcon, UserCircle, Upload, Link2, Layers, Type, Music, Scissors } from 'lucide-react';
 import type { LayerSource, StepResult, Model } from '@/types';
 
 type Tab = 'pipeline' | 'videos' | 'images' | 'models' | 'upload' | 'url';
@@ -18,7 +18,7 @@ type PipelineStepSource = {
   type: string;
   label: string;
   previewUrl?: string;
-  modelRefs?: { modelId: string; modelName: string; imageUrl: string; firstFrameUrl?: string }[];
+  modelRefs?: { modelId: string; modelName: string; imageUrl: string; firstFrameUrl?: string; videoUrl?: string }[];
   batchImages?: { imageUrl: string; filename?: string; imageId?: string }[];
 };
 
@@ -45,6 +45,9 @@ export default function ComposeAssetPanel({
   const [isLoadingImages, setIsLoadingImages] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isLoadingModelImages, setIsLoadingModelImages] = useState(false);
+  const [modelGenImages, setModelGenImages] = useState<Map<string, ImageItem[]>>(new Map());
+  const [modelGenVideos, setModelGenVideos] = useState<Map<string, VideoItem[]>>(new Map());
+  const [isLoadingModelGenContent, setIsLoadingModelGenContent] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const videosLoaded = useRef(false);
@@ -197,6 +200,44 @@ export default function ComposeAssetPanel({
     }
   };
 
+  const loadModelGenContent = async (modelId: string) => {
+    if (modelGenImages.has(modelId)) return; // already loaded
+    setIsLoadingModelGenContent(true);
+    try {
+      const [imgRes, vidRes] = await Promise.all([
+        fetch(`/api/generated-images?modelId=${modelId}&limit=20&signed=true`),
+        fetch('/api/videos?mode=generated'),
+      ]);
+      const imgData = await imgRes.json();
+      const vidData = await vidRes.json();
+
+      // Generated images
+      const rawImgs = Array.isArray(imgData.images) ? imgData.images : [];
+      const genImgs: ImageItem[] = rawImgs.map((img: { gcsUrl?: string; signedUrl?: string; filename?: string }) => ({
+        gcsUrl: img.gcsUrl || '',
+        url: img.signedUrl || img.gcsUrl || '',
+        name: img.filename || 'Generated Image',
+      }));
+      setModelGenImages((prev) => new Map(prev).set(modelId, genImgs));
+
+      // Generated videos — filter by modelId client-side
+      const rawVids = Array.isArray(vidData.videos) ? vidData.videos : [];
+      const genVids: VideoItem[] = rawVids
+        .filter((v: { modelId?: string }) => v.modelId === modelId)
+        .slice(0, 20)
+        .map((v: { url?: string; path?: string; name?: string }) => ({
+          gcsUrl: v.url || v.path || '',
+          url: v.url || v.path || '',
+          name: v.name || 'Generated Video',
+        }));
+      setModelGenVideos((prev) => new Map(prev).set(modelId, genVids));
+    } catch (err) {
+      console.error('Failed to load model generated content:', err);
+    } finally {
+      setIsLoadingModelGenContent(false);
+    }
+  };
+
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
     if (tab === 'videos') loadVideos();
@@ -214,6 +255,7 @@ export default function ComposeAssetPanel({
     if (model && model.images.length === 0) {
       loadModelImages(modelId);
     }
+    loadModelGenContent(modelId);
   };
 
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -305,26 +347,49 @@ export default function ComposeAssetPanel({
                 </div>
               </button>
             ))}
-            {pipelineSteps && pipelineSteps.length > 0 && pipelineSteps.map((ps) => (
+            {pipelineSteps && pipelineSteps.length > 0 && pipelineSteps.map((ps) => {
+              // Map step type to icon
+              const StepIcon = ps.type === 'text-overlay' ? Type
+                : ps.type === 'bg-music' ? Music
+                : ps.type === 'attach-video' ? Scissors
+                : ps.type === 'video-source' ? Film
+                : Film;
+              // Map step type to subtitle
+              const stepSubtitle = ps.type === 'text-overlay' ? 'Will apply text overlay'
+                : ps.type === 'bg-music' ? 'Will add background music'
+                : ps.type === 'attach-video' ? 'Will attach video clip'
+                : ps.type === 'video-source' ? 'Selected from library'
+                : 'Will be generated on run';
+              const isVideoStep = ps.type === 'video-generation' || ps.type === 'batch-video-generation' || ps.type === 'attach-video' || ps.type === 'video-source';
+
+              return (
               <div key={ps.stepId} className="space-y-1.5">
-                {/* Main step-output button (adds layer referencing this step's video output) */}
+                {/* Main step-output button */}
                 <button
-                  onClick={() => onAddLayer(
-                    { type: 'step-output', url: ps.previewUrl || '', stepId: ps.stepId, label: ps.label },
-                    'video',
-                  )}
-                  className="flex w-full items-center gap-2 rounded-lg border border-dashed border-[var(--primary)]/40 bg-[var(--primary)]/5 p-2 text-left transition-colors hover:bg-[var(--primary)]/10"
+                  onClick={() => {
+                    if (isVideoStep) {
+                      onAddLayer(
+                        { type: 'step-output', url: ps.previewUrl || '', stepId: ps.stepId, label: ps.label },
+                        'video',
+                      );
+                    }
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-lg border border-dashed p-2 text-left transition-colors ${
+                    isVideoStep
+                      ? 'border-[var(--primary)]/40 bg-[var(--primary)]/5 hover:bg-[var(--primary)]/10 cursor-pointer'
+                      : 'border-[var(--border)] bg-[var(--accent)]/30 cursor-default'
+                  }`}
                 >
                   {ps.previewUrl ? (
                     <img src={ps.previewUrl} alt="" className="h-10 w-10 shrink-0 rounded-md object-cover" />
                   ) : (
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[var(--accent)]">
-                      <Film className="h-4 w-4 text-[var(--text-muted)]" />
+                      <StepIcon className="h-4 w-4 text-[var(--text-muted)]" />
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-medium text-[var(--text)]">{ps.label}</div>
-                    <div className="text-[10px] text-[var(--primary)]">Will be generated on run</div>
+                    <div className={`text-[10px] ${isVideoStep ? 'text-[var(--primary)]' : 'text-[var(--text-muted)]'}`}>{stepSubtitle}</div>
                   </div>
                 </button>
 
@@ -367,65 +432,93 @@ export default function ComposeAssetPanel({
                   </div>
                 )}
 
-                {/* Master mode: model references — Video + First Frame per model */}
-                {ps.modelRefs && ps.modelRefs.length > 0 && (
-                  <div className="ml-1 pl-2 border-l-2 border-[var(--primary)]/20 space-y-2">
-                    <div className="text-[10px] font-medium text-[var(--text-muted)]">
-                      {ps.modelRefs.length} model{ps.modelRefs.length !== 1 ? 's' : ''} — same layout for all
-                    </div>
-                    {ps.modelRefs.map((ref) => (
-                      <div key={ref.modelId} className="space-y-1">
-                        <div className="text-[10px] font-medium text-[var(--text)] truncate">{ref.modelName}</div>
-                        <div className="grid grid-cols-2 gap-1">
-                          {/* Video layer */}
-                          <button
-                            onClick={() => onAddLayer(
-                              { type: 'step-output', url: ref.firstFrameUrl || ref.imageUrl, stepId: ps.stepId, modelId: ref.modelId, label: `${ref.modelName} Video` },
-                              'video',
-                            )}
-                            className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
-                            title={`${ref.modelName} — Video`}
-                          >
-                            <img
-                              src={ref.firstFrameUrl || ref.imageUrl}
-                              alt={`${ref.modelName} video`}
-                              className="aspect-[9/16] w-full object-cover"
-                            />
-                            <div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5">
-                              <span className="flex items-center gap-0.5 text-[8px] text-white leading-tight">
-                                <Film className="h-2 w-2 shrink-0" /> Video
-                              </span>
-                            </div>
-                          </button>
-                          {/* First Frame image layer */}
-                          <button
-                            onClick={() => onAddLayer(
-                              { type: 'step-output', url: ref.firstFrameUrl || ref.imageUrl, stepId: ps.stepId, modelId: ref.modelId, label: `${ref.modelName} First Frame` },
-                              'image',
-                            )}
-                            className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
-                            title={`${ref.modelName} — First Frame`}
-                          >
-                            <img
-                              src={ref.firstFrameUrl || ref.imageUrl}
-                              alt={`${ref.modelName} first frame`}
-                              className="aspect-[9/16] w-full object-cover"
-                            />
-                            <div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5">
-                              <span className="flex items-center gap-0.5 text-[8px] text-white leading-tight">
-                                <ImageIcon className="h-2 w-2 shrink-0" /> First Frame
-                              </span>
-                            </div>
-                          </button>
-                        </div>
+                {/* Master mode: show ONE sample Video + First Frame (applies to all models) */}
+                {ps.modelRefs && ps.modelRefs.length > 0 && (() => {
+                  const sample = ps.modelRefs[0];
+                  const hasVideoUrl = !!sample.videoUrl;
+                  const videoSrc = sample.videoUrl || sample.firstFrameUrl || sample.imageUrl;
+                  const imageSrc = sample.firstFrameUrl || sample.imageUrl;
+                  const modelCount = ps.modelRefs.length;
+                  return (
+                  <div className="ml-1 pl-2 border-l-2 border-[var(--primary)]/20 space-y-1.5">
+                    <div className="rounded-md bg-[var(--primary)]/5 border border-[var(--primary)]/20 px-2 py-1.5">
+                      <div className="text-[10px] font-medium text-[var(--primary)]">
+                        Applies to all {modelCount} model{modelCount !== 1 ? 's' : ''}
                       </div>
-                    ))}
+                      <div className="text-[9px] text-[var(--text-muted)] mt-0.5">
+                        Same layout — {modelCount} video{modelCount !== 1 ? 's' : ''} will be generated
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      {/* Video layer (sample) */}
+                      <button
+                        onClick={() => onAddLayer(
+                          { type: 'step-output', url: videoSrc, stepId: ps.stepId, modelId: sample.modelId, label: 'Pipeline Video' },
+                          'video',
+                        )}
+                        className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
+                        title="Add video layer (sample preview)"
+                      >
+                        {hasVideoUrl ? (
+                          <video
+                            src={sample.videoUrl}
+                            className="aspect-[9/16] w-full object-cover"
+                            muted
+                            preload="metadata"
+                            onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.5; }}
+                          />
+                        ) : (
+                          <img
+                            src={imageSrc}
+                            alt="Sample video"
+                            className="aspect-[9/16] w-full object-cover"
+                          />
+                        )}
+                        <div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5">
+                          <span className="flex items-center gap-0.5 text-[8px] text-white leading-tight">
+                            <Film className="h-2 w-2 shrink-0" /> Video
+                          </span>
+                        </div>
+                      </button>
+                      {/* First Frame image layer (sample) */}
+                      <button
+                        onClick={() => onAddLayer(
+                          { type: 'step-output', url: imageSrc, stepId: ps.stepId, modelId: sample.modelId, label: 'Pipeline First Frame' },
+                          'image',
+                        )}
+                        className="group relative overflow-hidden rounded-md border border-[var(--border)] bg-[var(--background)] transition-colors hover:border-[var(--primary)]"
+                        title="Add first frame layer (sample preview)"
+                      >
+                        {hasVideoUrl ? (
+                          <video
+                            src={sample.videoUrl}
+                            className="aspect-[9/16] w-full object-cover"
+                            muted
+                            preload="metadata"
+                            onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.1; }}
+                          />
+                        ) : (
+                          <img
+                            src={imageSrc}
+                            alt="Sample first frame"
+                            className="aspect-[9/16] w-full object-cover"
+                          />
+                        )}
+                        <div className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5">
+                          <span className="flex items-center gap-0.5 text-[8px] text-white leading-tight">
+                            <ImageIcon className="h-2 w-2 shrink-0" /> First Frame
+                          </span>
+                        </div>
+                      </button>
+                    </div>
                   </div>
-                )}
+                  );
+                })()}
               </div>
-            ))}
+            );
+            })}
             {(!stepResults || stepResults.length === 0) && (!pipelineSteps || pipelineSteps.length === 0) && (
-              <p className="text-xs text-[var(--text-muted)]">Add a Video Generation step before Compose to use its output here.</p>
+              <p className="text-xs text-[var(--text-muted)]">Add a Video Generation step before Compose, or select library videos in the Video Source node.</p>
             )}
           </div>
         )}
@@ -546,32 +639,96 @@ export default function ComposeAssetPanel({
                   </button>
 
                   {expandedModelId === m.id && (
-                    <div className="ml-2 pl-2 border-l border-[var(--border)]">
-                      {isLoadingModelImages && m.images.length === 0 ? (
-                        <div className="flex items-center justify-center py-4">
-                          <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--primary)]" />
-                        </div>
-                      ) : m.images.length === 0 ? (
-                        <p className="py-2 text-[10px] text-[var(--text-muted)]">No images for this model.</p>
-                      ) : (
-                        <div className="grid grid-cols-2 gap-1.5 py-1">
-                          {m.images.map((img, i) => (
-                            <button
-                              key={i}
-                              onClick={() => onAddLayer(
-                                { type: 'model-image', url: img.signedUrl || img.gcsUrl, gcsUrl: img.gcsUrl, modelId: m.id, label: `${m.name} - ${img.filename}` },
-                                'image',
-                              )}
-                              className="group relative overflow-hidden rounded-md border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
-                            >
-                              <img src={img.signedUrl || img.gcsUrl} alt={img.filename} className="aspect-square w-full object-cover" />
-                              <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
-                                <ImageIcon className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                    <div className="ml-2 pl-2 border-l border-[var(--border)] space-y-2 py-1">
+                      {/* Model Images (training images) */}
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">Model Images</div>
+                        {isLoadingModelImages && m.images.length === 0 ? (
+                          <div className="flex items-center justify-center py-3">
+                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--primary)]" />
+                          </div>
+                        ) : m.images.length === 0 ? (
+                          <p className="py-1 text-[10px] text-[var(--text-muted)]">No training images.</p>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-1">
+                            {m.images.map((img, i) => (
+                              <button
+                                key={i}
+                                onClick={() => onAddLayer(
+                                  { type: 'model-image', url: img.signedUrl || img.gcsUrl, gcsUrl: img.gcsUrl, modelId: m.id, label: `${m.name} - ${img.filename}` },
+                                  'image',
+                                )}
+                                className="group relative overflow-hidden rounded-md border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
+                              >
+                                <img src={img.signedUrl || img.gcsUrl} alt={img.filename} className="aspect-square w-full object-cover" />
+                                <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
+                                  <ImageIcon className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Generated Images */}
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">Generated Images</div>
+                        {isLoadingModelGenContent && !modelGenImages.has(m.id) ? (
+                          <div className="flex items-center justify-center py-3">
+                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--primary)]" />
+                          </div>
+                        ) : (modelGenImages.get(m.id) ?? []).length === 0 ? (
+                          <p className="py-1 text-[10px] text-[var(--text-muted)]">No generated images.</p>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-1">
+                            {(modelGenImages.get(m.id) ?? []).map((img, i) => (
+                              <button
+                                key={i}
+                                onClick={() => onAddLayer(
+                                  { type: 'gallery-image', url: img.url, gcsUrl: img.gcsUrl, modelId: m.id, label: `${m.name} - ${img.name}` },
+                                  'image',
+                                )}
+                                className="group relative overflow-hidden rounded-md border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
+                              >
+                                <img src={img.url} alt={img.name} className="aspect-square w-full object-cover" />
+                                <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
+                                  <ImageIcon className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Generated Videos */}
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">Generated Videos</div>
+                        {isLoadingModelGenContent && !modelGenVideos.has(m.id) ? (
+                          <div className="flex items-center justify-center py-3">
+                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--primary)]" />
+                          </div>
+                        ) : (modelGenVideos.get(m.id) ?? []).length === 0 ? (
+                          <p className="py-1 text-[10px] text-[var(--text-muted)]">No generated videos.</p>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-1">
+                            {(modelGenVideos.get(m.id) ?? []).map((vid, i) => (
+                              <button
+                                key={i}
+                                onClick={() => onAddLayer(
+                                  { type: 'gallery-video', url: vid.url, gcsUrl: vid.gcsUrl, modelId: m.id, label: `${m.name} - ${vid.name}` },
+                                  'video',
+                                )}
+                                className="group relative overflow-hidden rounded-md border border-[var(--border)] transition-colors hover:border-[var(--primary)]"
+                              >
+                                <video src={vid.url} className="aspect-video w-full object-cover" muted preload="metadata" onLoadedMetadata={(e) => { e.currentTarget.currentTime = 0.5; }} />
+                                <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20 flex items-center justify-center">
+                                  <Film className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

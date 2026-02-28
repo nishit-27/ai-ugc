@@ -275,60 +275,141 @@ export async function POST(
           targetsByKey.set(target.apiKeyIndex, list);
         }
 
-        // Download video once
-        let fileBuffer: Buffer;
-        if (job.outputUrl.startsWith('https://storage.googleapis.com')) {
-          fileBuffer = await downloadToBuffer(job.outputUrl);
-        } else {
-          const response = await fetch(job.outputUrl);
-          if (!response.ok) {
-            throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
+        // Detect carousel output
+        const isCarousel = job.outputUrl?.startsWith('carousel:');
+        let carouselUrls: string[] = [];
+        if (isCarousel) {
+          try {
+            carouselUrls = JSON.parse(job.outputUrl.slice('carousel:'.length));
+          } catch {
+            throw new Error('Failed to parse carousel URLs from outputUrl');
           }
-          const arrayBuffer = await response.arrayBuffer();
-          fileBuffer = Buffer.from(arrayBuffer);
+        }
+
+        // Download media once
+        let fileBuffer: Buffer | null = null;
+        const carouselBuffers: { buffer: Buffer; ext: string }[] = [];
+
+        if (isCarousel) {
+          for (const url of carouselUrls) {
+            let buf: Buffer;
+            if (url.startsWith('https://storage.googleapis.com')) {
+              buf = await downloadToBuffer(url);
+            } else {
+              const response = await fetch(url);
+              if (!response.ok) throw new Error(`Failed to download carousel image: ${response.status}`);
+              buf = Buffer.from(await response.arrayBuffer());
+            }
+            const ext = path.extname(url.split('?')[0]) || '.jpg';
+            carouselBuffers.push({ buffer: buf, ext });
+          }
+        } else {
+          if (job.outputUrl.startsWith('https://storage.googleapis.com')) {
+            fileBuffer = await downloadToBuffer(job.outputUrl);
+          } else {
+            const response = await fetch(job.outputUrl);
+            if (!response.ok) {
+              throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            fileBuffer = Buffer.from(arrayBuffer);
+          }
+        }
+
+        // Parse photoCoverIndex from carousel step config
+        let photoCoverIndex = 0;
+        if (isCarousel) {
+          const carouselStep = (job.pipeline || []).find((s: { type: string }) => s.type === 'carousel');
+          if (carouselStep) {
+            photoCoverIndex = (carouselStep.config as { photoCoverIndex?: number }).photoCoverIndex ?? 0;
+          }
         }
 
         // Create a separate Late post per API key group
         for (const [keyIndex, groupTargets] of targetsByKey) {
           const apiKey = getApiKeyByIndex(keyIndex);
-          const filename = path.basename(job.outputUrl.split('?')[0]);
 
-          const presignData = await lateApiRequest<PresignResponse>('/media/presign', {
-            method: 'POST',
-            body: JSON.stringify({ filename, contentType: 'video/mp4' }),
-            apiKey,
-          });
+          let mediaItems: { type: string; url: string }[];
 
-          const uploadController = new AbortController();
-          const uploadTimeout = setTimeout(() => uploadController.abort(), 120000);
+          if (isCarousel) {
+            // Upload each carousel image to Late storage
+            const uploadedImageUrls: string[] = [];
+            for (let imgIdx = 0; imgIdx < carouselBuffers.length; imgIdx++) {
+              const { buffer, ext } = carouselBuffers[imgIdx];
+              const imgFilename = `carousel-${jobId}-${imgIdx}${ext}`;
+              const contentType = ext === '.png' ? 'image/png' : 'image/jpeg';
 
-          try {
-            const uploadResponse = await fetch(presignData.uploadUrl, {
-              method: 'PUT',
-              headers: {
-                'Content-Type': 'video/mp4',
-                'Content-Length': String(fileBuffer.length),
-              },
-              body: new Uint8Array(fileBuffer),
-              signal: uploadController.signal,
+              const presignData = await lateApiRequest<PresignResponse>('/media/presign', {
+                method: 'POST',
+                body: JSON.stringify({ filename: imgFilename, contentType }),
+                apiKey,
+              });
+
+              const uploadResponse = await fetch(presignData.uploadUrl, {
+                method: 'PUT',
+                headers: { 'Content-Type': contentType, 'Content-Length': String(buffer.length) },
+                body: new Uint8Array(buffer),
+              });
+              if (!uploadResponse.ok) {
+                const errorText = await uploadResponse.text();
+                throw new Error(`Carousel image upload failed: ${uploadResponse.status} - ${errorText}`);
+              }
+              uploadedImageUrls.push(presignData.publicUrl);
+            }
+            mediaItems = uploadedImageUrls.map((url) => ({ type: 'image', url }));
+          } else {
+            const filename = path.basename(job.outputUrl.split('?')[0]);
+            const presignData = await lateApiRequest<PresignResponse>('/media/presign', {
+              method: 'POST',
+              body: JSON.stringify({ filename, contentType: 'video/mp4' }),
+              apiKey,
             });
-            clearTimeout(uploadTimeout);
-            if (!uploadResponse.ok) {
-              const errorText = await uploadResponse.text();
-              throw new Error(`File upload to Late storage failed: ${uploadResponse.status} - ${errorText}`);
+
+            const uploadController = new AbortController();
+            const uploadTimeout = setTimeout(() => uploadController.abort(), 120000);
+
+            try {
+              const uploadResponse = await fetch(presignData.uploadUrl, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'video/mp4',
+                  'Content-Length': String(fileBuffer!.length),
+                },
+                body: new Uint8Array(fileBuffer!),
+                signal: uploadController.signal,
+              });
+              clearTimeout(uploadTimeout);
+              if (!uploadResponse.ok) {
+                const errorText = await uploadResponse.text();
+                throw new Error(`File upload to Late storage failed: ${uploadResponse.status} - ${errorText}`);
+              }
+            } catch (uploadErr) {
+              clearTimeout(uploadTimeout);
+              if (uploadErr instanceof Error && uploadErr.name === 'AbortError') {
+                throw new Error('Video upload timed out.');
+              }
+              throw uploadErr;
             }
-          } catch (uploadErr) {
-            clearTimeout(uploadTimeout);
-            if (uploadErr instanceof Error && uploadErr.name === 'AbortError') {
-              throw new Error('Video upload timed out.');
-            }
-            throw uploadErr;
+            mediaItems = [{ type: 'video', url: presignData.publicUrl }];
           }
 
           await new Promise((r) => setTimeout(r, 2000));
 
           const latePlatforms = groupTargets.map((t) => {
             if (t.platform === 'tiktok') {
+              if (isCarousel) {
+                return {
+                  platform: 'tiktok',
+                  accountId: t.accountId,
+                  platformSpecificData: {
+                    privacyLevel: 'PUBLIC_TO_EVERYONE',
+                    allowComment: true,
+                    contentPreviewConfirmed: true,
+                    expressConsentGiven: true,
+                    photoCoverIndex,
+                  },
+                };
+              }
               return {
                 platform: 'tiktok',
                 accountId: t.accountId,
@@ -344,6 +425,13 @@ export async function POST(
                 },
               };
             } else if (t.platform === 'instagram') {
+              if (isCarousel) {
+                return {
+                  platform: 'instagram',
+                  accountId: t.accountId,
+                  platformSpecificData: { shareToFeed: true },
+                };
+              }
               return {
                 platform: 'instagram',
                 accountId: t.accountId,
@@ -366,7 +454,7 @@ export async function POST(
 
           const postBody: Record<string, unknown> = {
             content: caption,
-            mediaItems: [{ type: 'video', url: presignData.publicUrl }],
+            mediaItems,
             platforms: latePlatforms,
           };
 

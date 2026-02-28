@@ -1,9 +1,9 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { X, Video, Type, Music, Film, Upload, Layers, LayoutGrid, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import { X, Video, Type, Music, Film, Upload, Layers, LayoutGrid, Images, Maximize2, Minimize2, Trash2 } from 'lucide-react';
 import PreviewModal from '@/components/ui/PreviewModal';
-import type { MiniAppStep, MiniAppType, VideoGenConfig as VGC, TextOverlayConfig as TOC, BgMusicConfig as BMC, AttachVideoConfig as AVC, BatchVideoGenConfig as BVGC, ComposeConfig as CC } from '@/types';
+import type { MiniAppStep, MiniAppType, VideoGenConfig as VGC, TextOverlayConfig as TOC, BgMusicConfig as BMC, AttachVideoConfig as AVC, BatchVideoGenConfig as BVGC, ComposeConfig as CC, CarouselConfig as CRC } from '@/types';
 import VideoGenConfig from './VideoGenConfig';
 import TextOverlayConfig from './TextOverlayConfig';
 import BgMusicConfig from './BgMusicConfig';
@@ -11,6 +11,7 @@ import AttachVideoConfig from './AttachVideoConfig';
 import BatchVideoGenConfig from './BatchVideoGenConfig';
 import TextOverlayPreview from './TextOverlayPreview';
 import ComposeStepConfig from './ComposeStepConfig';
+import CarouselStepConfig from './CarouselStepConfig';
 import LibraryVideoSelector from './LibraryVideoSelector';
 import VariableTagging from './VariableTagging';
 
@@ -21,6 +22,7 @@ const nodeMeta: Record<MiniAppType, { label: string; icon: typeof Video; iconBg:
   'attach-video':     { label: 'Attach Video',     icon: Film,  iconBg: '#fff7ed', iconColor: '#ea580c' },
   'batch-video-generation': { label: 'Batch Video Gen', icon: Layers, iconBg: '#fef3c7', iconColor: '#d97706' },
   'compose':               { label: 'Compose',         icon: LayoutGrid, iconBg: '#f0fdf4', iconColor: '#16a34a' },
+  'carousel':              { label: 'Carousel',        icon: Images,     iconBg: '#fdf2f8', iconColor: '#ec4899' },
 };
 
 type SourceConfig = {
@@ -283,7 +285,8 @@ export default function NodeConfigPanel({
           {step.type === 'batch-video-generation' && <BatchVideoGenConfig key={step.id} config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={resolvedSourceVideoUrl} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
           {step.type === 'bg-music' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><BgMusicConfig config={step.config as BMC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
           {step.type === 'attach-video' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><AttachVideoConfig config={step.config as AVC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
-          {step.type === 'compose' && <ComposeStepConfig config={step.config as CC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} isExpanded={isExpanded} masterModels={masterModels} />}
+          {step.type === 'compose' && <ComposeStepConfig config={step.config as CC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} isExpanded={isExpanded} masterModels={masterModels} libraryVideos={sourceConfig.videoSource === 'library' ? sourceConfig.libraryVideos : undefined} />}
+          {step.type === 'carousel' && <CarouselStepConfig config={step.config as CRC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
         </div>
       </div>
     );

@@ -10,6 +10,7 @@ const STEP_LABELS: Record<string, string> = {
   'bg-music': 'Music',
   'attach-video': 'Attach',
   'compose': 'Compose',
+  'carousel': 'Carousel',
 };
 
 export default function MasterJobCard({
@@ -50,6 +51,8 @@ export default function MasterJobCard({
   const isCompleted = job.status === 'completed';
   const isFailed = job.status === 'failed';
   const isProcessing = job.status === 'processing' || job.status === 'queued';
+  const isCarouselOutput = job.outputUrl?.startsWith('carousel:');
+  const carouselUrls = isCarouselOutput ? (() => { try { return JSON.parse(job.outputUrl!.slice('carousel:'.length)) as string[]; } catch { return []; } })() : [];
   const hasOutput = !!job.outputUrl || !!job.signedUrl;
   const canAct = isCompleted && !job.postStatus;
   const canRepost = isCompleted && job.postStatus === 'posted';
@@ -128,7 +131,19 @@ export default function MasterJobCard({
         className="relative aspect-[9/16] w-full cursor-pointer bg-[var(--background)]"
         onClick={onClick}
       >
-        {hasOutput && isCompleted ? (
+        {hasOutput && isCompleted && isCarouselOutput && carouselUrls.length > 0 ? (
+          <div className="relative h-full w-full">
+            <img
+              src={carouselUrls[0]}
+              alt="Carousel"
+              className="h-full w-full object-cover"
+            />
+            <div className="absolute top-2 right-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              {carouselUrls.length}
+            </div>
+          </div>
+        ) : hasOutput && isCompleted ? (
           <video
             src={job.signedUrl || job.outputUrl}
             className="h-full w-full object-cover"

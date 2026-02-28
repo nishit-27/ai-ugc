@@ -9,7 +9,7 @@ import PipelineBuilder from '@/components/templates/PipelineBuilder';
 import NodeConfigPanel from '@/components/templates/NodeConfigPanel';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
-import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig, ComposeConfig } from '@/types';
+import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig, ComposeConfig, CarouselConfig } from '@/types';
 const DRAFT_KEY = 'ai-ugc-pipeline-draft';
 type PipelineDraft = {
   steps: MiniAppStep[];
@@ -209,7 +209,8 @@ export default function TemplatesPage() {
     const needsInputVideo = !(
       (firstStep.type === 'video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation') ||
       (firstStep.type === 'batch-video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation') ||
-      firstStep.type === 'compose'
+      firstStep.type === 'compose' ||
+      firstStep.type === 'carousel'
     );
     if (needsInputVideo) {
       if (videoSource === 'tiktok' && !tiktokUrl) {
@@ -254,6 +255,16 @@ export default function TemplatesPage() {
         case 'compose': {
           const c = s.config as ComposeConfig;
           if (!c.layers || c.layers.length === 0) errors.set(s.id, 'Add at least one layer');
+          break;
+        }
+        case 'carousel': {
+          const c = s.config as CarouselConfig;
+          if (!c.images || c.images.length === 0) errors.set(s.id, 'Select at least one image');
+          else {
+            const platform = c.targetPlatform || 'instagram';
+            const limit = platform === 'tiktok' ? 35 : 10;
+            if (c.images.length > limit) errors.set(s.id, `Max ${limit} images for ${platform}`);
+          }
           break;
         }
       }

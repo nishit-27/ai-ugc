@@ -1,7 +1,7 @@
 'use client';
 
-import { Video, Type, Music, Film, Layers, LayoutGrid } from 'lucide-react';
-import type { MiniAppType, MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig, ComposeConfig } from '@/types';
+import { Video, Type, Music, Film, Layers, LayoutGrid, Images } from 'lucide-react';
+import type { MiniAppType, MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig, ComposeConfig, CarouselConfig } from '@/types';
 
 const miniApps: {
   type: MiniAppType;
@@ -17,9 +17,10 @@ const miniApps: {
   { type: 'attach-video',     label: 'Attach Video',     description: 'Prepend or append a clip',       icon: Film,  iconBg: '#fff7ed', iconColor: '#ea580c' },
   { type: 'batch-video-generation', label: 'Batch Video Gen', description: 'Generate videos from multiple images', icon: Layers, iconBg: '#fef3c7', iconColor: '#d97706' },
   { type: 'compose', label: 'Compose', description: 'Arrange multiple media in one frame', icon: LayoutGrid, iconBg: '#f0fdf4', iconColor: '#16a34a' },
+  { type: 'carousel', label: 'Carousel', description: 'Multi-image post for Instagram/TikTok', icon: Images, iconBg: '#fdf2f8', iconColor: '#ec4899' },
 ];
 
-function createDefaultConfig(type: MiniAppType): VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig | BatchVideoGenConfig | ComposeConfig {
+function createDefaultConfig(type: MiniAppType): VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig | BatchVideoGenConfig | ComposeConfig | CarouselConfig {
   switch (type) {
     case 'video-generation': return { mode: 'motion-control' } as VideoGenConfig;
     case 'batch-video-generation': return { mode: 'motion-control', images: [] } as BatchVideoGenConfig;
@@ -27,6 +28,7 @@ function createDefaultConfig(type: MiniAppType): VideoGenConfig | TextOverlayCon
     case 'bg-music':         return { volume: 30 } as BgMusicConfig;
     case 'attach-video':     return { videoUrl: '', position: 'after' } as AttachVideoConfig;
     case 'compose':          return { canvasWidth: 1080, canvasHeight: 1920, aspectRatio: '9:16', preset: null, backgroundColor: '#000000', layers: [] } as ComposeConfig;
+    case 'carousel':         return { images: [], targetPlatform: 'instagram', maxImages: 10 } as CarouselConfig;
   }
 }
 

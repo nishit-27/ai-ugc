@@ -15,23 +15,29 @@ import type { ComposeLayer } from '@/types';
 type ComposeLayerPanelProps = {
   layers: ComposeLayer[];
   selectedLayerId: string | null;
+  hiddenLayerIds: Set<string>;
   onSelect: (id: string | null) => void;
   onRemove: (id: string) => void;
   onReorder: (fromIdx: number, toIdx: number) => void;
+  onToggleVisibility: (id: string) => void;
 };
 
 function SortableLayerRow({
   layer,
   index,
   isSelected,
+  isHidden,
   onSelect,
   onRemove,
+  onToggleVisibility,
 }: {
   layer: ComposeLayer;
   index: number;
   isSelected: boolean;
+  isHidden: boolean;
   onSelect: () => void;
   onRemove: () => void;
+  onToggleVisibility: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: layer.id });
@@ -52,7 +58,7 @@ function SortableLayerRow({
         isSelected
           ? 'border-[var(--primary)] bg-[var(--accent)]'
           : 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--accent)]'
-      }`}
+      } ${isHidden ? 'opacity-40' : ''}`}
     >
       <button
         {...attributes}
@@ -81,7 +87,16 @@ function SortableLayerRow({
       </div>
 
       <button
+        onClick={(e) => { e.stopPropagation(); onToggleVisibility(); }}
+        title={isHidden ? 'Show Layer' : 'Hide Layer'}
+        className="shrink-0 rounded p-1 text-[var(--text-muted)] opacity-0 transition-all hover:text-[var(--text)] group-hover:opacity-100"
+      >
+        {isHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+      </button>
+
+      <button
         onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        title="Remove Layer (Delete)"
         className="shrink-0 rounded p-1 text-[var(--text-muted)] opacity-0 transition-all hover:text-red-500 group-hover:opacity-100"
       >
         <Trash2 className="h-3 w-3" />
@@ -93,9 +108,11 @@ function SortableLayerRow({
 export default function ComposeLayerPanel({
   layers,
   selectedLayerId,
+  hiddenLayerIds,
   onSelect,
   onRemove,
   onReorder,
+  onToggleVisibility,
 }: ComposeLayerPanelProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -134,8 +151,10 @@ export default function ComposeLayerPanel({
                   layer={layer}
                   index={i}
                   isSelected={selectedLayerId === layer.id}
+                  isHidden={hiddenLayerIds.has(layer.id)}
                   onSelect={() => onSelect(layer.id)}
                   onRemove={() => onRemove(layer.id)}
+                  onToggleVisibility={() => onToggleVisibility(layer.id)}
                 />
               ))}
             </div>

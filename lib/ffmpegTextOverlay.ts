@@ -268,7 +268,7 @@ async function renderPangoText(
  * We scale everything proportionally to the actual video resolution so
  * the output matches the preview exactly.
  */
-async function renderTextOverlayPng(
+export async function renderTextOverlayPng(
   videoWidth: number,
   videoHeight: number,
   config: TextOverlayConfig,

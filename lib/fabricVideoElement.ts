@@ -13,8 +13,11 @@ export function createFabricVideo(
 ): Promise<FabricVideoResult> {
   return new Promise((resolve, reject) => {
     const videoEl = document.createElement('video');
+    // Don't set crossOrigin — compose canvas is preview-only (export is server-side FFmpeg).
+    // Setting crossOrigin='anonymous' causes CORS-blocked pixel reads on R2/GCS URLs,
+    // resulting in black frames on the Fabric.js canvas.
     videoEl.muted = true;
-    videoEl.loop = true;
+    videoEl.loop = false;
     videoEl.playsInline = true;
     videoEl.preload = 'auto';
 
@@ -28,16 +31,27 @@ export function createFabricVideo(
       const h = videoEl.videoHeight || 360;
       videoEl.width = w;
       videoEl.height = h;
-      const fabricObj = new FabricImage(videoEl, {
-        left: opts.left,
-        top: opts.top,
-        width: w,
-        height: h,
-        scaleX: opts.scaleX,
-        scaleY: opts.scaleY,
-        objectCaching: false,
-      });
-      resolve({ fabricObj, videoEl });
+
+      // Seek to 0.1s to avoid potential black first frames (e.g. fade-in)
+      const seekAndResolve = () => {
+        const fabricObj = new FabricImage(videoEl, {
+          left: opts.left,
+          top: opts.top,
+          width: w,
+          height: h,
+          scaleX: opts.scaleX,
+          scaleY: opts.scaleY,
+          objectCaching: false,
+        });
+        resolve({ fabricObj, videoEl });
+      };
+
+      if (videoEl.duration > 0.2) {
+        videoEl.currentTime = 0.1;
+        videoEl.addEventListener('seeked', seekAndResolve, { once: true });
+      } else {
+        seekAndResolve();
+      }
     }, { once: true });
 
     videoEl.addEventListener('error', () => {
@@ -56,6 +70,7 @@ export function createFabricImage(
 ): Promise<FabricImage> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous';
 
     const timeout = setTimeout(() => {
       reject(new Error(`Image load timeout: ${url}`));

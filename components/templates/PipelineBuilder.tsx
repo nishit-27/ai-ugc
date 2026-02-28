@@ -11,11 +11,11 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
   GripVertical, Plus, Video, Subtitles, Music, Film, Upload, Play,
-  ChevronRight, Eye, EyeOff, Trash2, ZoomIn, ZoomOut, Maximize2, Layers, LayoutGrid,
+  ChevronRight, Eye, EyeOff, Trash2, ZoomIn, ZoomOut, Maximize2, Layers, LayoutGrid, Images,
 } from 'lucide-react';
 import type {
   MiniAppStep, MiniAppType,
-  VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig, ComposeConfig,
+  VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, BatchVideoGenConfig, ComposeConfig, CarouselConfig,
 } from '@/types';
 import MiniAppPicker from './MiniAppPicker';
 import Modal from '@/components/ui/Modal';
@@ -35,6 +35,7 @@ const nodeMeta: Record<MiniAppType, {
   'attach-video':     { label: 'Attach Video',     icon: Film,   iconBg: 'rgba(232, 114, 154, 0.10)',    iconColor: '#e8729a' },
   'batch-video-generation': { label: 'Batch Video Gen', icon: Layers, iconBg: 'rgba(217, 119, 6, 0.10)', iconColor: '#d97706' },
   'compose': { label: 'Compose', icon: LayoutGrid, iconBg: 'rgba(22, 163, 106, 0.10)', iconColor: '#16a34a' },
+  'carousel': { label: 'Carousel', icon: Images, iconBg: 'rgba(236, 72, 153, 0.10)', iconColor: '#ec4899' },
 };
 function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
@@ -75,6 +76,11 @@ function getStepSummary(step: MiniAppStep): string {
       const presetLabel = c.preset ? c.preset.replace(/-/g, ' ') : 'Custom';
       return `${c.layers.length} layer${c.layers.length !== 1 ? 's' : ''} \u00b7 ${presetLabel}`;
     }
+    case 'carousel': {
+      const c = step.config as CarouselConfig;
+      const plat = c.targetPlatform || 'instagram';
+      return `${c.images.length} image${c.images.length !== 1 ? 's' : ''} \u00b7 ${plat}`;
+    }
     default: return '';
   }
 }
@@ -86,6 +92,7 @@ function isStepConfigured(step: MiniAppStep): boolean {
     case 'video-generation': return !!(step.config as VideoGenConfig).imageId || !!(step.config as VideoGenConfig).imageUrl;
     case 'batch-video-generation': return (step.config as BatchVideoGenConfig).images.length > 0;
     case 'compose':              return (step.config as ComposeConfig).layers.length > 0;
+    case 'carousel':             return (step.config as CarouselConfig).images.length > 0;
     default: return false;
   }
 }

@@ -10,7 +10,8 @@ import { composeMedia } from '@/lib/ffmpegCompose';
 import { config, getFalWebhookUrl } from '@/lib/config';
 import { getVideoDownloadUrl } from '@/lib/processJob';
 import { uploadBuffer } from '@/lib/upload-via-presigned.js';
-import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, ComposeConfig, ComposeLayer } from '@/types';
+import { addTextOverlayToImage } from '@/lib/imageTextOverlay';
+import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, ComposeConfig, CarouselConfig } from '@/types';
 
 /**
  * Semaphore for limiting concurrent local ffmpeg/sharp operations.
@@ -113,7 +114,8 @@ export async function processStep(
   stepIndex: number,
   stepOutputs: Map<string, string>,
   inlineMusic?: { config: BgMusicConfig; trackPath: string },
-): Promise<string> {
+  carouselImagePaths?: string[] | null,
+): Promise<string | string[]> {
   const tempDir = getTempDir();
   switch (step.type) {
     case 'video-generation': {
@@ -226,6 +228,18 @@ export async function processStep(
       await localProcessingSemaphore.acquire();
       try {
         const cfg = step.config as TextOverlayConfig;
+        // Carousel mode: apply text overlay to each image
+        if (carouselImagePaths && carouselImagePaths.length > 0) {
+          const outputPaths: string[] = [];
+          for (let imgIdx = 0; imgIdx < carouselImagePaths.length; imgIdx++) {
+            const imgPath = carouselImagePaths[imgIdx];
+            const ext = path.extname(imgPath) || '.jpg';
+            const outPath = path.join(tempDir, `tpl-step-${stepIndex}-carousel-${imgIdx}-${jobId}-${Date.now()}${ext}`);
+            await addTextOverlayToImage(imgPath, outPath, cfg);
+            outputPaths.push(outPath);
+          }
+          return outputPaths;
+        }
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
         await addTextOverlay(currentVideoPath, outputPath, cfg);
         return outputPath;
@@ -344,6 +358,28 @@ export async function processStep(
         localProcessingSemaphore.release();
       }
     }
+    case 'carousel': {
+      await localProcessingSemaphore.acquire();
+      try {
+        const cfg = step.config as CarouselConfig;
+        if (!cfg.images || cfg.images.length === 0) {
+          throw new Error('Carousel step has no images');
+        }
+        const localPaths: string[] = [];
+        for (let imgIdx = 0; imgIdx < cfg.images.length; imgIdx++) {
+          const entry = cfg.images[imgIdx];
+          const url = entry.imageUrl;
+          if (!url) throw new Error(`Carousel image ${imgIdx} has no URL`);
+          const ext = path.extname(url.split('?')[0]) || '.jpg';
+          const localPath = path.join(tempDir, `tpl-carousel-${stepIndex}-${imgIdx}-${jobId}-${Date.now()}${ext}`);
+          await downloadToLocal(url, localPath);
+          localPaths.push(localPath);
+        }
+        return localPaths;
+      } finally {
+        localProcessingSemaphore.release();
+      }
+    }
     default:
       throw new Error(`Unknown mini-app type: ${step.type}`);
   }
@@ -384,6 +420,8 @@ export async function processTemplateJob(jobId: string): Promise<void> {
       currentVideoPath = '';
     } else if (firstStep?.type === 'compose') {
       currentVideoPath = ''; // compose step has its own inputs
+    } else if (firstStep?.type === 'carousel') {
+      currentVideoPath = ''; // carousel step collects its own images
     } else if (job.videoSource === 'upload' && job.videoUrl) {
       await updateTemplateJob(jobId, { step: 'Downloading video...' });
       currentVideoPath = path.join(tempDir, `tpl-input-${jobId}-${Date.now()}.mp4`);
@@ -420,7 +458,8 @@ export async function processTemplateJob(jobId: string): Promise<void> {
       }
     }
     const stepOutputs = new Map<string, string>();
-    const stepResults: { stepId: string; type: string; label: string; outputUrl: string }[] = [];
+    const stepResults: { stepId: string; type: string; label: string; outputUrl: string; outputUrls?: string[]; isCarousel?: boolean }[] = [];
+    let carouselImagePaths: string[] | null = null;
     for (let i = 0; i < enabledSteps.length; i++) {
       const step = enabledSteps[i];
       const stepLabel = getStepLabel(step);
@@ -432,33 +471,66 @@ export async function processTemplateJob(jobId: string): Promise<void> {
         step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel}`,
       });
       const inlineMusic = inlineMusicMap.get(step.id);
-      let newVideoPath = await processStep(step, currentVideoPath, jobId, i, stepOutputs, inlineMusic);
-      if (inlineMusic && step.type !== 'attach-video') {
-        const musicedPath = await applyInlineMusic(newVideoPath, inlineMusic, i, jobId);
-        try { fs.unlinkSync(newVideoPath); } catch {}
-        newVideoPath = musicedPath;
-        tempFiles.push(musicedPath);
+      const result = await processStep(step, currentVideoPath, jobId, i, stepOutputs, inlineMusic, carouselImagePaths);
+
+      if (Array.isArray(result)) {
+        // Carousel result: array of local image paths
+        // Clean up previous carousel paths
+        if (carouselImagePaths) {
+          for (const p of carouselImagePaths) { try { fs.unlinkSync(p); } catch {} }
+        }
+        carouselImagePaths = result;
+        tempFiles.push(...result);
+
+        // Upload all images and store as carousel step result
+        const uploadedUrls: string[] = [];
+        for (let imgIdx = 0; imgIdx < result.length; imgIdx++) {
+          const ext = path.extname(result[imgIdx]) || '.jpg';
+          const { url } = await uploadVideoFromPath(result[imgIdx], `template-${jobId}-step-${i}-img-${imgIdx}${ext}`);
+          uploadedUrls.push(url);
+        }
+        stepResults.push({
+          stepId: step.id, type: step.type, label: stepLabel,
+          outputUrl: uploadedUrls[0],
+          outputUrls: uploadedUrls,
+          isCarousel: true,
+        });
+      } else {
+        let newVideoPath = result;
+        if (inlineMusic && step.type !== 'attach-video') {
+          const musicedPath = await applyInlineMusic(newVideoPath, inlineMusic, i, jobId);
+          try { fs.unlinkSync(newVideoPath); } catch {}
+          newVideoPath = musicedPath;
+          tempFiles.push(musicedPath);
+        }
+        stepOutputs.set(step.id, newVideoPath);
+        const { url: stepUrl } = await uploadVideoFromPath(
+          newVideoPath,
+          `template-${jobId}-step-${i}.mp4`
+        );
+        stepResults.push({ stepId: step.id, type: step.type, label: stepLabel, outputUrl: stepUrl });
+        if (currentVideoPath && i > 0) {
+          try { fs.unlinkSync(currentVideoPath); } catch {}
+        }
+        currentVideoPath = newVideoPath;
+        tempFiles.push(newVideoPath);
       }
-      stepOutputs.set(step.id, newVideoPath);
-      const { url: stepUrl } = await uploadVideoFromPath(
-        newVideoPath,
-        `template-${jobId}-step-${i}.mp4`
-      );
-      stepResults.push({ stepId: step.id, type: step.type, label: stepLabel, outputUrl: stepUrl });
       await updateTemplateJob(jobId, {
         currentStep: i + 1,
         step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel} — done`,
         stepResults,
       });
-      if (currentVideoPath && i > 0) {
-        try { fs.unlinkSync(currentVideoPath); } catch {}
-      }
-      currentVideoPath = newVideoPath;
-      tempFiles.push(newVideoPath);
     }
-    const finalUrl = stepResults.length > 0
-      ? stepResults[stepResults.length - 1].outputUrl
-      : (await uploadVideoFromPath(currentVideoPath, `template-${jobId}.mp4`)).url;
+    // Determine final output URL
+    const lastResult = stepResults[stepResults.length - 1];
+    let finalUrl: string;
+    if (lastResult?.isCarousel && lastResult.outputUrls) {
+      finalUrl = `carousel:${JSON.stringify(lastResult.outputUrls)}`;
+    } else if (stepResults.length > 0) {
+      finalUrl = lastResult.outputUrl;
+    } else {
+      finalUrl = (await uploadVideoFromPath(currentVideoPath, `template-${jobId}.mp4`)).url;
+    }
     await updateTemplateJob(jobId, {
       status: 'completed',
       step: 'Done!',
@@ -512,6 +584,8 @@ export function getStepLabel(step: MiniAppStep): string {
       return 'Attaching video clip';
     case 'compose':
       return 'Composing media layers';
+    case 'carousel':
+      return 'Collecting carousel images';
     default:
       return 'Processing';
   }
@@ -545,13 +619,18 @@ export async function processPipelineBatch(
         await updateTemplateJob(jobId, { videoUrl: stableUrl, videoSource: 'upload' });
       }
     }
-    await Promise.allSettled(
-      childJobIds.map((id) =>
-        processTemplateJob(id).catch((err) => {
-          console.error(`[PipelineBatch] Child job ${id} failed:`, err);
-        })
-      )
-    );
+    const CHUNK_SIZE = 5;
+    for (let i = 0; i < childJobIds.length; i += CHUNK_SIZE) {
+      const chunk = childJobIds.slice(i, i + CHUNK_SIZE);
+      console.log(`[PipelineBatch] Processing chunk ${Math.floor(i / CHUNK_SIZE) + 1}/${Math.ceil(childJobIds.length / CHUNK_SIZE)} (jobs ${i + 1}-${i + chunk.length} of ${childJobIds.length})`);
+      await Promise.allSettled(
+        chunk.map((id) =>
+          processTemplateJob(id).catch((err) => {
+            console.error(`[PipelineBatch] Child job ${id} failed:`, err);
+          })
+        )
+      );
+    }
   } finally {
     if (sharedVideoPath) {
       try { fs.unlinkSync(sharedVideoPath); } catch {}

@@ -12,6 +12,8 @@ type ComposeCanvasProps = {
   preset: ComposePresetId | null;
   layers: ComposeLayer[];
   onSlotClick?: (slotIndex: number) => void;
+  pendingSlotIndex?: number | null;
+  zoom?: number; // 1 = 100%
 };
 
 export default function ComposeCanvas({
@@ -21,6 +23,8 @@ export default function ComposeCanvas({
   preset,
   layers,
   onSlotClick,
+  pendingSlotIndex,
+  zoom = 1,
 }: ComposeCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,11 +33,11 @@ export default function ComposeCanvas({
   const getContainerWidth = useCallback(() => {
     if (!containerRef.current) return 400;
     const rect = containerRef.current.getBoundingClientRect();
-    const maxW = rect.width - 32;
-    const maxH = rect.height - 32;
+    const maxW = Math.max(rect.width - 32, 100);
+    const maxH = Math.max(rect.height - 32, 100);
     const fitByWidth = maxW;
     const fitByHeight = maxH * aspectRatio;
-    return Math.min(fitByWidth, fitByHeight, 800);
+    return Math.max(100, Math.min(fitByWidth, fitByHeight, 800));
   }, [aspectRatio]);
 
   useEffect(() => {
@@ -57,18 +61,27 @@ export default function ComposeCanvas({
   // Determine empty preset slots
   const presetDef = preset ? PRESETS[preset] : null;
   const presetSlots = presetDef ? presetDef.getPositions() : [];
-  const emptySlots = presetSlots.slice(layers.length); // slots beyond current layers
+  const emptySlots = presetSlots.slice(layers.length);
   const displayW = getContainerWidth();
   const displayH = displayW / aspectRatio;
 
   return (
     <div
       ref={containerRef}
-      className="flex h-full w-full items-center justify-center bg-[var(--background)] p-4"
+      className="relative flex h-full w-full items-center justify-center overflow-auto bg-[var(--muted)] p-4"
+      style={{
+        backgroundImage:
+          'radial-gradient(circle, var(--border) 1px, transparent 1px)',
+        backgroundSize: '20px 20px',
+      }}
     >
       <div
-        className="relative overflow-hidden rounded-lg shadow-lg"
-        style={{ backgroundColor: '#000' }}
+        className="relative overflow-hidden rounded-lg shadow-2xl ring-1 ring-[var(--border)]"
+        style={{
+          transform: `scale(${zoom})`,
+          transformOrigin: 'center center',
+          transition: 'transform 0.15s ease-out',
+        }}
       >
         <canvas ref={canvasRef} />
 
@@ -79,6 +92,7 @@ export default function ComposeCanvas({
           >
             {emptySlots.map((slot, i) => {
               const globalIndex = layers.length + i;
+              const isSelected = pendingSlotIndex === globalIndex;
               return (
                 <button
                   key={i}
@@ -86,21 +100,31 @@ export default function ComposeCanvas({
                     e.stopPropagation();
                     onSlotClick?.(globalIndex);
                   }}
-                  className="pointer-events-auto absolute flex flex-col items-center justify-center gap-1 transition-colors hover:bg-white/10"
+                  className={`pointer-events-auto absolute flex flex-col items-center justify-center gap-1 transition-all ${
+                    isSelected
+                      ? 'bg-[var(--primary)]/15'
+                      : 'hover:bg-[var(--accent)]'
+                  }`}
                   style={{
                     left: `${slot.x * 100}%`,
                     top: `${slot.y * 100}%`,
                     width: `${slot.width * 100}%`,
                     height: `${slot.height * 100}%`,
-                    border: '2px dashed rgba(255,255,255,0.35)',
+                    border: isSelected
+                      ? '2px solid var(--primary)'
+                      : '2px dashed var(--text-muted)',
                     borderRadius: 8,
                   }}
                 >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
-                    <Plus className="h-4 w-4 text-white/60" />
+                  <div className={`flex h-8 w-8 items-center justify-center rounded-full backdrop-blur-sm ${
+                    isSelected ? 'bg-[var(--primary)]/30' : 'bg-[var(--accent)]'
+                  }`}>
+                    <Plus className={`h-4 w-4 ${isSelected ? 'text-[var(--primary)]' : 'text-[var(--text-muted)]'}`} />
                   </div>
-                  <span className="text-[10px] font-medium text-white/50">
-                    Slot {globalIndex + 1}
+                  <span className={`text-[10px] font-medium ${
+                    isSelected ? 'text-[var(--primary)]' : 'text-[var(--text-muted)]'
+                  }`}>
+                    {isSelected ? 'Add media from panel' : `Slot ${globalIndex + 1}`}
                   </span>
                 </button>
               );
@@ -110,10 +134,10 @@ export default function ComposeCanvas({
 
         {!preset && layers.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
-              <ImageIcon className="h-6 w-6 text-white/40" />
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent)] backdrop-blur-sm">
+              <ImageIcon className="h-6 w-6 text-[var(--text-muted)]" />
             </div>
-            <p className="text-xs font-medium text-white/40">Choose a preset or add media</p>
+            <p className="text-xs font-medium text-[var(--text-muted)]">Choose a preset or add media</p>
           </div>
         )}
       </div>

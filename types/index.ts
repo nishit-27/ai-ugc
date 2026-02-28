@@ -103,7 +103,7 @@ export type Batch = {
 
 // Templates / Pipeline types
 
-export type MiniAppType = 'video-generation' | 'batch-video-generation' | 'text-overlay' | 'bg-music' | 'attach-video' | 'compose';
+export type MiniAppType = 'video-generation' | 'batch-video-generation' | 'text-overlay' | 'bg-music' | 'attach-video' | 'compose' | 'carousel';
 
 export type VideoGenMode = 'motion-control' | 'subtle-animation';
 
@@ -228,6 +228,7 @@ export type ComposeLayer = {
   borderRadius?: number;
   opacity?: number;
   trim?: { startSec: number; endSec: number };
+  audioDetached?: boolean;
 };
 
 export type ComposePresetId = '2up-vertical' | 'side-by-side' | 'pip'
@@ -242,10 +243,39 @@ export type ComposeConfig = {
   layers: ComposeLayer[];
 };
 
+export type CarouselImageEntry = {
+  imageId?: string;
+  imageUrl?: string;
+  filename?: string;
+  originalImageUrl?: string;
+  originalImageId?: string;
+  generatedOptions?: string[];
+};
+
+export type CarouselConfig = {
+  images: CarouselImageEntry[];
+  modelId?: string;
+  maxImages?: number;
+  targetPlatform?: 'instagram' | 'tiktok' | 'both';
+  imageAspectRatio?: string;
+  photoCoverIndex?: number;
+  // Generate mode fields
+  generatePrompt?: string;
+  generateCount?: number;
+  generateProvider?: 'gemini' | 'fal' | 'gpt-image';
+  generateResolution?: '1K' | '2K' | '4K';
+  sceneImageUrls?: string[];
+  // First frame fields (kept for compatibility)
+  firstFrameEnabled?: boolean;
+  extractedFrameUrl?: string;
+  firstFrameResolution?: '1K' | '2K' | '4K';
+  firstFrameProvider?: 'gemini' | 'fal' | 'gpt-image';
+};
+
 export type MiniAppStep = {
   id: string;
   type: MiniAppType;
-  config: VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig | BatchVideoGenConfig | ComposeConfig;
+  config: VideoGenConfig | TextOverlayConfig | BgMusicConfig | AttachVideoConfig | BatchVideoGenConfig | ComposeConfig | CarouselConfig;
   enabled: boolean;
 };
 
@@ -254,6 +284,8 @@ export type StepResult = {
   type: MiniAppType;
   label: string;
   outputUrl: string;
+  outputUrls?: string[];
+  isCarousel?: boolean;
   signedUrl?: string;
 };
 

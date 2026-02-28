@@ -1,15 +1,26 @@
 'use client';
 
+import VideoTrimmer from '@/components/templates/shared/VideoTrimmer';
 import type { ComposeLayer, ComposeLayerFit } from '@/types';
 
 type ComposeLayerConfigProps = {
   layer: ComposeLayer;
   onUpdate: (updates: Partial<ComposeLayer>) => void;
+  videoDuration?: number; // actual duration in seconds
+  onSeek?: (timeSec: number) => void;
 };
 
-export default function ComposeLayerConfig({ layer, onUpdate }: ComposeLayerConfigProps) {
+export default function ComposeLayerConfig({ layer, onUpdate, videoDuration, onSeek }: ComposeLayerConfigProps) {
   const fitOptions: ComposeLayerFit[] = ['cover', 'contain', 'stretch'];
-  const trimDuration = layer.trim?.endSec ?? 0;
+  const maxDuration = videoDuration ?? 60;
+  const trimStart = layer.trim?.startSec ?? 0;
+  const trimEnd = layer.trim?.endSec ?? maxDuration;
+
+  const handleTrimChange = (start: number, end: number) => {
+    onUpdate({ trim: { startSec: start, endSec: end } });
+    // Seek canvas video to trim start when changing
+    onSeek?.(start);
+  };
 
   return (
     <div className="space-y-4">
@@ -124,33 +135,14 @@ export default function ComposeLayerConfig({ layer, onUpdate }: ComposeLayerConf
         />
       </div>
 
-      {layer.type === 'video' && (
-        <div>
-          <label className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]">
-            <span>Duration</span>
-            <span className="text-[10px]">{trimDuration === 0 ? 'Full' : `${trimDuration}s`}</span>
-          </label>
-          <input
-            type="range"
-            min={0}
-            max={60}
-            step={1}
-            value={trimDuration}
-            onChange={(e) => {
-              const val = Number(e.target.value);
-              if (val === 0) {
-                onUpdate({ trim: undefined });
-              } else {
-                onUpdate({ trim: { startSec: 0, endSec: val } });
-              }
-            }}
-            className="w-full"
-          />
-          <div className="mt-1 flex justify-between text-[10px] text-[var(--text-muted)]">
-            <span>Full</span>
-            <span>60s</span>
-          </div>
-        </div>
+      {layer.type === 'video' && videoDuration != null && videoDuration > 0 && (
+        <VideoTrimmer
+          videoUrl={layer.source.url}
+          duration={videoDuration}
+          trimStart={trimStart}
+          trimEnd={trimEnd}
+          onChange={handleTrimChange}
+        />
       )}
     </div>
   );

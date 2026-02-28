@@ -150,9 +150,10 @@ async function handleTemplateJob(
           step: `Step ${globalIdx + 1}/${enabledSteps.length}: ${label}`,
         });
 
-        const newVideoPath = await processStep(step, currentVideoPath, job.id, globalIdx, stepOutputs);
+        const result = await processStep(step, currentVideoPath, job.id, globalIdx, stepOutputs);
+        const newVideoPath = Array.isArray(result) ? result[0] : result;
         stepOutputs.set(step.id, newVideoPath);
-        tempFiles.push(newVideoPath);
+        if (Array.isArray(result)) tempFiles.push(...result); else tempFiles.push(newVideoPath);
 
         const { url: newStepUrl } = await uploadVideoFromPath(newVideoPath, `template-${job.id}-step-${globalIdx}.mp4`);
         stepResults.push({ stepId: step.id, type: step.type, label, outputUrl: newStepUrl });
