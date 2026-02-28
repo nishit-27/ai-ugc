@@ -6,9 +6,10 @@ import { useGeneratedImages } from '@/hooks/useGeneratedImages';
 import PreviewModal from '@/components/ui/PreviewModal';
 import {
   Upload, X, GripVertical, Check, ImageIcon, Loader2, ChevronDown,
-  Sparkles, RefreshCw, Expand,
+  Sparkles, RefreshCw, Expand, Link2,
 } from 'lucide-react';
 import type { CarouselImageEntry, CarouselConfig as CC, ModelImage, GeneratedImage } from '@/types';
+import type { MasterModel } from '@/components/templates/NodeConfigPanel';
 
 type ImageSource = 'model' | 'upload' | 'generate';
 
@@ -18,7 +19,8 @@ const PLATFORM_LIMITS: Record<string, number> = {
   both: 10,
 };
 
-type SceneImage = { url: string; filename: string };
+type SceneAction = 'generate' | 'use-as-is' | 'skip';
+type SceneImage = { url: string; filename: string; action: SceneAction };
 type GenResult = { id?: string; url: string; gcsUrl: string };
 
 function ordinal(n: number): string {
@@ -32,12 +34,14 @@ export default function CarouselStepConfig({
   onChange,
   stepId,
   masterMode,
+  masterModels,
   isExpanded,
 }: {
   config: CC;
   onChange: (c: CC) => void;
   stepId?: string;
   masterMode?: boolean;
+  masterModels?: MasterModel[];
   isExpanded?: boolean;
 }) {
   const { models, modelImages, imagesLoading, loadModelImages } = useModels();
@@ -56,7 +60,11 @@ export default function CarouselStepConfig({
 
   // Generate mode state
   const [sceneImages, setSceneImages] = useState<SceneImage[]>(() =>
-    (config.sceneImageUrls || []).map((url, i) => ({ url, filename: `Scene ${i + 1}` })),
+    (config.sceneImageUrls || []).map((url, i) => ({
+      url,
+      filename: `Scene ${i + 1}`,
+      action: (config.sceneActions?.[i] || 'generate') as SceneAction,
+    })),
   );
   const [isUploadingScene, setIsUploadingScene] = useState(false);
   const [genProvider, setGenProvider] = useState(config.generateProvider || 'gpt-image');
@@ -67,6 +75,17 @@ export default function CarouselStepConfig({
   const [generatingScenes, setGeneratingScenes] = useState<Set<number>>(new Set());
   const [genResults, setGenResults] = useState<Map<number, GenResult[]>>(new Map());
   const [genError, setGenError] = useState<string | null>(null);
+
+  // URL paste state
+  const [carouselUrl, setCarouselUrl] = useState('');
+  const [isLoadingUrl, setIsLoadingUrl] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
+
+  // Master mode per-model state
+  const [masterGeneratingIds, setMasterGeneratingIds] = useState<Set<string>>(new Set());
+  const [masterPerModelResults, setMasterPerModelResults] = useState<Record<string, GenResult[]>>({});
+  const [isMasterGeneratingAll, setIsMasterGeneratingAll] = useState(false);
+  const [masterGenProgress, setMasterGenProgress] = useState({ done: 0, total: 0 });
 
   // Library browser
   const {
@@ -185,7 +204,7 @@ export default function CarouselStepConfig({
       try {
         const res = await fetch('/api/upload-image', { method: 'POST', body: formData });
         const data = await res.json();
-        if (data.success) newScenes.push({ url: data.url || data.path, filename: file.name });
+        if (data.success) newScenes.push({ url: data.url || data.path, filename: file.name, action: 'generate' });
       } catch {}
     }
     if (newScenes.length > 0) {
@@ -228,7 +247,143 @@ export default function CarouselStepConfig({
     });
   };
 
-  // Generate for one scene
+  // Set per-scene action
+  const setSceneAction = (index: number, action: SceneAction) => {
+    const updated = sceneImages.map((s, i) => (i === index ? { ...s, action } : s));
+    setSceneImages(updated);
+    // Persist to config
+    const actions: Record<number, SceneAction> = { ...config.sceneActions };
+    actions[index] = action;
+    onChange({ ...config, sceneActions: actions });
+  };
+
+  // Load carousel media from URL (Instagram/TikTok)
+  const handleLoadCarouselUrl = async () => {
+    if (!carouselUrl.trim()) return;
+    setIsLoadingUrl(true);
+    setUrlError(null);
+    try {
+      const res = await fetch('/api/fetch-carousel-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: carouselUrl.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load media');
+      const media = (data.media || []) as { url: string; type: 'image' | 'video' }[];
+      // Only load images (skip videos)
+      const imageMedia = media.filter((m) => m.type === 'image');
+      if (imageMedia.length === 0) throw new Error('No images found in the post');
+      const newScenes: SceneImage[] = imageMedia.map((m, i) => ({
+        url: m.url,
+        filename: `Slide ${sceneImages.length + i + 1}`,
+        action: 'generate' as SceneAction,
+      }));
+      const updated = [...sceneImages, ...newScenes];
+      setSceneImages(updated);
+      onChange({ ...config, sceneImageUrls: updated.map((s) => s.url) });
+      setCarouselUrl('');
+    } catch (err) {
+      setUrlError(err instanceof Error ? err.message : 'Failed to load carousel');
+    } finally {
+      setIsLoadingUrl(false);
+    }
+  };
+
+  // Master mode: generate all scenes for one model
+  const masterGenerateForModel = async (modelId: string, primaryGcsUrl: string) => {
+    const generateScenes = sceneImages.filter((s) => s.action === 'generate');
+    if (generateScenes.length === 0) return;
+
+    setMasterGeneratingIds((prev) => new Set(prev).add(modelId));
+    setGenError(null);
+
+    const allResults: GenResult[] = [];
+    for (const scene of generateScenes) {
+      try {
+        const res = await fetch('/api/generate-carousel-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            modelImageUrl: primaryGcsUrl,
+            sceneImageUrl: scene.url,
+            count: genVariantsPerScene,
+            provider: genProvider,
+            resolution: genResolution,
+            modelId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Generation failed');
+        allResults.push(...((data.images || []) as GenResult[]));
+      } catch (err) {
+        console.error(`[CarouselMaster] Generation failed for model ${modelId}:`, err);
+      }
+    }
+
+    // Also add "use-as-is" scenes
+    const asIsScenes = sceneImages.filter((s) => s.action === 'use-as-is');
+    for (const scene of asIsScenes) {
+      allResults.push({ url: scene.url, gcsUrl: scene.url });
+    }
+
+    setMasterPerModelResults((prev) => ({ ...prev, [modelId]: allResults }));
+    setMasterGeneratingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(modelId);
+      return next;
+    });
+
+    // Auto-select all results for this model
+    if (allResults.length > 0) {
+      const entries: CarouselImageEntry[] = allResults.map((r) => ({
+        imageId: r.id,
+        imageUrl: r.url || r.gcsUrl,
+        filename: (r.url || r.gcsUrl).split('/').pop() || 'generated.jpg',
+      }));
+      onChange({
+        ...config,
+        masterCarouselImages: { ...config.masterCarouselImages, [modelId]: entries },
+      });
+    }
+
+    return allResults;
+  };
+
+  // Master mode: generate for all models
+  const masterGenerateAll = async () => {
+    if (!masterModels || masterModels.length === 0 || sceneImages.length === 0) return;
+    setIsMasterGeneratingAll(true);
+    setMasterGenProgress({ done: 0, total: masterModels.length });
+    for (const model of masterModels) {
+      await masterGenerateForModel(model.modelId, model.primaryGcsUrl);
+      setMasterGenProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+    }
+    setIsMasterGeneratingAll(false);
+  };
+
+  // Master mode: toggle selection of a result for a model
+  const masterToggleResult = (modelId: string, result: GenResult) => {
+    const current = config.masterCarouselImages?.[modelId] || [];
+    const url = result.url || result.gcsUrl;
+    const isSelected = current.some((e) => e.imageUrl === url || e.imageId === result.id);
+    let updated: CarouselImageEntry[];
+    if (isSelected) {
+      updated = current.filter((e) => e.imageUrl !== url && e.imageId !== result.id);
+    } else {
+      if (current.length >= maxImages) return;
+      updated = [...current, { imageId: result.id, imageUrl: url, filename: url.split('/').pop() || 'generated.jpg' }];
+    }
+    onChange({ ...config, masterCarouselImages: { ...config.masterCarouselImages, [modelId]: updated } });
+  };
+
+  const isMasterResultSelected = (modelId: string, result: GenResult) => {
+    const current = config.masterCarouselImages?.[modelId] || [];
+    const url = result.url || result.gcsUrl;
+    return current.some((e) => e.imageUrl === url || e.imageId === result.id);
+  };
+
+  // Generate for one scene (non-master mode)
   const generateForScene = async (sceneIndex: number) => {
     const model = models.find((m) => m.id === config.modelId);
     const primaryImage = modelImages.find((img) => img.isPrimary) || modelImages[0];
@@ -272,16 +427,36 @@ export default function CarouselStepConfig({
     }
   };
 
-  // Generate All
+  // Generate All (respects per-scene actions)
   const handleGenerateAll = async () => {
     if (!config.modelId || sceneImages.length === 0) return;
 
+    const scenesToGenerate = sceneImages.filter((s) => s.action === 'generate');
+    const scenesToUseAsIs = sceneImages
+      .map((s, i) => ({ ...s, originalIndex: i }))
+      .filter((s) => s.action === 'use-as-is');
+
     setIsGeneratingAll(true);
-    setGenProgress({ done: 0, total: sceneImages.length });
+    setGenProgress({ done: 0, total: scenesToGenerate.length });
     setGenError(null);
 
-    // Process scenes sequentially to avoid overwhelming the API
+    // Auto-add "use-as-is" scenes to selected images
+    if (scenesToUseAsIs.length > 0) {
+      const newImages: CarouselImageEntry[] = [];
+      for (const scene of scenesToUseAsIs) {
+        if (config.images.length + newImages.length >= maxImages) break;
+        if (!isImageUrlSelected(scene.url)) {
+          newImages.push({ imageUrl: scene.url, filename: scene.filename });
+        }
+      }
+      if (newImages.length > 0) {
+        onChange({ ...config, images: [...config.images, ...newImages] });
+      }
+    }
+
+    // Process only "generate" scenes sequentially
     for (let i = 0; i < sceneImages.length; i++) {
+      if (sceneImages[i].action !== 'generate') continue;
       await generateForScene(i);
       setGenProgress((prev) => ({ ...prev, done: prev.done + 1 }));
     }
@@ -349,7 +524,7 @@ export default function CarouselStepConfig({
   };
 
   return (
-    <div className={`space-y-4 ${isExpanded ? 'mx-auto max-w-2xl' : ''}`}>
+    <div className={`space-y-4 ${isExpanded && !masterMode ? 'mx-auto max-w-2xl' : ''}`}>
       {/* Image source toggle */}
       <div>
         <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
@@ -464,15 +639,15 @@ export default function CarouselStepConfig({
                     key={img.id}
                     onClick={() => !atLimit && toggleModelImage(img)}
                     className={`group relative aspect-square overflow-hidden rounded-lg border-2 transition-all ${
-                      selected ? 'border-pink-500 ring-2 ring-pink-500/20'
+                      selected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
                         : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed'
-                        : 'border-[var(--border)] hover:border-pink-300'
+                        : 'border-[var(--border)] hover:border-[var(--primary)]/50'
                     }`}
                   >
                     <img src={img.signedUrl || img.gcsUrl} alt={img.filename} className="h-full w-full object-cover" />
                     {selected && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-pink-500/20">
-                        <div className="flex h-5 w-5 items-center justify-center rounded-full bg-pink-500 text-white">
+                      <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
+                        <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)]">
                           <Check className="h-3 w-3" />
                         </div>
                       </div>
@@ -519,7 +694,44 @@ export default function CarouselStepConfig({
 
       {/* ─── Generate mode ─── */}
       {imageSource === 'generate' && (
-        <div className="space-y-4">
+        <div className={isExpanded && masterMode ? 'flex gap-6 items-start' : ''}>
+        {/* Left column (or full width when not expanded/master) */}
+        <div className={`space-y-4 ${isExpanded && masterMode ? 'w-1/2 shrink-0' : ''}`}>
+          {/* Paste carousel post URL */}
+          <div>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              Import from Post URL
+              <span className="ml-1 font-normal normal-case text-[var(--text-muted)]">
+                — paste an Instagram or TikTok carousel link
+              </span>
+            </label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Link2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+                <input
+                  type="text"
+                  value={carouselUrl}
+                  onChange={(e) => setCarouselUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLoadCarouselUrl()}
+                  placeholder="https://instagram.com/p/... or https://tiktok.com/..."
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] py-2 pl-8 pr-3 text-xs text-[var(--text)] placeholder:text-[var(--text-muted)]/50 focus:border-[var(--accent-border)] focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={handleLoadCarouselUrl}
+                disabled={isLoadingUrl || !carouselUrl.trim()}
+                className={`shrink-0 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                  isLoadingUrl || !carouselUrl.trim()
+                    ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
+                    : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90'
+                }`}
+              >
+                {isLoadingUrl ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Load'}
+              </button>
+            </div>
+            {urlError && <p className="mt-1 text-[10px] text-red-500">{urlError}</p>}
+          </div>
+
           {/* Provider + Resolution + Variants row */}
           <div className="grid grid-cols-3 gap-2">
             <div>
@@ -548,21 +760,15 @@ export default function CarouselStepConfig({
             </div>
             <div>
               <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Per Scene</label>
-              <div className="flex gap-1">
-                {[1, 2].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setGenVariantsPerScene(n)}
-                    className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium transition-all ${
-                      genVariantsPerScene === n
-                        ? 'bg-pink-500 text-white'
-                        : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'
-                    }`}
-                  >
-                    {n}
-                  </button>
+              <select
+                value={genVariantsPerScene}
+                onChange={(e) => setGenVariantsPerScene(Number(e.target.value))}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+              >
+                {[1, 2, 3, 4].map((n) => (
+                  <option key={n} value={n}>{n} variant{n !== 1 ? 's' : ''}</option>
                 ))}
-              </div>
+              </select>
             </div>
           </div>
 
@@ -576,36 +782,78 @@ export default function CarouselStepConfig({
             </label>
             <input ref={sceneFileRef} type="file" accept="image/*" multiple onChange={handleSceneFileChange} className="hidden" />
 
-            {/* Scene thumbnails */}
+            {/* Scene thumbnails with per-scene action */}
             {sceneImages.length > 0 && (
-              <div className="mb-2 grid grid-cols-4 gap-1.5">
+              <div className="mb-2 space-y-1.5">
                 {sceneImages.map((scene, i) => {
                   const isSceneGenerating = generatingScenes.has(i);
                   const hasResults = genResults.has(i);
                   return (
-                    <div key={i} className={`group relative aspect-square overflow-hidden rounded-lg border-2 transition-all ${
-                      hasResults ? 'border-green-400' : isSceneGenerating ? 'border-pink-400 animate-pulse' : 'border-[var(--border)]'
-                    }`}>
-                      <img src={scene.url} alt={scene.filename} className="h-full w-full object-cover" />
+                    <div
+                      key={i}
+                      className={`flex items-center gap-2 rounded-lg border p-1.5 transition-all ${
+                        scene.action === 'skip' ? 'opacity-40 border-[var(--border)]'
+                          : hasResults ? 'border-green-400 bg-green-50/30 dark:bg-green-950/10'
+                          : isSceneGenerating ? 'border-[var(--primary)]/60 bg-[var(--accent)]/50 dark:bg-[var(--primary)]/5'
+                          : scene.action === 'use-as-is' ? 'border-blue-400 bg-blue-50/30 dark:bg-blue-950/10'
+                          : 'border-[var(--border)] bg-[var(--surface)]'
+                      }`}
+                    >
+                      {/* Thumbnail */}
+                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg">
+                        <img src={scene.url} alt={scene.filename} className="h-full w-full object-cover" />
+                        {isSceneGenerating && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
+                          </div>
+                        )}
+                        {hasResults && (
+                          <div className="absolute left-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-green-500">
+                            <Check className="h-2.5 w-2.5 text-white" />
+                          </div>
+                        )}
+                        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-1">
+                          <span className="text-[8px] font-bold text-white">{i + 1}</span>
+                        </div>
+                      </div>
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-[11px] font-medium text-[var(--text)]">
+                          {scene.filename}
+                        </span>
+                        <span className="text-[9px] text-[var(--text-muted)]">
+                          {scene.action === 'generate' ? (hasResults ? 'Generated' : 'Will face-swap')
+                            : scene.action === 'use-as-is' ? 'Use original'
+                            : 'Skipped'}
+                        </span>
+                      </div>
+
+                      {/* Action dropdown */}
+                      <div className="relative shrink-0">
+                        <select
+                          value={scene.action}
+                          onChange={(e) => setSceneAction(i, e.target.value as SceneAction)}
+                          className={`appearance-none rounded-md border px-2 py-1 pr-6 text-[10px] font-semibold focus:outline-none ${
+                            scene.action === 'generate' ? 'border-[var(--primary)]/40 bg-[var(--accent)] text-[var(--primary)] dark:border-[var(--primary)] dark:bg-[var(--primary)]/10 dark:text-[var(--primary)]'
+                              : scene.action === 'use-as-is' ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/30 dark:text-blue-300'
+                              : 'border-gray-300 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                          }`}
+                        >
+                          <option value="generate">Generate</option>
+                          <option value="use-as-is">Use as-is</option>
+                          <option value="skip">Skip</option>
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-current opacity-50" />
+                      </div>
+
+                      {/* Remove */}
                       <button
                         onClick={() => removeScene(i)}
-                        className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-red-500 group-hover:opacity-100"
+                        className="shrink-0 rounded p-1 text-[var(--text-muted)] transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
                       >
-                        <X className="h-2.5 w-2.5" />
+                        <X className="h-3.5 w-3.5" />
                       </button>
-                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent px-1 pb-0.5 pt-2">
-                        <span className="text-[9px] font-medium text-white">{i + 1}</span>
-                      </div>
-                      {isSceneGenerating && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                          <Loader2 className="h-4 w-4 animate-spin text-white" />
-                        </div>
-                      )}
-                      {hasResults && (
-                        <div className="absolute left-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-green-500">
-                          <Check className="h-2.5 w-2.5 text-white" />
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -638,45 +886,143 @@ export default function CarouselStepConfig({
             </div>
           </div>
 
-          {/* Generate All button */}
-          {masterMode ? (
-            <p className="rounded-lg bg-pink-50 dark:bg-pink-950/20 px-3 py-2 text-[11px] text-pink-600 dark:text-pink-400">
-              Upload scene images above. Face swap will be generated for each model when the pipeline runs.
-            </p>
-          ) : (
-            <>
-              <button
-                onClick={handleGenerateAll}
-                disabled={isGeneratingAll || !config.modelId || sceneImages.length === 0}
-                className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
-                  isGeneratingAll || !config.modelId || sceneImages.length === 0
-                    ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
-                    : 'bg-pink-500 text-white hover:bg-pink-600 shadow-sm'
-                }`}
-              >
-                {isGeneratingAll ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Generating... {genProgress.done}/{genProgress.total}
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4" />
-                    Generate All ({sceneImages.length} scene{sceneImages.length !== 1 ? 's' : ''} × {genVariantsPerScene} variant{genVariantsPerScene !== 1 ? 's' : ''})
-                  </>
+          {/* Master mode: summary + generate all */}
+          {masterMode && masterModels && masterModels.length > 0 && (() => {
+            const generateCount = sceneImages.filter((s) => s.action === 'generate').length;
+            const useAsIsCount = sceneImages.filter((s) => s.action === 'use-as-is').length;
+            const skipCount = sceneImages.filter((s) => s.action === 'skip').length;
+            return sceneImages.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2 text-[10px] text-[var(--text-muted)]">
+                  {generateCount > 0 && <span className="rounded bg-[var(--accent)] dark:bg-[var(--primary)]/10 px-1.5 py-0.5 text-[var(--primary)] dark:text-[var(--primary)]">{generateCount} to generate</span>}
+                  {useAsIsCount > 0 && <span className="rounded bg-blue-100 dark:bg-blue-950/30 px-1.5 py-0.5 text-blue-600 dark:text-blue-400">{useAsIsCount} use as-is</span>}
+                  {skipCount > 0 && <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-gray-500">{skipCount} skipped</span>}
+                </div>
+                {generateCount > 0 && (
+                  <button
+                    onClick={masterGenerateAll}
+                    disabled={isMasterGeneratingAll || sceneImages.length === 0}
+                    className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
+                      isMasterGeneratingAll || sceneImages.length === 0
+                        ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
+                        : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-hover)] shadow-sm'
+                    }`}
+                  >
+                    {isMasterGeneratingAll ? (
+                      <><Loader2 className="h-4 w-4 animate-spin" /> Generating... {masterGenProgress.done}/{masterGenProgress.total} models</>
+                    ) : (
+                      <><Sparkles className="h-4 w-4" /> Generate All ({masterModels.length} model{masterModels.length !== 1 ? 's' : ''} × {generateCount} scene{generateCount !== 1 ? 's' : ''})</>
+                    )}
+                  </button>
                 )}
-              </button>
+              </div>
+            );
+          })()}
 
-              {!config.modelId && sceneImages.length > 0 && (
-                <p className="text-[10px] text-amber-500">Select a model above first.</p>
-              )}
-            </>
-          )}
+          {/* Non-master mode: generate button + summary */}
+          {!(masterMode && masterModels && masterModels.length > 0) && (() => {
+            const generateCount = sceneImages.filter((s) => s.action === 'generate').length;
+            const useAsIsCount = sceneImages.filter((s) => s.action === 'use-as-is').length;
+            const skipCount = sceneImages.filter((s) => s.action === 'skip').length;
+            return (
+              <>
+                <button
+                  onClick={handleGenerateAll}
+                  disabled={isGeneratingAll || !config.modelId || sceneImages.length === 0 || (generateCount === 0 && useAsIsCount === 0)}
+                  className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
+                    isGeneratingAll || !config.modelId || sceneImages.length === 0 || (generateCount === 0 && useAsIsCount === 0)
+                      ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
+                      : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-hover)] shadow-sm'
+                  }`}
+                >
+                  {isGeneratingAll ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Generating... {genProgress.done}/{genProgress.total}</>
+                  ) : (
+                    <><Sparkles className="h-4 w-4" /> {generateCount > 0 ? `Generate ${generateCount} scene${generateCount !== 1 ? 's' : ''} × ${genVariantsPerScene}` : `Add ${useAsIsCount} image${useAsIsCount !== 1 ? 's' : ''}`}</>
+                  )}
+                </button>
+                {sceneImages.length > 0 && (
+                  <div className="flex flex-wrap gap-2 text-[10px] text-[var(--text-muted)]">
+                    {generateCount > 0 && <span className="rounded bg-[var(--accent)] dark:bg-[var(--primary)]/10 px-1.5 py-0.5 text-[var(--primary)] dark:text-[var(--primary)]">{generateCount} to generate</span>}
+                    {useAsIsCount > 0 && <span className="rounded bg-blue-100 dark:bg-blue-950/30 px-1.5 py-0.5 text-blue-600 dark:text-blue-400">{useAsIsCount} use as-is</span>}
+                    {skipCount > 0 && <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-gray-500">{skipCount} skipped</span>}
+                  </div>
+                )}
+                {!config.modelId && generateCount > 0 && (
+                  <p className="text-[10px] text-amber-500">Select a model above to generate face swaps.</p>
+                )}
+              </>
+            );
+          })()}
           {genError && <p className="text-[10px] text-red-500">{genError}</p>}
+          </div>{/* end left column */}
 
-          {/* Generated results per scene */}
-          {genResults.size > 0 && (
-            <div>
+          {/* Right column: per-model cards (only in master mode) */}
+          {masterMode && masterModels && masterModels.length > 0 && (() => {
+            const generateCount = sceneImages.filter((s) => s.action === 'generate').length;
+            return (
+              <div className={isExpanded ? 'flex-1 min-w-0 max-h-[70vh] overflow-y-auto space-y-2' : 'space-y-2'}>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Per Model — {generateCount > 0 ? 'generate or choose images' : 'choose images'}
+                </label>
+                <div className="space-y-2">
+                  {masterModels.map((model) => {
+                    const isGenerating = masterGeneratingIds.has(model.modelId);
+                    const results = masterPerModelResults[model.modelId] || [];
+                    const selectedImages = config.masterCarouselImages?.[model.modelId] || [];
+                    return (
+                      <div key={model.modelId} className="rounded-xl border border-[var(--border)] p-2.5 space-y-2">
+                        <div className="flex items-center gap-2.5">
+                          <img src={model.primaryImageUrl} alt={model.modelName} className="h-10 w-10 rounded-lg object-cover shrink-0 border border-[var(--border)] cursor-pointer" onClick={() => setPreviewUrl(model.primaryImageUrl)} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-[var(--text)] truncate">{model.modelName}</p>
+                            <p className="text-[10px] text-[var(--text-muted)]">{selectedImages.length} / {maxImages} images</p>
+                          </div>
+                          {isGenerating && <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-[var(--primary)] animate-spin shrink-0" />}
+                          {!isGenerating && generateCount > 0 && (
+                            <button
+                              onClick={() => masterGenerateForModel(model.modelId, model.primaryGcsUrl)}
+                              disabled={isMasterGeneratingAll || sceneImages.length === 0}
+                              className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-colors ${results.length > 0 ? 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]' : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-hover)]'} disabled:opacity-50`}
+                            >
+                              {results.length > 0 ? <RefreshCw className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
+                              {results.length > 0 ? 'Redo' : 'Generate'}
+                            </button>
+                          )}
+                        </div>
+                        {results.length > 0 && (
+                          <div className={`grid gap-1.5 ${isExpanded ? 'grid-cols-5' : 'grid-cols-4'}`}>
+                            {results.map((result, ri) => {
+                              const selected = isMasterResultSelected(model.modelId, result);
+                              const atLimit = !selected && selectedImages.length >= maxImages;
+                              const orderIdx = selectedImages.findIndex((e) => e.imageUrl === (result.url || result.gcsUrl) || e.imageId === result.id);
+                              return (
+                                <button key={ri} onClick={() => !atLimit && masterToggleResult(model.modelId, result)} className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${selected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20' : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed' : 'border-[var(--border)] hover:border-[var(--primary)]/50'}`}>
+                                  <img src={result.url} alt="" className="h-full w-full object-cover" />
+                                  {selected && (<div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20"><div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] font-bold">{orderIdx + 1}</div></div>)}
+                                  <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(result.url); }} className="absolute bottom-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2 w-2" /></div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {selectedImages.length > 0 && (
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] text-green-600 dark:text-green-400 font-medium">{selectedImages.length} image{selectedImages.length !== 1 ? 's' : ''} selected</p>
+                            <button onClick={() => onChange({ ...config, masterCarouselImages: { ...config.masterCarouselImages, [model.modelId]: [] } })} className="text-[10px] text-red-500 hover:underline">Clear</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Generated results per scene (non-master only) */}
+          {genResults.size > 0 && !masterMode && (
+            <div className="mt-4">
               <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Results — click to select for carousel
               </label>
@@ -713,9 +1059,9 @@ export default function CarouselStepConfig({
                               key={ri}
                               onClick={() => !atLimit && toggleGenResult(result)}
                               className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${
-                                selected ? 'border-pink-500 ring-2 ring-pink-500/20'
+                                selected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
                                   : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed'
-                                  : 'border-[var(--border)] hover:border-pink-300'
+                                  : 'border-[var(--border)] hover:border-[var(--primary)]/50'
                               }`}
                             >
                               <img src={result.url} alt="" className="h-full w-full object-cover" />
@@ -725,8 +1071,8 @@ export default function CarouselStepConfig({
                                 </div>
                               )}
                               {selected && (
-                                <div className="absolute inset-0 flex items-center justify-center bg-pink-500/20">
-                                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-pink-500 text-white text-[10px] font-bold">
+                                <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
+                                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[10px] font-bold">
                                     {orderIdx + 1}
                                   </div>
                                 </div>
@@ -749,7 +1095,7 @@ export default function CarouselStepConfig({
 
           {/* Divider + library browser (non-master only, since library is per-model) */}
           {!masterMode && (
-          <>
+          <div className="space-y-4 mt-4">
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-[var(--border)]" />
@@ -798,15 +1144,15 @@ export default function CarouselStepConfig({
                         key={img.id}
                         onClick={() => !atLimit && toggleGeneratedImage(img)}
                         className={`group relative aspect-[9/16] overflow-hidden rounded-lg border-2 transition-all ${
-                          selected ? 'border-pink-500 ring-2 ring-pink-500/20'
+                          selected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
                             : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed'
-                            : 'border-[var(--border)] hover:border-pink-300'
+                            : 'border-[var(--border)] hover:border-[var(--primary)]/50'
                         }`}
                       >
                         <img src={url} alt={img.filename} className="h-full w-full object-cover" loading="lazy" />
                         {selected && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-pink-500/20">
-                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-pink-500 text-white text-[10px] font-bold">
+                          <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
+                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[10px] font-bold">
                               {orderIdx + 1}
                             </div>
                           </div>
@@ -837,7 +1183,7 @@ export default function CarouselStepConfig({
               </>
             )}
           </div>
-          </>
+          </div>
           )}
         </div>
       )}
@@ -859,11 +1205,11 @@ export default function CarouselStepConfig({
                   onDragOver={(e) => handleDragOver(e, index)}
                   onDragEnd={handleDragEnd}
                   className={`flex items-center gap-2 rounded-lg border bg-[var(--surface)] p-1.5 transition-all ${
-                    dragOverIndex === index ? 'border-pink-400 bg-pink-50 dark:bg-pink-950/20' : 'border-[var(--border)]'
+                    dragOverIndex === index ? 'border-[var(--primary)]/60 bg-[var(--accent)] dark:bg-[var(--primary)]/10' : 'border-[var(--border)]'
                   } ${dragIndex === index ? 'opacity-50' : ''}`}
                 >
                   <GripVertical className="h-3.5 w-3.5 shrink-0 cursor-grab text-[var(--border)]" />
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-pink-500 text-[10px] font-bold text-white">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-[10px] font-bold text-[var(--primary-foreground)]">
                     {index + 1}
                   </div>
                   {url ? (
@@ -912,7 +1258,7 @@ export default function CarouselStepConfig({
                   key={index}
                   onClick={() => onChange({ ...config, photoCoverIndex: index })}
                   className={`relative aspect-square overflow-hidden rounded-lg border-2 transition-all ${
-                    isCover ? 'border-pink-500 ring-2 ring-pink-500/20' : 'border-[var(--border)] hover:border-pink-300'
+                    isCover ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20' : 'border-[var(--border)] hover:border-[var(--primary)]/50'
                   }`}
                 >
                   {url ? (
@@ -921,7 +1267,7 @@ export default function CarouselStepConfig({
                     <div className="h-full w-full bg-[var(--accent)]" />
                   )}
                   {isCover && (
-                    <div className="absolute bottom-0 inset-x-0 bg-pink-500 py-0.5 text-center text-[8px] font-bold text-white">
+                    <div className="absolute bottom-0 inset-x-0 bg-[var(--primary)] py-0.5 text-center text-[8px] font-bold text-[var(--primary-foreground)]">
                       COVER
                     </div>
                   )}

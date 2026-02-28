@@ -42,19 +42,25 @@ export default function LibraryVideoSelector({
   onRemove: (modelId: string) => void;
 }) {
   const [templateJobs, setTemplateJobs] = useState<TemplateJobData[]>(_cachedJobs ?? []);
-  const [loading, setLoading] = useState(_cachedJobs === null);
+  const [initialLoading, setInitialLoading] = useState(_cachedJobs === null);
+  const [refreshingModelId, setRefreshingModelId] = useState<string | null>(null);
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<Record<string, 'all' | 'generated' | 'final'>>({});
 
-  const fetchJobs = useCallback(async (force = false) => {
+  const fetchJobs = useCallback(async (force = false, modelId?: string) => {
     // Use cache if fresh and not forced
     if (!force && _cachedJobs && Date.now() - _cacheTimestamp < CACHE_TTL) {
       setTemplateJobs(_cachedJobs);
-      setLoading(false);
+      setInitialLoading(false);
       return;
     }
-    setLoading(true);
+    // Only show global loading on first load (no data yet)
+    if (!_cachedJobs) setInitialLoading(true);
+    // Track which model triggered the refresh
+    if (modelId) setRefreshingModelId(modelId);
+    else if (force) setRefreshingModelId('__all');
     try {
       const res = await fetch('/api/templates');
       if (!res.ok) return;
@@ -66,7 +72,8 @@ export default function LibraryVideoSelector({
     } catch {
       // ignore
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
+      setRefreshingModelId(null);
     }
   }, []);
 
@@ -164,11 +171,11 @@ export default function LibraryVideoSelector({
           )}
           <button
             onClick={() => fetchJobs(true)}
-            disabled={loading}
-            title="Refresh videos"
+            disabled={!!refreshingModelId}
+            title="Refresh all videos"
             className="flex h-6 w-6 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--text)] disabled:opacity-40"
           >
-            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3 w-3 ${refreshingModelId === '__all' ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
@@ -187,7 +194,7 @@ export default function LibraryVideoSelector({
           <Film className="h-5 w-5 text-[var(--text-muted)]" />
           <span className="text-xs text-[var(--text-muted)]">Select models in the canvas panel first</span>
         </div>
-      ) : loading ? (
+      ) : initialLoading ? (
         <div className="flex flex-col items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--background)] py-8">
           <span className="h-5 w-5 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin" />
           <span className="text-xs text-[var(--text-muted)]">Loading videos...</span>
@@ -241,72 +248,105 @@ export default function LibraryVideoSelector({
                 </button>
 
                 {/* Expanded video grid */}
-                {isExpanded && (
-                  <div className="border-t border-[var(--border)] p-2.5 space-y-3 max-h-[320px] overflow-y-auto">
-                    {videos.length === 0 ? (
-                      <div className="flex flex-col items-center gap-1.5 py-4">
-                        <Film className="h-4 w-4 text-[var(--text-muted)]" />
-                        <span className="text-[10px] text-[var(--text-muted)]">No generated videos for this model</span>
-                      </div>
-                    ) : (
-                      <>
-                        {/* Generated videos (Fal / Veo raw) */}
-                        {generated.length > 0 && (
-                          <div>
-                            <div className="mb-1.5 flex items-center gap-1.5">
-                              <Sparkles className="h-3 w-3 text-master-foreground" />
-                              <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-                                Generated ({generated.length})
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-3 gap-1.5">
-                              {generated.map((video) => (
-                                <VideoCard
-                                  key={video.url}
-                                  video={video}
-                                  isSelected={selectedVideoUrl === video.url}
-                                  displayUrl={signedUrls[video.url] || video.url}
-                                  onSelect={() => {
-                                    if (selectedVideoUrl === video.url) onRemove(model.modelId);
-                                    else onSelect(model.modelId, video.url);
-                                  }}
-                                  onPreview={() => setPreviewUrl(signedUrls[video.url] || video.url)}
-                                />
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                {isExpanded && (() => {
+                  const filter = categoryFilter[model.modelId] || 'all';
+                  const filteredVideos = filter === 'all' ? videos
+                    : filter === 'generated' ? generated
+                    : finals;
+                  const showGenerated = filter === 'all' || filter === 'generated';
+                  const showFinals = filter === 'all' || filter === 'final';
 
-                        {/* Final pipeline outputs */}
-                        {finals.length > 0 && (
-                          <div>
-                            <div className="mb-1.5 flex items-center gap-1.5">
-                              <Video className="h-3 w-3 text-master-foreground" />
-                              <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-                                Final Output ({finals.length})
-                              </span>
+                  return (
+                    <div className="border-t border-[var(--border)] p-2.5 space-y-3 max-h-[360px] overflow-y-auto">
+                      {/* Filter bar + refresh */}
+                      <div className="flex items-center justify-between gap-2">
+                        <select
+                          value={filter}
+                          onChange={(e) => setCategoryFilter((prev) => ({ ...prev, [model.modelId]: e.target.value as 'all' | 'generated' | 'final' }))}
+                          className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-[10px] font-medium text-[var(--text)]"
+                        >
+                          <option value="all">All ({videos.length})</option>
+                          <option value="generated">Generated ({generated.length})</option>
+                          <option value="final">Final Output ({finals.length})</option>
+                        </select>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); fetchJobs(true, model.modelId); }}
+                          disabled={!!refreshingModelId}
+                          title="Refresh videos for this model"
+                          className="flex items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-[10px] font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--text)] disabled:opacity-40"
+                        >
+                          <RefreshCw className={`h-2.5 w-2.5 ${refreshingModelId === model.modelId ? 'animate-spin' : ''}`} />
+                          Refresh
+                        </button>
+                      </div>
+
+                      {filteredVideos.length === 0 ? (
+                        <div className="flex flex-col items-center gap-1.5 py-4">
+                          <Film className="h-4 w-4 text-[var(--text-muted)]" />
+                          <span className="text-[10px] text-[var(--text-muted)]">
+                            {videos.length === 0 ? 'No generated videos for this model' : `No ${filter === 'generated' ? 'generated' : 'final output'} videos`}
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          {/* Generated videos (Fal / Veo raw) */}
+                          {showGenerated && generated.length > 0 && (
+                            <div>
+                              <div className="mb-1.5 flex items-center gap-1.5">
+                                <Sparkles className="h-3 w-3 text-master-foreground" />
+                                <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+                                  Generated ({generated.length})
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-1.5">
+                                {generated.map((video) => (
+                                  <VideoCard
+                                    key={video.url}
+                                    video={video}
+                                    isSelected={selectedVideoUrl === video.url}
+                                    displayUrl={signedUrls[video.url] || video.url}
+                                    onSelect={() => {
+                                      if (selectedVideoUrl === video.url) onRemove(model.modelId);
+                                      else onSelect(model.modelId, video.url);
+                                    }}
+                                    onPreview={() => setPreviewUrl(signedUrls[video.url] || video.url)}
+                                  />
+                                ))}
+                              </div>
                             </div>
-                            <div className="grid grid-cols-3 gap-1.5">
-                              {finals.map((video) => (
-                                <VideoCard
-                                  key={video.url}
-                                  video={video}
-                                  isSelected={selectedVideoUrl === video.url}
-                                  displayUrl={signedUrls[video.url] || video.url}
-                                  onSelect={() => {
-                                    if (selectedVideoUrl === video.url) onRemove(model.modelId);
-                                    else onSelect(model.modelId, video.url);
-                                  }}
-                                  onPreview={() => setPreviewUrl(signedUrls[video.url] || video.url)}
-                                />
-                              ))}
+                          )}
+
+                          {/* Final pipeline outputs */}
+                          {showFinals && finals.length > 0 && (
+                            <div>
+                              <div className="mb-1.5 flex items-center gap-1.5">
+                                <Video className="h-3 w-3 text-master-foreground" />
+                                <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+                                  Final Output ({finals.length})
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-1.5">
+                                {finals.map((video) => (
+                                  <VideoCard
+                                    key={video.url}
+                                    video={video}
+                                    isSelected={selectedVideoUrl === video.url}
+                                    displayUrl={signedUrls[video.url] || video.url}
+                                    onSelect={() => {
+                                      if (selectedVideoUrl === video.url) onRemove(model.modelId);
+                                      else onSelect(model.modelId, video.url);
+                                    }}
+                                    onPreview={() => setPreviewUrl(signedUrls[video.url] || video.url)}
+                                  />
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -390,11 +430,33 @@ function VideoCard({
     videoRef.current?.pause();
   }, []);
 
+  const handleRetry = useCallback(() => {
+    setErrored(false);
+    setLoaded(false);
+    if (videoRef.current) {
+      videoRef.current.src = '';
+      // Force reload with cache-busted URL
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.src = displayUrl;
+          videoRef.current.load();
+        }
+      }, 100);
+    }
+  }, [displayUrl]);
+
   if (errored) {
     return (
-      <div className="relative aspect-[9/16] overflow-hidden rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--accent)] flex flex-col items-center justify-center gap-1 opacity-50">
+      <div className="relative aspect-[9/16] overflow-hidden rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--accent)] flex flex-col items-center justify-center gap-1.5">
         <AlertTriangle className="h-3.5 w-3.5 text-[var(--text-muted)]" />
         <span className="text-[8px] text-[var(--text-muted)] text-center px-1">Unavailable</span>
+        <button
+          onClick={(e) => { e.stopPropagation(); handleRetry(); }}
+          className="flex items-center gap-0.5 rounded-md bg-[var(--background)] border border-[var(--border)] px-1.5 py-0.5 text-[8px] font-medium text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+        >
+          <RefreshCw className="h-2 w-2" />
+          Retry
+        </button>
       </div>
     );
   }

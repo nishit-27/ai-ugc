@@ -265,6 +265,9 @@ export type CarouselConfig = {
   generateProvider?: 'gemini' | 'fal' | 'gpt-image';
   generateResolution?: '1K' | '2K' | '4K';
   sceneImageUrls?: string[];
+  sceneActions?: Record<number, 'generate' | 'use-as-is' | 'skip'>;
+  // Master mode: per-model carousel image selections (modelId → images)
+  masterCarouselImages?: Record<string, CarouselImageEntry[]>;
   // First frame fields (kept for compatibility)
   firstFrameEnabled?: boolean;
   extractedFrameUrl?: string;

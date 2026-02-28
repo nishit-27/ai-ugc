@@ -144,32 +144,33 @@ export default function VideoTrimmer({ videoUrl, duration, trimStart, trimEnd, o
   const isFullRange = trimStart === 0 && Math.abs(trimEnd - duration) < 0.1;
 
   return (
-    <div className="max-w-md rounded-xl border border-[var(--border)] bg-[var(--accent)] p-3 space-y-2.5">
-      {/* Header */}
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--accent)] p-3 space-y-2">
+      {/* Header row 1: label + preview */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Scissors className="h-3.5 w-3.5 text-[var(--text-muted)]" />
           <span className="text-xs font-medium text-[var(--text-muted)]">Trim</span>
         </div>
-        <div className="flex items-center gap-2 text-[11px] tabular-nums">
-          <button
-            onClick={() => setPreviewing(!previewing)}
-            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--background)] transition-colors"
-          >
-            <Eye className="h-3 w-3" />
-            Preview
-          </button>
-          <span className="text-[var(--text-muted)]">
-            {formatTime(trimStart)} – {formatTime(trimEnd)}
-          </span>
-          <span className={`rounded-md px-1.5 py-0.5 font-medium ${
-            isFullRange
-              ? 'bg-[var(--background)] text-[var(--text-muted)]'
-              : 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-          }`}>
-            {clipDuration.toFixed(1)}s
-          </span>
-        </div>
+        <button
+          onClick={() => setPreviewing(!previewing)}
+          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--background)] transition-colors"
+        >
+          <Eye className="h-3 w-3" />
+          Preview
+        </button>
+      </div>
+      {/* Header row 2: time range + duration */}
+      <div className="flex items-center justify-between text-[11px] tabular-nums">
+        <span className="text-[var(--text-muted)]">
+          {formatTime(trimStart)} – {formatTime(trimEnd)}
+        </span>
+        <span className={`rounded-md px-1.5 py-0.5 font-medium ${
+          isFullRange
+            ? 'bg-[var(--background)] text-[var(--text-muted)]'
+            : 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+        }`}>
+          {clipDuration.toFixed(1)}s
+        </span>
       </div>
 
       {/* Video preview (trimmed range only) */}

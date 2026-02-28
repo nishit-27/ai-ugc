@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { initDatabase, createPipelineBatch, createTemplateJob, updatePipelineBatch, getModelAccountMappingsForModels, getAllModels, getModelImages } from '@/lib/db';
 import { processPipelineBatch } from '@/lib/processTemplateJob';
-import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, MasterConfig } from '@/types';
+import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, ComposeConfig, MasterConfig } from '@/types';
 import { auth } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -165,6 +165,52 @@ export async function POST(request: NextRequest) {
               imageUrl: firstFrameUrl || modelPrimaryImageUrl,
               masterFirstFrames: undefined, // Don't store the full map in child jobs
             },
+          };
+        }
+
+        if (step.type === 'compose') {
+          // Swap layer URLs so each model gets its own video/image
+          const composeConfig = step.config as ComposeConfig;
+          const updatedLayers = composeConfig.layers.map((layer) => {
+            const src = layer.source;
+            if (src.type !== 'step-output' || !src.stepId) return layer;
+
+            // Library video source (virtual step)
+            if (src.stepId === '__video-source') {
+              const modelVideoUrl = libraryVideos?.[model.id];
+              if (modelVideoUrl) {
+                return {
+                  ...layer,
+                  source: { ...src, url: modelVideoUrl, modelId: model.id },
+                };
+              }
+              return layer;
+            }
+
+            // Video generation step — swap first frame / primary image for image layers
+            const referencedStep = pipeline.find((s: MiniAppStep) => s.id === src.stepId);
+            if (referencedStep && (referencedStep.type === 'video-generation' || referencedStep.type === 'batch-video-generation')) {
+              if (layer.type === 'image') {
+                // First frame / primary image layer
+                const vgConfig = referencedStep.config as VideoGenConfig;
+                const modelFirstFrame = vgConfig.masterFirstFrames?.[model.id];
+                return {
+                  ...layer,
+                  source: { ...src, url: modelFirstFrame || modelPrimaryImageUrl, modelId: model.id },
+                };
+              }
+              // Video layer — will be resolved via stepOutputs at runtime, just update modelId
+              return {
+                ...layer,
+                source: { ...src, modelId: model.id },
+              };
+            }
+
+            return layer;
+          });
+          return {
+            ...step,
+            config: { ...composeConfig, layers: updatedLayers },
           };
         }
 
