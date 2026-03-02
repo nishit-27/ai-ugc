@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, type ReactNode } from 'react';
-import { X, Upload, Star, Trash2, Loader2, ImageIcon, Link2, Pencil, Check, Folder } from 'lucide-react';
-import type { Model, ModelImage, ModelAccountMapping, Account } from '@/types';
+import { X, Upload, Star, Trash2, Loader2, ImageIcon, Link2, Pencil, Check, Folder, ChevronDown, Plus } from 'lucide-react';
+import type { Model, ModelImage, ModelAccountMapping, Account, GeneratedImage } from '@/types';
 import { useToast } from '@/hooks/useToast';
 import { Skeleton } from '@/components/ui/skeleton';
 import ModelAccountMapper from '@/components/models/ModelAccountMapper';
@@ -107,6 +107,20 @@ export default function ModelDetailModal({
   const [editGroupNames, setEditGroupNames] = useState<string[]>([]);
   const [isSavingGroup, setIsSavingGroup] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  const [genImagesLoading, setGenImagesLoading] = useState(false);
+  const [addingGenImage, setAddingGenImage] = useState<string | null>(null);
+  const [showGenImages, setShowGenImages] = useState(false);
+
+  useEffect(() => {
+    if (!open || !model) return;
+    setGenImagesLoading(true);
+    fetch(`/api/generated-images?modelId=${model.id}&limit=100`)
+      .then((r) => (r.ok ? r.json() : { images: [] }))
+      .then((data) => setGeneratedImages(data.images || []))
+      .catch(() => setGeneratedImages([]))
+      .finally(() => setGenImagesLoading(false));
+  }, [open, model]);
 
   useEffect(() => {
     if (!model) return;
@@ -438,6 +452,97 @@ export default function ModelDetailModal({
                 }}
               />
             </label>
+
+            {/* Generated Images Section */}
+            {(() => {
+              const referenceUrls = new Set(modelImages.map((img) => img.gcsUrl));
+              const filteredGenImages = generatedImages.filter((gi) => !referenceUrls.has(gi.gcsUrl));
+              const hasGenImages = filteredGenImages.length > 0;
+
+              if (genImagesLoading || hasGenImages) return (
+                <div className="mb-4 rounded-xl border border-[var(--border)] overflow-hidden">
+                  <button
+                    onClick={() => setShowGenImages((v) => !v)}
+                    className="flex w-full items-center justify-between px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--accent)]"
+                  >
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+                      <ImageIcon className="h-3.5 w-3.5" />
+                      Generated Images {!genImagesLoading && `(${filteredGenImages.length})`}
+                    </span>
+                    <ChevronDown className={`h-3.5 w-3.5 text-[var(--text-muted)] transition-transform ${showGenImages ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showGenImages && (
+                    <div className="border-t border-[var(--border)] p-3.5">
+                      {genImagesLoading ? (
+                        <ImageSkeletonGrid />
+                      ) : (
+                        <div className="grid grid-cols-4 gap-2.5 max-h-64 overflow-y-auto">
+                          {filteredGenImages.map((gi) => (
+                            <div
+                              key={gi.id}
+                              className="group relative cursor-pointer overflow-hidden rounded-lg border border-[var(--border)]"
+                              onClick={() => setPreviewUrl(gi.signedUrl || gi.gcsUrl)}
+                            >
+                              <SkeletonImage
+                                src={gi.signedUrl || gi.gcsUrl}
+                                alt="Generated"
+                                wrapperClassName="aspect-[3/4] w-full"
+                                className="h-full w-full object-cover"
+                                fallback={
+                                  <div className="flex aspect-[3/4] w-full items-center justify-center bg-[var(--background)] text-[var(--text-muted)]/30">
+                                    <ImageIcon className="h-8 w-8" />
+                                  </div>
+                                }
+                              />
+                              {addingGenImage === gi.id && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                                  <Loader2 className="h-5 w-5 animate-spin text-white" />
+                                </div>
+                              )}
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className={`absolute inset-x-0 bottom-0 flex items-center justify-center bg-gradient-to-t from-black/70 to-transparent p-2 transition-opacity ${addingGenImage === gi.id ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'}`}
+                              >
+                                <button
+                                  onClick={async () => {
+                                    setAddingGenImage(gi.id);
+                                    try {
+                                      const res = await fetch(`/api/models/${model.id}/images`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ sourceUrl: gi.gcsUrl }),
+                                      });
+                                      if (!res.ok) {
+                                        const d = await res.json().catch(() => ({}));
+                                        throw new Error(d.error || 'Upload failed');
+                                      }
+                                      showToast('Added as reference image', 'success');
+                                      await loadModelImages(model.id);
+                                      loadModels();
+                                    } catch (err) {
+                                      showToast('Failed to add image: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error');
+                                    } finally {
+                                      setAddingGenImage(null);
+                                    }
+                                  }}
+                                  disabled={addingGenImage === gi.id}
+                                  className="flex items-center gap-1 rounded-md bg-white/90 px-2 py-1 text-[10px] font-medium text-gray-800 transition-colors hover:bg-white disabled:opacity-50"
+                                  title="Add as reference image"
+                                >
+                                  {addingGenImage === gi.id ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Plus className="h-2.5 w-2.5" />}
+                                  Add as Reference
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+              return null;
+            })()}
 
             {/* Images Grid */}
             {imagesLoading ? (

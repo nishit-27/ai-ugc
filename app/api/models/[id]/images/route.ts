@@ -54,6 +54,41 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: 'Model not found' }, { status: 404 });
     }
 
+    const contentType = request.headers.get('content-type') || '';
+
+    // Handle JSON body with sourceUrl (for adding generated images as reference)
+    if (contentType.includes('application/json')) {
+      const { sourceUrl } = await request.json();
+      if (!sourceUrl || typeof sourceUrl !== 'string') {
+        return NextResponse.json({ error: 'sourceUrl is required' }, { status: 400 });
+      }
+      const imgResp = await fetch(sourceUrl);
+      if (!imgResp.ok) {
+        return NextResponse.json({ error: 'Failed to fetch source image' }, { status: 400 });
+      }
+      const blob = await imgResp.blob();
+      const buffer = Buffer.from(await blob.arrayBuffer());
+      const urlPath = new URL(sourceUrl).pathname;
+      const originalName = urlPath.split('/').pop() || 'image.jpg';
+      const ext = path.extname(originalName) || '.jpg';
+      const allowed = /\.(jpg|jpeg|png|webp)$/i;
+      if (!allowed.test(ext)) {
+        return NextResponse.json({ error: 'Only jpg, jpeg, png, webp are allowed.' }, { status: 400 });
+      }
+      const { filename, url } = await uploadImage(buffer, originalName);
+      const existingImages = await getModelImages(id);
+      const isPrimary = existingImages.length === 0;
+      const modelImage = await createModelImage({
+        modelId: id,
+        gcsUrl: url,
+        filename,
+        originalName,
+        fileSize: buffer.length,
+        isPrimary,
+      });
+      return NextResponse.json({ success: true, images: modelImage ? [modelImage] : [], count: modelImage ? 1 : 0 });
+    }
+
     const formData = await request.formData();
     const files: File[] = [];
     const fieldsToCheck = ['images', 'image', 'files', 'file'];
