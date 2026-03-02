@@ -287,6 +287,16 @@ export async function POST(
           }
         }
 
+        // YouTube doesn't support carousel/image posts — skip YouTube for carousel jobs
+        if (isCarousel) {
+          platformTargets = platformTargets.filter((t) => t.platform !== 'youtube');
+          if (platformTargets.length === 0) {
+            await updateTemplateJobPostStatus(jobId, 'posted');
+            results.push({ jobId, modelId: job.modelId, status: 'skipped', error: 'No compatible accounts (YouTube skipped for carousel posts)' });
+            continue;
+          }
+        }
+
         // Download media once
         let fileBuffer: Buffer | null = null;
         const carouselBuffers: { buffer: Buffer; ext: string }[] = [];
@@ -302,9 +312,37 @@ export async function POST(
               buf = Buffer.from(await response.arrayBuffer());
             }
             let ext = path.extname(url.split('?')[0]) || '.jpg';
-            // Instagram only supports JPG/PNG — convert WebP to JPEG
+            // Convert WebP to JPEG (Instagram only supports JPG/PNG)
             if (ext.toLowerCase() === '.webp') {
               buf = await sharp(buf).jpeg({ quality: 92 }).toBuffer();
+              ext = '.jpg';
+            }
+            // Ensure aspect ratio is within Instagram's range (0.75:1 to 1.91:1)
+            const meta = await sharp(buf).metadata();
+            const w = meta.width || 1;
+            const h = meta.height || 1;
+            const ratio = w / h;
+            if (ratio < 0.75) {
+              // Too tall — pad width to 4:5
+              const targetW = Math.ceil(h * 4 / 5);
+              const padTotal = targetW - w;
+              const padLeft = Math.floor(padTotal / 2);
+              const padRight = padTotal - padLeft;
+              buf = await sharp(buf)
+                .extend({ top: 0, bottom: 0, left: padLeft, right: padRight, background: { r: 255, g: 255, b: 255 } })
+                .jpeg({ quality: 92 })
+                .toBuffer();
+              ext = '.jpg';
+            } else if (ratio > 1.91) {
+              // Too wide — pad height to 1.91:1
+              const targetH = Math.ceil(w / 1.91);
+              const padTotal = targetH - h;
+              const padTop = Math.floor(padTotal / 2);
+              const padBottom = padTotal - padTop;
+              buf = await sharp(buf)
+                .extend({ top: padTop, bottom: padBottom, left: 0, right: 0, background: { r: 255, g: 255, b: 255 } })
+                .jpeg({ quality: 92 })
+                .toBuffer();
               ext = '.jpg';
             }
             carouselBuffers.push({ buffer: buf, ext });

@@ -12,7 +12,7 @@ export const maxDuration = 300;
 
 const FACE_SWAP_PROMPT =
   'I have two reference photos. The first is a portrait of a specific person. The second is a scene with a background and body pose. ' +
-  'Generate a new photorealistic image showing the person from the portrait photo placed naturally into the scene from the second photo. ' +
+  'Generate a new photorealistic image in a 1:1 square aspect ratio showing the person from the portrait photo placed naturally into the scene from the second photo. ' +
   'The person in the output must look exactly like the portrait — same appearance, hair, and features. ' +
   'Use the pose, camera angle, lighting, and environment from the scene photo. ' +
   'Remove any text, captions, watermarks, or logos that appear in the scene image. ' +
@@ -20,7 +20,7 @@ const FACE_SWAP_PROMPT =
 
 const FACE_SWAP_PROMPT_PRESERVE_TEXT =
   'I have two reference photos. The first is a portrait of a specific person. The second is a scene with a background and body pose. ' +
-  'Generate a new photorealistic image showing the person from the portrait photo placed naturally into the scene from the second photo. ' +
+  'Generate a new photorealistic image in a 1:1 square aspect ratio showing the person from the portrait photo placed naturally into the scene from the second photo. ' +
   'The person in the output must look exactly like the portrait — same appearance, hair, and features. ' +
   'Use the pose, camera angle, lighting, and environment from the scene photo. ' +
   'Preserve and accurately reproduce any text, captions, or typography that appears in the scene image. The text should remain legible and in the same position. ' +
@@ -55,6 +55,22 @@ async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
     }
   }
   throw new Error('fetch failed after retries');
+}
+
+/** Pad image to 1:1 square with white background */
+async function padToSquare(buf: Buffer): Promise<Buffer> {
+  const meta = await sharp(buf).metadata();
+  const w = meta.width || 1;
+  const h = meta.height || 1;
+  if (w === h) return buf;
+  const size = Math.max(w, h);
+  const padLeft = Math.floor((size - w) / 2);
+  const padRight = size - w - padLeft;
+  const padTop = Math.floor((size - h) / 2);
+  const padBottom = size - h - padTop;
+  return sharp(buf)
+    .extend({ top: padTop, bottom: padBottom, left: padLeft, right: padRight, background: { r: 255, g: 255, b: 255 } })
+    .toBuffer();
 }
 
 async function prepareImageForGemini(buf: Buffer): Promise<{ b64: string; mime: string }> {
@@ -134,7 +150,7 @@ async function generateFaceSwap(
         input: {
           image_urls: falImageUrls!,
           prompt,
-          image_size: 'auto' as const,
+          image_size: '1024x1024' as const,
           quality: 'high' as const,
           input_fidelity: 'high' as const,
           num_images: 1,
@@ -202,11 +218,13 @@ export async function POST(req: Request) {
     console.log(`[CarouselGen] Provider: ${provider}, variants: ${numVariants}`);
 
     // Download both images
-    const [modelBuf, sceneBuf] = await Promise.all([
+    const [modelBuf, rawSceneBuf] = await Promise.all([
       downloadImage(modelImageUrl),
       downloadImage(sceneImageUrl),
     ]);
-    console.log(`[CarouselGen] Downloaded — model: ${modelBuf.length}B, scene: ${sceneBuf.length}B`);
+    // Pad scene image to 1:1 square so AI generates square output
+    const sceneBuf = await padToSquare(rawSceneBuf);
+    console.log(`[CarouselGen] Downloaded — model: ${modelBuf.length}B, scene: ${sceneBuf.length}B (padded to 1:1)`);
 
     // Upload to FAL CDN if using FAL-based provider
     let falImageUrls: string[] | undefined;
