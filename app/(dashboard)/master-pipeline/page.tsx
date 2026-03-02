@@ -146,7 +146,15 @@ export default function MasterPipelinePage() {
     const url = tiktokUrl.trim();
     const isTikTok = /tiktok\.com/i.test(url);
     const isInstagram = /instagram\.com\/(p|reel|reels)\//i.test(url);
-    if (!isTikTok && !isInstagram) return;
+
+    // Direct video URL (not TikTok/Instagram) — use as preview directly
+    if (!isTikTok && !isInstagram) {
+      const isDirectVideo = /\.(mp4|mov|webm|avi)(\?|$)/i.test(url) || url.includes('storage.googleapis.com') || url.includes('r2.cloudflarestorage.com');
+      if (isDirectVideo) {
+        setPreviewUrl(url);
+      }
+      return;
+    }
 
     setIsResolvingPreview(true);
     setPreviewUrl('');
@@ -175,14 +183,34 @@ export default function MasterPipelinePage() {
   // Detect duration from preview URL (covers TikTok/IG resolves where upload metadata isn't available)
   useEffect(() => {
     if (!previewUrl || sourceDuration) return;
+    let cancelled = false;
+
+    // Try client-side first (without crossOrigin to avoid CORS blocks on external CDNs)
     const vid = document.createElement('video');
     vid.preload = 'metadata';
-    vid.crossOrigin = 'anonymous';
     vid.onloadedmetadata = () => {
-      if (vid.duration && isFinite(vid.duration)) setSourceDuration(Math.round(vid.duration));
+      if (!cancelled && vid.duration && isFinite(vid.duration)) {
+        setSourceDuration(Math.round(vid.duration));
+      }
+    };
+    vid.onerror = () => {
+      // Client-side failed (CORS or other) — try server-side duration detection
+      if (cancelled) return;
+      fetch('/api/video-duration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: previewUrl }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (!cancelled && data.duration && data.duration > 0) {
+            setSourceDuration(Math.round(data.duration));
+          }
+        })
+        .catch(() => {});
     };
     vid.src = previewUrl;
-    return () => { vid.src = ''; };
+    return () => { cancelled = true; vid.src = ''; };
   }, [previewUrl, sourceDuration]);
 
   // UI state

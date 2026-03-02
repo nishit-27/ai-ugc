@@ -60,7 +60,12 @@ export default function TemplatesPage() {
     const url = tiktokUrl.trim();
     const isTikTok = /tiktok\.com/i.test(url);
     const isInstagram = /instagram\.com\/(p|reel|reels)\//i.test(url);
-    if (!isTikTok && !isInstagram) return;
+    // Direct video URL — use as preview directly
+    if (!isTikTok && !isInstagram) {
+      const isDirectVideo = /\.(mp4|mov|webm|avi)(\?|$)/i.test(url) || url.includes('storage.googleapis.com') || url.includes('r2.cloudflarestorage.com');
+      if (isDirectVideo) setPreviewUrl(url);
+      return;
+    }
     setIsResolvingPreview(true);
     setPreviewUrl('');
     const controller = new AbortController();
@@ -89,14 +94,25 @@ export default function TemplatesPage() {
   // Detect duration from preview URL (covers TikTok/IG resolves where upload metadata isn't available)
   useEffect(() => {
     if (!previewUrl || sourceDuration) return;
+    let cancelled = false;
     const vid = document.createElement('video');
     vid.preload = 'metadata';
-    vid.crossOrigin = 'anonymous';
     vid.onloadedmetadata = () => {
-      if (vid.duration && isFinite(vid.duration)) setSourceDuration(Math.round(vid.duration));
+      if (!cancelled && vid.duration && isFinite(vid.duration)) setSourceDuration(Math.round(vid.duration));
+    };
+    vid.onerror = () => {
+      if (cancelled) return;
+      fetch('/api/video-duration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: previewUrl }),
+      })
+        .then((r) => r.json())
+        .then((data) => { if (!cancelled && data.duration > 0) setSourceDuration(Math.round(data.duration)); })
+        .catch(() => {});
     };
     vid.src = previewUrl;
-    return () => { vid.src = ''; };
+    return () => { cancelled = true; vid.src = ''; };
   }, [previewUrl, sourceDuration]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showPresets, setShowPresets] = useState(false);
