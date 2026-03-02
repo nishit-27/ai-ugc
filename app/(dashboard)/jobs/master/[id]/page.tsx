@@ -417,6 +417,28 @@ export default function MasterBatchDetailPage() {
     }
   };
 
+  const queuedCount = jobs.filter((j) => j.status === 'queued').length;
+
+  const handleFailQueued = async () => {
+    if (queuedCount === 0) return;
+    if (!confirm(`Mark ${queuedCount} stuck queued job${queuedCount > 1 ? 's' : ''} as failed? You can then retry them individually.`)) return;
+    try {
+      const res = await fetch(`/api/pipeline-batches/${id}/fail-queued`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Marked ${data.failedCount} queued job${data.failedCount > 1 ? 's' : ''} as failed — you can now retry them`, 'success');
+        await loadBatch();
+      } else {
+        showToast(data.error || 'Failed to update jobs', 'error');
+      }
+    } catch {
+      showToast('Failed to update jobs', 'error');
+    }
+  };
+
   const handleDeleteBatch = async () => {
     if (!batch) return;
     if (!confirm('Delete this master batch?')) return;
@@ -498,6 +520,7 @@ export default function MasterBatchDetailPage() {
         isActive={isActive}
         progress={progress}
         pending={pending}
+        queuedCount={queuedCount}
         isRefreshing={isRefreshing}
         isDeleting={isDeleting}
         onRefresh={() => {
@@ -506,6 +529,7 @@ export default function MasterBatchDetailPage() {
         }}
         onDelete={handleDeleteBatch}
         onEditConfig={() => setShowEditConfig(true)}
+        onFailQueued={handleFailQueued}
       />
 
       <MasterBatchVideoGrid

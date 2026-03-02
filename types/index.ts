@@ -146,6 +146,10 @@ export type TextOverlayConfig = {
   paddingLeft?: number;   // pixels from left edge (controls text width / line wrapping)
   paddingRight?: number;  // pixels from right edge
   wordsPerLine?: number;  // 0 = no limit (single line)
+  outlineColor?: string;   // hex color, e.g. '#000000'
+  outlineWidth?: number;   // 0-10px (in 720px design space)
+  textOpacity?: number;    // 0-100% (default 100)
+  bgOpacity?: number;      // 0-100% (default 70 — matches current hardcoded behavior)
   entireVideo?: boolean;
   startTime?: number;
   duration?: number;
@@ -268,6 +272,8 @@ export type CarouselConfig = {
   sceneActions?: Record<number, 'generate' | 'use-as-is' | 'skip'>;
   // Master mode: per-model carousel image selections (modelId → images)
   masterCarouselImages?: Record<string, CarouselImageEntry[]>;
+  // Preserve text in scene images during face-swap generation
+  preserveText?: boolean;
   // First frame fields (kept for compatibility)
   firstFrameEnabled?: boolean;
   extractedFrameUrl?: string;

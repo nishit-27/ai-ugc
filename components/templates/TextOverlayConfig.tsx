@@ -147,12 +147,12 @@ export default function TextOverlayConfig({
       {/* Font */}
       <Section title="Font" defaultOpen={false}>
         <div className="space-y-4">
-          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none">
+          <div className="grid grid-cols-3 gap-1.5">
             {FONTS.map((font) => (
               <button
                 key={font.family}
                 onClick={() => onChange({ ...config, fontFamily: font.family })}
-                className={`shrink-0 rounded-lg border px-3 py-2 text-xs transition-all duration-150 ${
+                className={`rounded-lg border px-2 py-2 text-xs transition-all duration-150 truncate ${
                   (config.fontFamily || 'sans-serif') === font.family
                     ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
                     : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent-border)] hover:bg-[var(--accent)]'
@@ -267,8 +267,8 @@ export default function TextOverlayConfig({
         </div>
       </Section>
 
-      {/* Color */}
-      <Section title="Color">
+      {/* Appearance */}
+      <Section title="Appearance">
         <div className="space-y-4">
           {/* Text color */}
           <div>
@@ -301,6 +301,80 @@ export default function TextOverlayConfig({
             </div>
           </div>
 
+          {/* Text Opacity */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-[11px] font-medium text-[var(--text-muted)]">Text Opacity</label>
+              <span className="rounded bg-[var(--accent)] px-1.5 py-0.5 text-[11px] tabular-nums font-medium text-[var(--text)]">
+                {config.textOpacity ?? 100}%
+              </span>
+            </div>
+            <input
+              type="range" min={0} max={100}
+              value={config.textOpacity ?? 100}
+              onChange={(e) => onChange({ ...config, textOpacity: parseInt(e.target.value) })}
+              className="w-full" style={{ accentColor: 'var(--primary)' }}
+            />
+            <div className="mt-0.5 flex justify-between text-[10px] text-[var(--text-muted)]">
+              <span>0%</span><span>100%</span>
+            </div>
+          </div>
+
+          {/* Outline */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-medium text-[var(--text-muted)]">Text Outline</label>
+              <button
+                onClick={() => onChange({ ...config, outlineColor: config.outlineColor ? undefined : '#000000', outlineWidth: config.outlineColor ? 0 : 2 })}
+                className={`relative h-6 w-11 rounded-full transition-colors duration-300 ease-in-out ${config.outlineColor ? 'bg-[var(--primary)]' : 'bg-[var(--muted)]'}`}
+              >
+                <span className={`absolute top-[3px] left-[3px] h-[18px] w-[18px] rounded-full bg-white shadow transition-transform duration-300 ease-in-out ${config.outlineColor ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+            {config.outlineColor && (
+              <div className="mt-3 space-y-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex gap-1.5">
+                    {['#000000', '#FFFFFF', '#EF4444', '#F59E0B', '#22C55E', '#3B82F6'].map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => onChange({ ...config, outlineColor: c })}
+                        className={`h-6 w-6 rounded-md transition-all duration-100 ${
+                          config.outlineColor?.toUpperCase() === c ? 'ring-2 ring-[var(--primary)] ring-offset-2 ring-offset-[var(--background)]' : 'hover:scale-110'
+                        }`}
+                        style={{ backgroundColor: c, boxShadow: c === '#FFFFFF' ? 'inset 0 0 0 1px var(--border)' : undefined }}
+                      />
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="color" value={config.outlineColor}
+                      onChange={(e) => onChange({ ...config, outlineColor: e.target.value })}
+                      className="absolute inset-0 h-6 w-6 cursor-pointer opacity-0"
+                    />
+                    <div className="flex h-6 w-6 items-center justify-center rounded-md border border-dashed border-[var(--border)]">
+                      <span className="text-[10px] text-[var(--text-muted)]">+</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="text-[10px] text-[var(--text-muted)]">Width</label>
+                    <span className="rounded bg-[var(--accent)] px-1.5 py-0.5 text-[10px] tabular-nums font-medium text-[var(--text)]">
+                      {config.outlineWidth ?? 2}px
+                    </span>
+                  </div>
+                  <input
+                    type="range" min={1} max={10}
+                    value={config.outlineWidth ?? 2}
+                    onChange={(e) => onChange({ ...config, outlineWidth: parseInt(e.target.value) })}
+                    className="w-full" style={{ accentColor: 'var(--primary)' }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Background */}
           <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-3">
             <div className="flex items-center justify-between">
@@ -313,28 +387,44 @@ export default function TextOverlayConfig({
               </button>
             </div>
             {config.bgColor && (
-              <div className="mt-3 flex items-center gap-2.5">
-                <div className="flex gap-1.5">
-                  {bgSwatches.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => onChange({ ...config, bgColor: c })}
-                      className={`h-6 w-6 rounded-md transition-all duration-100 ${
-                        config.bgColor?.toUpperCase() === c ? 'ring-2 ring-[var(--primary)] ring-offset-2 ring-offset-[var(--background)]' : 'hover:scale-110'
-                      }`}
-                      style={{ backgroundColor: c, boxShadow: c === '#FFFFFF' ? 'inset 0 0 0 1px var(--border)' : undefined }}
-                    />
-                  ))}
-                </div>
-                <div className="relative">
-                  <input
-                    type="color" value={config.bgColor}
-                    onChange={(e) => onChange({ ...config, bgColor: e.target.value })}
-                    className="absolute inset-0 h-6 w-6 cursor-pointer opacity-0"
-                  />
-                  <div className="flex h-6 w-6 items-center justify-center rounded-md border border-dashed border-[var(--border)]">
-                    <span className="text-[10px] text-[var(--text-muted)]">+</span>
+              <div className="mt-3 space-y-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex gap-1.5">
+                    {bgSwatches.map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => onChange({ ...config, bgColor: c })}
+                        className={`h-6 w-6 rounded-md transition-all duration-100 ${
+                          config.bgColor?.toUpperCase() === c ? 'ring-2 ring-[var(--primary)] ring-offset-2 ring-offset-[var(--background)]' : 'hover:scale-110'
+                        }`}
+                        style={{ backgroundColor: c, boxShadow: c === '#FFFFFF' ? 'inset 0 0 0 1px var(--border)' : undefined }}
+                      />
+                    ))}
                   </div>
+                  <div className="relative">
+                    <input
+                      type="color" value={config.bgColor}
+                      onChange={(e) => onChange({ ...config, bgColor: e.target.value })}
+                      className="absolute inset-0 h-6 w-6 cursor-pointer opacity-0"
+                    />
+                    <div className="flex h-6 w-6 items-center justify-center rounded-md border border-dashed border-[var(--border)]">
+                      <span className="text-[10px] text-[var(--text-muted)]">+</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="text-[10px] text-[var(--text-muted)]">Opacity</label>
+                    <span className="rounded bg-[var(--accent)] px-1.5 py-0.5 text-[10px] tabular-nums font-medium text-[var(--text)]">
+                      {config.bgOpacity ?? 70}%
+                    </span>
+                  </div>
+                  <input
+                    type="range" min={0} max={100}
+                    value={config.bgOpacity ?? 70}
+                    onChange={(e) => onChange({ ...config, bgOpacity: parseInt(e.target.value) })}
+                    className="w-full" style={{ accentColor: 'var(--primary)' }}
+                  />
                 </div>
               </div>
             )}

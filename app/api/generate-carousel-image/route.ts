@@ -18,6 +18,14 @@ const FACE_SWAP_PROMPT =
   'Remove any text, captions, watermarks, or logos that appear in the scene image. ' +
   'The result should look like a natural photograph with consistent lighting and realistic skin texture.';
 
+const FACE_SWAP_PROMPT_PRESERVE_TEXT =
+  'I have two reference photos. The first is a portrait of a specific person. The second is a scene with a background and body pose. ' +
+  'Generate a new photorealistic image showing the person from the portrait photo placed naturally into the scene from the second photo. ' +
+  'The person in the output must look exactly like the portrait — same appearance, hair, and features. ' +
+  'Use the pose, camera angle, lighting, and environment from the scene photo. ' +
+  'Preserve and accurately reproduce any text, captions, or typography that appears in the scene image. The text should remain legible and in the same position. ' +
+  'The result should look like a natural photograph with consistent lighting and realistic skin texture.';
+
 function detectImageType(buf: Buffer): { contentType: string; ext: string } {
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
     return { contentType: 'image/png', ext: 'png' };
@@ -180,6 +188,7 @@ export async function POST(req: Request) {
       provider = 'gpt-image',
       resolution = '1K',
       modelId,
+      preserveText = false,
     } = await req.json();
 
     if (!modelImageUrl || !sceneImageUrl) {
@@ -218,8 +227,9 @@ export async function POST(req: Request) {
     }
 
     // Generate variants
+    const prompt = preserveText ? FACE_SWAP_PROMPT_PRESERVE_TEXT : FACE_SWAP_PROMPT;
     const promises = Array.from({ length: numVariants }, () =>
-      generateFaceSwap(provider, FACE_SWAP_PROMPT, modelBuf, sceneBuf, resolution, falImageUrls),
+      generateFaceSwap(provider, prompt, modelBuf, sceneBuf, resolution, falImageUrls),
     );
     const results = await Promise.all(promises);
     const successfulBuffers = results.filter((b): b is Buffer => b !== null);

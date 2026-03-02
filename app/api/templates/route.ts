@@ -76,7 +76,8 @@ export async function POST(request: NextRequest) {
         // Batch step is not first, so we need to check if the first step needs input video
         const needsInputVideo = !(
           (firstEnabled.type === 'video-generation' && (firstEnabled.config as { mode?: string }).mode === 'subtle-animation') ||
-          firstEnabled.type === 'compose'
+          firstEnabled.type === 'compose' ||
+          firstEnabled.type === 'carousel'
         );
         if (needsInputVideo && !tiktokUrl && !videoUrl) {
           return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
@@ -165,7 +166,8 @@ export async function POST(request: NextRequest) {
     const firstStep = enabledSteps[0];
     const needsInputVideo = !(
       (firstStep.type === 'video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation') ||
-      firstStep.type === 'compose'
+      firstStep.type === 'compose' ||
+      firstStep.type === 'carousel'
     );
     if (needsInputVideo) {
       if (!tiktokUrl && !videoUrl) {

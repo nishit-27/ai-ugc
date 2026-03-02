@@ -4,6 +4,7 @@ import {
   initDatabase,
   getStuckJobs,
   getStuckTemplateJobs,
+  getStuckQueuedTemplateJobs,
   updateJob,
   updateTemplateJob,
   createMediaFile,
@@ -286,6 +287,55 @@ async function recoverTemplateJob(job: {
   }
 }
 
+/**
+ * Get the base URL for internal API calls.
+ */
+function getInternalBaseUrl(): string {
+  if (config.APP_URL) return config.APP_URL;
+  return `http://localhost:${process.env.PORT || 3000}`;
+}
+
+/**
+ * Re-trigger stuck queued template jobs by calling the process endpoint.
+ * These are jobs that were never picked up (e.g., batch function timed out).
+ */
+async function retriggerQueuedJobs(
+  jobs: { id: string }[]
+): Promise<{ id: string; recovered: boolean; status: string }[]> {
+  if (jobs.length === 0) return [];
+
+  const baseUrl = getInternalBaseUrl();
+  const results: { id: string; recovered: boolean; status: string }[] = [];
+
+  // Trigger in chunks of 5 to stagger load
+  const CHUNK_SIZE = 5;
+  for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
+    const chunk = jobs.slice(i, i + CHUNK_SIZE);
+    const chunkResults = await Promise.allSettled(
+      chunk.map(async (job) => {
+        try {
+          const res = await fetch(`${baseUrl}/api/templates/${job.id}/process`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+          if (res.ok) {
+            return { id: job.id, recovered: true, status: 'retriggered' };
+          }
+          return { id: job.id, recovered: false, status: `trigger_failed_${res.status}` };
+        } catch (err) {
+          console.error(`[Recovery] Error re-triggering queued job ${job.id}:`, err);
+          return { id: job.id, recovered: false, status: 'trigger_error' };
+        }
+      })
+    );
+    for (const r of chunkResults) {
+      results.push(r.status === 'fulfilled' ? r.value : { id: 'unknown', recovered: false, status: 'promise_rejected' });
+    }
+  }
+
+  return results;
+}
+
 export async function POST() {
   try {
     await initDatabase();
@@ -296,19 +346,24 @@ export async function POST() {
 
     fal.config({ credentials: config.FAL_KEY });
 
-    // Find stuck jobs
-    const [stuckJobs, stuckTemplateJobs] = await Promise.all([
+    // Find stuck jobs — both processing (FAL timeout) and queued (never picked up)
+    const [stuckJobs, stuckTemplateJobs, stuckQueuedJobs] = await Promise.all([
       getStuckJobs(STUCK_THRESHOLD_MINUTES),
       getStuckTemplateJobs(STUCK_THRESHOLD_MINUTES),
+      getStuckQueuedTemplateJobs(STUCK_THRESHOLD_MINUTES),
     ]);
 
-    if (stuckJobs.length === 0 && stuckTemplateJobs.length === 0) {
+    if (stuckJobs.length === 0 && stuckTemplateJobs.length === 0 && stuckQueuedJobs.length === 0) {
       return NextResponse.json({ message: 'No stuck jobs found', results: [] });
     }
 
-    console.log(`[Recovery] Found ${stuckJobs.length} stuck jobs, ${stuckTemplateJobs.length} stuck template jobs`);
+    console.log(
+      `[Recovery] Found ${stuckJobs.length} stuck jobs, ` +
+      `${stuckTemplateJobs.length} stuck template jobs, ` +
+      `${stuckQueuedJobs.length} stuck queued template jobs`
+    );
 
-    // Process recovery for all stuck jobs
+    // Process recovery for stuck processing jobs (FAL timeout recovery)
     const regularJobs = stuckJobs as Parameters<typeof recoverJob>[0][];
     const templateJobs = stuckTemplateJobs as Parameters<typeof recoverTemplateJob>[0][];
     const results = await Promise.allSettled([
@@ -320,8 +375,12 @@ export async function POST() {
       r.status === 'fulfilled' ? r.value : { recovered: false, status: 'promise_rejected' }
     );
 
+    // Re-trigger stuck queued jobs (batch function timed out before reaching them)
+    const queuedResults = await retriggerQueuedJobs(stuckQueuedJobs);
+    summary.push(...queuedResults);
+
     return NextResponse.json({
-      message: `Processed ${summary.length} stuck jobs`,
+      message: `Processed ${summary.length} stuck jobs (${stuckQueuedJobs.length} queued re-triggered)`,
       recovered: summary.filter((r) => r.recovered).length,
       results: summary,
     });

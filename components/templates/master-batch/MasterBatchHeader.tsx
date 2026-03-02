@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { MasterConfig, PipelineBatch } from '@/types';
-import { ArrowLeft, CheckCircle2, Clock, Crown, Pencil, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Crown, Pencil, RefreshCw, Trash2, XCircle, AlertTriangle } from 'lucide-react';
 import ProgressBar from '@/components/ui/ProgressBar';
 import Spinner from '@/components/ui/Spinner';
 
@@ -12,11 +12,13 @@ type Props = {
   isActive: boolean;
   progress: number;
   pending: number;
+  queuedCount: number;
   isRefreshing: boolean;
   isDeleting: boolean;
   onRefresh: () => void;
   onDelete: () => void;
   onEditConfig?: () => void;
+  onFailQueued?: () => void;
 };
 
 export default function MasterBatchHeader({
@@ -25,11 +27,13 @@ export default function MasterBatchHeader({
   isActive,
   progress,
   pending,
+  queuedCount,
   isRefreshing,
   isDeleting,
   onRefresh,
   onDelete,
   onEditConfig,
+  onFailQueued,
 }: Props) {
   return (
     <>
@@ -117,6 +121,15 @@ export default function MasterBatchHeader({
               <Clock className="h-3.5 w-3.5" />
               {pending} pending
             </span>
+          )}
+          {queuedCount > 0 && onFailQueued && (
+            <button
+              onClick={onFailQueued}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-400 dark:hover:bg-amber-950/50"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Fail {queuedCount} stuck
+            </button>
           )}
         </div>
         {isActive && (

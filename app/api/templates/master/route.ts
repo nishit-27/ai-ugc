@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { initDatabase, createPipelineBatch, createTemplateJob, updatePipelineBatch, getModelAccountMappingsForModels, getAllModels, getModelImages } from '@/lib/db';
 import { processPipelineBatch } from '@/lib/processTemplateJob';
-import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, ComposeConfig, MasterConfig } from '@/types';
+import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, ComposeConfig, CarouselConfig, MasterConfig } from '@/types';
 import { auth } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -51,8 +51,8 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
         }
       }
-    } else if (firstEnabled.type !== 'compose') {
-      // Non-video, non-compose first step always needs input video
+    } else if (firstEnabled.type !== 'compose' && firstEnabled.type !== 'carousel') {
+      // Non-video, non-compose, non-carousel first step always needs input video
       if (!tiktokUrl && !videoUrl && videoSource !== 'library') {
         return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
       }
@@ -211,6 +211,21 @@ export async function POST(request: NextRequest) {
           return {
             ...step,
             config: { ...composeConfig, layers: updatedLayers },
+          };
+        }
+
+        if (step.type === 'carousel') {
+          // Inject this model's carousel images from masterCarouselImages into config.images
+          const carouselConfig = step.config as CarouselConfig;
+          const modelImages = carouselConfig.masterCarouselImages?.[model.id] || [];
+          return {
+            ...step,
+            config: {
+              ...carouselConfig,
+              images: modelImages,
+              modelId: model.id,
+              masterCarouselImages: undefined, // Don't store the full map in child jobs
+            },
           };
         }
 

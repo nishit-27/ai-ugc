@@ -20,7 +20,7 @@ export async function GET() {
     return NextResponse.json({ error: 'LATE_API_KEYS not configured' }, { status: 500 });
   }
   try {
-    const results = await fetchFromAllKeys<{ profiles?: LateProfile[] }>('/profiles');
+    const results = await fetchFromAllKeys<{ profiles?: LateProfile[] }>('/profiles?limit=10000');
     const allProfiles: (LateProfile & { apiKeyIndex: number; accountLabel: string })[] = [];
     const profileIds: string[] = [];
 

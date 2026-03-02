@@ -591,9 +591,44 @@ export function getStepLabel(step: MiniAppStep): string {
   }
 }
 /**
+ * Get the base URL for internal API calls.
+ * Works on Vercel (APP_URL / VERCEL_URL) and local dev (localhost:3000).
+ */
+function getInternalBaseUrl(): string {
+  if (config.APP_URL) return config.APP_URL;
+  return `http://localhost:${process.env.PORT || 3000}`;
+}
+
+/**
+ * Trigger a single template job's processing via an internal API call.
+ * Each call creates a separate serverless invocation with its own timeout,
+ * preventing queue starvation when processing large batches.
+ */
+async function triggerJobProcessing(jobId: string, baseUrl: string): Promise<void> {
+  try {
+    const res = await fetch(`${baseUrl}/api/templates/${jobId}/process`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      console.error(`[PipelineBatch] Failed to trigger job ${jobId}: ${res.status} ${res.statusText}`);
+    }
+  } catch (err) {
+    console.error(`[PipelineBatch] Error triggering job ${jobId}:`, err);
+  }
+}
+
+/**
  * Process a pipeline batch: resolve the social URL ONCE, upload the video
- * to stable storage, then process all child jobs using the stable URL.
- * This avoids hitting RapidAPI N times for the same video.
+ * to stable storage, then trigger all child jobs via internal API calls.
+ *
+ * Each job is triggered as a separate serverless invocation (via POST to
+ * /api/templates/[id]/process) so each gets its own 5-minute timeout.
+ * Jobs are staggered in chunks to avoid overwhelming the FAL API.
+ *
+ * This replaces the old approach of processing all jobs in the same
+ * function, which caused queue starvation when the function timed out
+ * after only 1-2 chunks of 5.
  */
 export async function processPipelineBatch(
   childJobIds: string[],
@@ -619,18 +654,31 @@ export async function processPipelineBatch(
         await updateTemplateJob(jobId, { videoUrl: stableUrl, videoSource: 'upload' });
       }
     }
+
+    const baseUrl = getInternalBaseUrl();
     const CHUNK_SIZE = 5;
+    const CHUNK_DELAY_MS = 2000; // 2s between chunks to stagger FAL submissions
+
+    console.log(`[PipelineBatch] Triggering ${childJobIds.length} jobs via internal API (base: ${baseUrl})`);
+
     for (let i = 0; i < childJobIds.length; i += CHUNK_SIZE) {
       const chunk = childJobIds.slice(i, i + CHUNK_SIZE);
-      console.log(`[PipelineBatch] Processing chunk ${Math.floor(i / CHUNK_SIZE) + 1}/${Math.ceil(childJobIds.length / CHUNK_SIZE)} (jobs ${i + 1}-${i + chunk.length} of ${childJobIds.length})`);
+      const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
+      const totalChunks = Math.ceil(childJobIds.length / CHUNK_SIZE);
+      console.log(`[PipelineBatch] Triggering chunk ${chunkNum}/${totalChunks} (jobs ${i + 1}-${i + chunk.length} of ${childJobIds.length})`);
+
+      // Fire all jobs in this chunk concurrently — each gets its own serverless invocation
       await Promise.allSettled(
-        chunk.map((id) =>
-          processTemplateJob(id).catch((err) => {
-            console.error(`[PipelineBatch] Child job ${id} failed:`, err);
-          })
-        )
+        chunk.map((id) => triggerJobProcessing(id, baseUrl))
       );
+
+      // Small delay between chunks to stagger FAL API submissions
+      if (i + CHUNK_SIZE < childJobIds.length) {
+        await new Promise((resolve) => setTimeout(resolve, CHUNK_DELAY_MS));
+      }
     }
+
+    console.log(`[PipelineBatch] All ${childJobIds.length} jobs triggered successfully`);
   } finally {
     if (sharedVideoPath) {
       try { fs.unlinkSync(sharedVideoPath); } catch {}

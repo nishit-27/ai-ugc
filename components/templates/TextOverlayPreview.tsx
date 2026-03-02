@@ -155,10 +155,25 @@ export default function TextOverlayPreview({
   /* ── Build inline style for the text element ── */
   const getTextStyle = (): React.CSSProperties => {
     const baseFontSize = Math.max(8, config.fontSize * scale);
+    const textOpacity = config.textOpacity ?? 100;
+    const opacityFraction = textOpacity / 100;
+
+    // Convert hex color to rgba with opacity
+    const hexToRgba = (hex: string, alpha: number): string => {
+      const h = hex.replace('#', '');
+      const r = parseInt(h.slice(0, 2), 16) || 0;
+      const g = parseInt(h.slice(2, 4), 16) || 0;
+      const b = parseInt(h.slice(4, 6), 16) || 0;
+      return `rgba(${r},${g},${b},${alpha})`;
+    };
+
+    const effectiveColor = opacityFraction < 1
+      ? hexToRgba(config.fontColor, opacityFraction)
+      : config.fontColor;
 
     const base: React.CSSProperties = {
       fontSize: `${baseFontSize}px`,
-      color: config.fontColor,
+      color: effectiveColor,
       textShadow:
         !config.bgColor && !activeStyle?.css?.textShadow
           ? '1px 1px 3px rgba(0,0,0,0.9)'
@@ -172,6 +187,16 @@ export default function TextOverlayPreview({
       whiteSpace: 'pre' as const, // ONLY break at \n from formattedText
     };
 
+    // Text outline via CSS
+    if (config.outlineColor && (config.outlineWidth ?? 0) > 0) {
+      const scaledOutline = Math.max(0.5, (config.outlineWidth ?? 0) * scale);
+      const outlineRgba = opacityFraction < 1
+        ? hexToRgba(config.outlineColor, opacityFraction)
+        : config.outlineColor;
+      (base as Record<string, unknown>).WebkitTextStroke = `${scaledOutline}px ${outlineRgba}`;
+      base.paintOrder = 'stroke fill';
+    }
+
     // Style preset
     if (activeStyle && activeStyle.id !== 'plain') {
       Object.assign(base, activeStyle.css);
@@ -184,7 +209,8 @@ export default function TextOverlayPreview({
 
     // Background box
     if (config.bgColor && !activeStyle?.css?.backgroundColor) {
-      base.backgroundColor = `${config.bgColor}b3`;
+      const bgAlpha = Math.round(((config.bgOpacity ?? 70) / 100) * 255).toString(16).padStart(2, '0');
+      base.backgroundColor = `${config.bgColor}${bgAlpha}`;
       base.padding = `${Math.round(2 * scale)}px ${Math.round(10 * scale)}px`;
       base.borderRadius = `${Math.round(4 * scale)}px`;
     }

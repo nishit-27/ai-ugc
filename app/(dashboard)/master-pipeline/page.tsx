@@ -308,7 +308,8 @@ export default function MasterPipelinePage() {
     const needsInputVideo = !(
       (firstStep.type === 'video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation') ||
       (firstStep.type === 'batch-video-generation' && (firstStep.config as { mode?: string }).mode === 'subtle-animation') ||
-      firstStep.type === 'compose'
+      firstStep.type === 'compose' ||
+      firstStep.type === 'carousel'
     );
 
     if (needsInputVideo) {

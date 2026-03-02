@@ -18,6 +18,13 @@ const FONT_FILE_MAP: Record<string, string> = {
   'Times New Roman, serif':    'Tinos-Bold.ttf',
   'Trebuchet MS, sans-serif':  'FiraSans-Bold.ttf',
   'Verdana, sans-serif':       'OpenSans-Bold.ttf',
+  'Montserrat, sans-serif':    'Montserrat-Bold.ttf',
+  'Poppins, sans-serif':       'Poppins-Bold.ttf',
+  'Bebas Neue, sans-serif':    'BebasNeue-Regular.ttf',
+  'Oswald, sans-serif':        'Oswald-Bold.ttf',
+  'Playfair Display, serif':   'PlayfairDisplay-Bold.ttf',
+  'Roboto, sans-serif':        'Roboto-Bold.ttf',
+  'Raleway, sans-serif':       'Raleway-Bold.ttf',
 };
 const FONT_ITALIC_MAP: Record<string, string> = {
   'sans-serif':     'Inter-BoldItalic.ttf',
@@ -279,6 +286,9 @@ export async function renderTextOverlayPng(
     paddingLeft = 0, paddingRight = 0,
     customX, customY,
     wordsPerLine,
+    outlineColor, outlineWidth = 0,
+    textOpacity = 100,
+    bgOpacity = 70,
   } = config;
   const DESIGN_WIDTH = 720;
   const scale = videoWidth / DESIGN_WIDTH;
@@ -345,7 +355,8 @@ export async function renderTextOverlayPng(
     ).join('\n');
     return `<span>${inner}</span>`;
   }
-  const mainMarkup = buildMarkup(effectiveFontColor);
+  const textAlpha = Math.round((textOpacity / 100) * 255);
+  const mainMarkup = buildMarkup(effectiveFontColor, textAlpha);
   const mainBuf = await renderPangoText(mainMarkup, fontPath, pangoAlign);
   const textW = mainBuf.width;
   const textH = mainBuf.height;
@@ -373,13 +384,14 @@ export async function renderTextOverlayPng(
   const composites: sharp.OverlayOptions[] = [];
   if (effectiveBgColor) {
     let bgR: number, bgG: number, bgB: number, bgA: number;
+    const bgAlphaFraction = bgOpacity / 100;
     if (effectiveBgColor.startsWith('rgba(')) {
       const m = effectiveBgColor.match(/rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)/);
-      if (m) { bgR = +m[1]; bgG = +m[2]; bgB = +m[3]; bgA = Math.round(+m[4] * 255); }
-      else { bgR = 0; bgG = 0; bgB = 0; bgA = 180; }
+      if (m) { bgR = +m[1]; bgG = +m[2]; bgB = +m[3]; bgA = Math.round(+m[4] * bgAlphaFraction * 255); }
+      else { bgR = 0; bgG = 0; bgB = 0; bgA = Math.round(bgAlphaFraction * 255); }
     } else {
       const c = parseColor(effectiveBgColor);
-      bgR = c.r; bgG = c.g; bgB = c.b; bgA = Math.round(c.alpha * 0.7);
+      bgR = c.r; bgG = c.g; bgB = c.b; bgA = Math.round(c.alpha * bgAlphaFraction);
     }
     const rx = Math.round((textStyle === 'rounded' || textStyle === 'bubble' ? 12 : 4) * scale);
     const bgW = Math.min(textW + boxPad * 2, videoWidth);
@@ -415,6 +427,22 @@ export async function renderTextOverlayPng(
     const soy = Math.round(shadow.oy * scale);
     const sc = await safeRawComposite(shadowInput, shadowW, shadowH, shadowChannels, overlayX + sox, overlayY + soy, videoWidth, videoHeight);
     if (sc) composites.push(sc);
+  }
+  // ── Text outline: render at 8 directional offsets ──
+  if (outlineColor && outlineWidth > 0) {
+    const scaledOutlineWidth = Math.round(outlineWidth * scale);
+    const outlineMarkup = buildMarkup(outlineColor, textAlpha);
+    const outlineBuf = await renderPangoText(outlineMarkup, fontPath, pangoAlign);
+    const directions = [
+      [0, -1], [1, -1], [1, 0], [1, 1],
+      [0, 1], [-1, 1], [-1, 0], [-1, -1],
+    ];
+    for (const [dx, dy] of directions) {
+      const ox = overlayX + dx * scaledOutlineWidth;
+      const oy = overlayY + dy * scaledOutlineWidth;
+      const oc = await safeRawComposite(outlineBuf.data, outlineBuf.width, outlineBuf.height, outlineBuf.channels, ox, oy, videoWidth, videoHeight);
+      if (oc) composites.push(oc);
+    }
   }
   const mainComp = await safeRawComposite(mainBuf.data, textW, textH, mainBuf.channels, overlayX, overlayY, videoWidth, videoHeight);
   if (mainComp) composites.push(mainComp);

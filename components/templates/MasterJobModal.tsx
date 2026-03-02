@@ -1,6 +1,7 @@
 'use client';
 
-import { X, Download, ThumbsUp, XCircle, CheckCircle2, Loader2, ExternalLink, RotateCcw, Copy, Pencil, Send, FileEdit, AlertTriangle, Film, Type, Music, Layers, PlusCircle } from 'lucide-react';
+import { useState } from 'react';
+import { X, Download, ThumbsUp, XCircle, CheckCircle2, Loader2, ExternalLink, RotateCcw, Copy, Pencil, Send, FileEdit, AlertTriangle, Film, Type, Music, Layers, PlusCircle, ChevronLeft, ChevronRight, Image as ImageIcon } from 'lucide-react';
 import type { TemplateJob, MasterConfigModel, MiniAppType } from '@/types';
 
 type PostRecord = {
@@ -33,6 +34,7 @@ const STEP_META: Record<string, { label: string; icon: typeof Film }> = {
   'bg-music': { label: 'Background Music', icon: Music },
   'attach-video': { label: 'Attach Video', icon: PlusCircle },
   'compose': { label: 'Compose', icon: Layers },
+  'carousel': { label: 'Carousel', icon: ImageIcon },
 };
 
 export default function MasterJobModal({
@@ -69,6 +71,13 @@ export default function MasterJobModal({
   const isFailed = job.status === 'failed';
   const isProcessing = job.status === 'processing' || job.status === 'queued';
   const isBusy = posting || regenerating;
+
+  // Carousel detection
+  const isCarouselOutput = job.outputUrl?.startsWith('carousel:');
+  const carouselUrls = isCarouselOutput
+    ? (() => { try { return JSON.parse(job.outputUrl!.slice('carousel:'.length)) as string[]; } catch { return []; } })()
+    : [];
+  const [carouselIndex, setCarouselIndex] = useState(0);
 
   const enabledSteps = (job.pipeline || []).filter(s => s.enabled);
   const completedStepIds = new Set((job.stepResults || []).map(r => r.stepId));
@@ -118,8 +127,57 @@ export default function MasterJobModal({
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto bg-neutral-50 dark:bg-neutral-950">
-          {/* Video */}
-          {videoUrl && isCompleted ? (
+          {/* Media preview: Carousel images or Video */}
+          {isCarouselOutput && isCompleted && carouselUrls.length > 0 ? (
+            <div className="relative bg-black">
+              {/* Carousel image */}
+              <div className="relative mx-auto max-h-[45vh] sm:max-h-[55vh] w-full overflow-hidden">
+                <img
+                  src={carouselUrls[carouselIndex]}
+                  alt={`Slide ${carouselIndex + 1}`}
+                  className="mx-auto max-h-[45vh] sm:max-h-[55vh] w-full object-contain"
+                />
+              </div>
+
+              {/* Prev / Next arrows */}
+              {carouselUrls.length > 1 && (
+                <>
+                  <button
+                    onClick={() => setCarouselIndex((i) => (i - 1 + carouselUrls.length) % carouselUrls.length)}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={() => setCarouselIndex((i) => (i + 1) % carouselUrls.length)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                </>
+              )}
+
+              {/* Slide counter + dots */}
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 backdrop-blur-sm">
+                <span className="text-[11px] font-semibold text-white">
+                  {carouselIndex + 1} / {carouselUrls.length}
+                </span>
+                {carouselUrls.length <= 10 && (
+                  <div className="flex items-center gap-1">
+                    {carouselUrls.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setCarouselIndex(i)}
+                        className={`h-1.5 rounded-full transition-all ${
+                          i === carouselIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/40 hover:bg-white/60'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : videoUrl && isCompleted && !isCarouselOutput ? (
             <div className="bg-black">
               <video
                 src={videoUrl}
@@ -137,7 +195,7 @@ export default function MasterJobModal({
                 </div>
               ) : (
                 <div className="text-sm text-neutral-500">
-                  {isFailed ? 'Video generation failed' : 'No video available'}
+                  {isFailed ? (isCarouselOutput ? 'Carousel generation failed' : 'Video generation failed') : 'No media available'}
                 </div>
               )}
             </div>
@@ -246,7 +304,19 @@ export default function MasterJobModal({
         {/* Actions */}
         {(isCompleted || isFailed) && (
           <div className="flex flex-wrap items-center gap-2 border-t border-neutral-200 bg-white p-3 sm:p-3.5 dark:border-neutral-700 dark:bg-neutral-900">
-            {videoUrl && isCompleted && (
+            {isCompleted && isCarouselOutput && carouselUrls.length > 0 && (
+              <a
+                href={carouselUrls[carouselIndex]}
+                download
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 sm:px-3 py-2 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-750"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Slide {carouselIndex + 1}</span>
+              </a>
+            )}
+            {isCompleted && !isCarouselOutput && videoUrl && (
               <a
                 href={videoUrl}
                 download

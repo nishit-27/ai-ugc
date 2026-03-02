@@ -6,6 +6,7 @@ import { getApiKeyByIndex } from '@/lib/lateAccountPool';
 import { downloadToBuffer } from '@/lib/storage';
 import { config } from '@/lib/config';
 import path from 'path';
+import sharp from 'sharp';
 import type { MasterConfig } from '@/types';
 import { auth } from '@/lib/auth';
 
@@ -300,7 +301,12 @@ export async function POST(
               if (!response.ok) throw new Error(`Failed to download carousel image: ${response.status}`);
               buf = Buffer.from(await response.arrayBuffer());
             }
-            const ext = path.extname(url.split('?')[0]) || '.jpg';
+            let ext = path.extname(url.split('?')[0]) || '.jpg';
+            // Instagram only supports JPG/PNG — convert WebP to JPEG
+            if (ext.toLowerCase() === '.webp') {
+              buf = await sharp(buf).jpeg({ quality: 92 }).toBuffer();
+              ext = '.jpg';
+            }
             carouselBuffers.push({ buffer: buf, ext });
           }
         } else {

@@ -30,4 +30,11 @@ export const FONTS = [
   { name: 'Times', family: 'Times New Roman, serif' },
   { name: 'Trebuchet', family: 'Trebuchet MS, sans-serif' },
   { name: 'Verdana', family: 'Verdana, sans-serif' },
+  { name: 'Montserrat', family: 'Montserrat, sans-serif' },
+  { name: 'Poppins', family: 'Poppins, sans-serif' },
+  { name: 'Bebas Neue', family: 'Bebas Neue, sans-serif' },
+  { name: 'Oswald', family: 'Oswald, sans-serif' },
+  { name: 'Playfair', family: 'Playfair Display, serif' },
+  { name: 'Roboto', family: 'Roboto, sans-serif' },
+  { name: 'Raleway', family: 'Raleway, sans-serif' },
 ];

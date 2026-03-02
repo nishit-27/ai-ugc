@@ -5,8 +5,8 @@ import { useModels } from '@/hooks/useModels';
 import { useGeneratedImages } from '@/hooks/useGeneratedImages';
 import PreviewModal from '@/components/ui/PreviewModal';
 import {
-  Upload, X, GripVertical, Check, ImageIcon, Loader2, ChevronDown,
-  Sparkles, RefreshCw, Expand, Link2,
+  Upload, X, GripVertical, Check, ImageIcon, Loader2, ChevronDown, ChevronRight,
+  Sparkles, RefreshCw, Expand, Link2, RotateCcw,
 } from 'lucide-react';
 import type { CarouselImageEntry, CarouselConfig as CC, ModelImage, GeneratedImage } from '@/types';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
@@ -81,11 +81,54 @@ export default function CarouselStepConfig({
   const [isLoadingUrl, setIsLoadingUrl] = useState(false);
   const [urlError, setUrlError] = useState<string | null>(null);
 
-  // Master mode per-model state
+  // Preserve text toggle
+  const [preserveText, setPreserveText] = useState(config.preserveText ?? true);
+
+  // Master mode per-model state (modelId → sceneIndex → results)
   const [masterGeneratingIds, setMasterGeneratingIds] = useState<Set<string>>(new Set());
-  const [masterPerModelResults, setMasterPerModelResults] = useState<Record<string, GenResult[]>>({});
+  const [masterPerModelResults, setMasterPerModelResults] = useState<Record<string, Record<number, GenResult[]>>>({});
   const [isMasterGeneratingAll, setIsMasterGeneratingAll] = useState(false);
   const [masterGenProgress, setMasterGenProgress] = useState({ done: 0, total: 0 });
+  // Collapsible model cards
+  const [collapsedModels, setCollapsedModels] = useState<Set<string>>(() =>
+    new Set(masterModels?.map((m) => m.modelId) || []),
+  );
+  // Per-scene regeneration tracking (modelId:sceneIndex)
+  const [masterRegeneratingScenes, setMasterRegeneratingScenes] = useState<Set<string>>(new Set());
+  // Per-scene library chooser (which model+scene we're picking a library image for)
+  const [choosingForScene, setChoosingForScene] = useState<{ modelId: string; sceneIndex: number } | null>(null);
+  // Extra images per model (beyond scene count, added from library via "+")
+  const [masterExtraImages, setMasterExtraImages] = useState<Record<string, GenResult[]>>({});
+  // Track when "+" was clicked to add an extra image
+  const [addingExtraForModel, setAddingExtraForModel] = useState<string | null>(null);
+  // Per-model library browser state
+  const [browsingModelId, setBrowsingModelId] = useState<string | null>(null);
+  const [modelLibraryImages, setModelLibraryImages] = useState<GeneratedImage[]>([]);
+  const [modelLibraryLoading, setModelLibraryLoading] = useState(false);
+  const [modelLibraryPage, setModelLibraryPage] = useState(1);
+  const [modelLibraryTotal, setModelLibraryTotal] = useState(0);
+  const modelLibraryTotalPages = Math.ceil(modelLibraryTotal / 24);
+
+  // Resizable split panel state (left column width as percentage)
+  const [splitPercent, setSplitPercent] = useState(40);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingSplit = useRef(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingSplit.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const pct = ((e.clientX - rect.left) / rect.width) * 100;
+      setSplitPercent(Math.min(70, Math.max(25, pct)));
+    };
+    const handleMouseUp = () => { isDraggingSplit.current = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
+  }, []);
+
+  const configRef = useRef(config);
+  useEffect(() => { configRef.current = config; });
 
   // Library browser
   const {
@@ -106,6 +149,63 @@ export default function CarouselStepConfig({
   useEffect(() => {
     if (config.modelId) loadModelImages(config.modelId);
   }, [config.modelId, loadModelImages]);
+
+  // Auto-sync "use-as-is" scene images to all models in master mode
+  useEffect(() => {
+    if (!masterMode || !masterModels || masterModels.length === 0) return;
+
+    const useAsIsScenes = sceneImages
+      .map((s, i) => ({ ...s, originalIndex: i }))
+      .filter((s) => s.action === 'use-as-is');
+
+    // Update display results: set use-as-is entries at their scene index
+    setMasterPerModelResults((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const model of masterModels) {
+        const existing = prev[model.modelId] || {};
+        const updated = { ...existing };
+        for (const scene of useAsIsScenes) {
+          const current = updated[scene.originalIndex];
+          const asIsResult: GenResult = { url: scene.url, gcsUrl: scene.url };
+          if (!current || current.length !== 1 || current[0].url !== scene.url) {
+            updated[scene.originalIndex] = [asIsResult];
+            changed = true;
+          }
+        }
+        if (changed) next[model.modelId] = updated;
+      }
+      return changed ? next : prev;
+    });
+
+    // Auto-select use-as-is images in config for all models
+    const latest = configRef.current;
+    const currentMaster = latest.masterCarouselImages || {};
+    const newMaster: Record<string, CarouselImageEntry[]> = { ...currentMaster };
+    let configChanged = false;
+    const useAsIsUrls = new Set(useAsIsScenes.map((s) => s.url));
+    const sceneUrlSet = new Set(sceneImages.map((s) => s.url));
+
+    for (const model of masterModels) {
+      const current = currentMaster[model.modelId] || [];
+      // Keep non-scene entries (generated images) + entries still marked use-as-is
+      const kept = current.filter((e) => !e.imageUrl || !sceneUrlSet.has(e.imageUrl) || useAsIsUrls.has(e.imageUrl));
+      const existingUrls = new Set(kept.map((e) => e.imageUrl).filter(Boolean));
+      const toAdd: CarouselImageEntry[] = [];
+      for (const scene of useAsIsScenes) {
+        if (!existingUrls.has(scene.url) && kept.length + toAdd.length < maxImages) {
+          toAdd.push({ imageUrl: scene.url, filename: scene.filename });
+        }
+      }
+      newMaster[model.modelId] = [...kept, ...toAdd];
+      if (toAdd.length > 0 || kept.length !== current.length) configChanged = true;
+    }
+
+    if (configChanged) {
+      onChange({ ...latest, masterCarouselImages: newMaster });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneImages, masterMode]);
 
   const handleImageSourceChange = (src: ImageSource) => {
     setImageSource(src);
@@ -290,75 +390,215 @@ export default function CarouselStepConfig({
     }
   };
 
-  // Master mode: generate all scenes for one model
-  const masterGenerateForModel = async (modelId: string, primaryGcsUrl: string) => {
-    const generateScenes = sceneImages.filter((s) => s.action === 'generate');
-    if (generateScenes.length === 0) return;
+  // Helper: flatten per-scene results map into a flat array (for config saving)
+  const flattenPerSceneResults = (perScene: Record<number, GenResult[]>): GenResult[] => {
+    const entries = Object.entries(perScene)
+      .sort(([a], [b]) => Number(a) - Number(b));
+    return entries.flatMap(([, results]) => results);
+  };
+
+  // Internal: generate for one model (all scenes), return results, update local display state only
+  // Results update incrementally per-scene so the UI shows progress immediately.
+  const masterGenerateForModelInternal = async (modelId: string, primaryGcsUrl: string, sceneIndices?: number[]): Promise<GenResult[]> => {
+    const generateSceneEntries = sceneImages
+      .map((s, i) => ({ scene: s, index: i }))
+      .filter(({ scene, index }) => scene.action === 'generate' && (!sceneIndices || sceneIndices.includes(index)));
 
     setMasterGeneratingIds((prev) => new Set(prev).add(modelId));
     setGenError(null);
+    // Auto-expand to show skeletons
+    setCollapsedModels((prev) => { const next = new Set(prev); next.delete(modelId); return next; });
 
-    const allResults: GenResult[] = [];
-    for (const scene of generateScenes) {
-      try {
-        const res = await fetch('/api/generate-carousel-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            modelImageUrl: primaryGcsUrl,
-            sceneImageUrl: scene.url,
-            count: genVariantsPerScene,
-            provider: genProvider,
-            resolution: genResolution,
-            modelId,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Generation failed');
-        allResults.push(...((data.images || []) as GenResult[]));
-      } catch (err) {
-        console.error(`[CarouselMaster] Generation failed for model ${modelId}:`, err);
+    // Also include "use-as-is" scenes immediately
+    const asIsUpdates: Record<number, GenResult[]> = {};
+    sceneImages.forEach((s, i) => {
+      if (s.action === 'use-as-is') {
+        asIsUpdates[i] = [{ url: s.url, gcsUrl: s.url }];
       }
+    });
+    if (Object.keys(asIsUpdates).length > 0) {
+      setMasterPerModelResults((prev) => {
+        const existing = prev[modelId] || {};
+        return { ...prev, [modelId]: { ...existing, ...asIsUpdates } };
+      });
     }
 
-    // Also add "use-as-is" scenes
-    const asIsScenes = sceneImages.filter((s) => s.action === 'use-as-is');
-    for (const scene of asIsScenes) {
-      allResults.push({ url: scene.url, gcsUrl: scene.url });
-    }
+    // Generate requested scenes in parallel — each updates UI immediately on completion
+    const allPerScene: Record<number, GenResult[]> = { ...asIsUpdates };
+    await Promise.all(
+      generateSceneEntries.map(async ({ scene, index }) => {
+        let results: GenResult[] = [];
+        try {
+          // 2-minute timeout per scene to prevent infinite hangs
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 120_000);
+          const res = await fetch('/api/generate-carousel-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              modelImageUrl: primaryGcsUrl,
+              sceneImageUrl: scene.url,
+              count: genVariantsPerScene,
+              provider: genProvider,
+              resolution: genResolution,
+              modelId,
+              preserveText,
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Generation failed');
+          results = (data.images || []) as GenResult[];
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Unknown error';
+          console.error(`[CarouselMaster] Failed model=${modelId} scene=${index}: ${msg}`);
+          results = []; // empty = failed
+        }
+        allPerScene[index] = results;
+        // Update UI immediately for this scene
+        setMasterPerModelResults((prev) => {
+          const existing = prev[modelId] || {};
+          return { ...prev, [modelId]: { ...existing, [index]: results } };
+        });
+      })
+    );
 
-    setMasterPerModelResults((prev) => ({ ...prev, [modelId]: allResults }));
+    // Done — clear generating state
     setMasterGeneratingIds((prev) => {
       const next = new Set(prev);
       next.delete(modelId);
       return next;
     });
 
-    // Auto-select all results for this model
-    if (allResults.length > 0) {
+    return flattenPerSceneResults(allPerScene);
+  };
+
+  // Regenerate a single scene for a specific model
+  const masterRegenerateScene = async (modelId: string, primaryGcsUrl: string, sceneIndex: number) => {
+    const key = `${modelId}:${sceneIndex}`;
+    setMasterRegeneratingScenes((prev) => new Set(prev).add(key));
+    setGenError(null);
+
+    const scene = sceneImages[sceneIndex];
+    if (!scene) return;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
+      const res = await fetch('/api/generate-carousel-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelImageUrl: primaryGcsUrl,
+          sceneImageUrl: scene.url,
+          count: genVariantsPerScene,
+          provider: genProvider,
+          resolution: genResolution,
+          modelId,
+          preserveText,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Generation failed');
+      const results = (data.images || []) as GenResult[];
+
+      setMasterPerModelResults((prev) => {
+        const existing = prev[modelId] || {};
+        return { ...prev, [modelId]: { ...existing, [sceneIndex]: results } };
+      });
+
+      // Update config with new results
+      const latest = configRef.current;
+      const modelResults = { ...(masterPerModelResults[modelId] || {}), [sceneIndex]: results };
+      const allResults = flattenPerSceneResults(modelResults);
       const entries: CarouselImageEntry[] = allResults.map((r) => ({
         imageId: r.id,
         imageUrl: r.url || r.gcsUrl,
         filename: (r.url || r.gcsUrl).split('/').pop() || 'generated.jpg',
       }));
       onChange({
-        ...config,
-        masterCarouselImages: { ...config.masterCarouselImages, [modelId]: entries },
+        ...latest,
+        masterCarouselImages: { ...latest.masterCarouselImages, [modelId]: entries },
+      });
+    } catch (err) {
+      // Mark scene as failed in results so UI shows retry card
+      setMasterPerModelResults((prev) => {
+        const existing = prev[modelId] || {};
+        return { ...prev, [modelId]: { ...existing, [sceneIndex]: [] } };
+      });
+      setGenError(err instanceof Error ? err.message : 'Regeneration failed');
+    } finally {
+      setMasterRegeneratingScenes((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
       });
     }
-
-    return allResults;
   };
 
-  // Master mode: generate for all models
+  // Single model generate (per-model button) — uses configRef for latest config
+  const masterGenerateForModel = async (modelId: string, primaryGcsUrl: string, sceneIndices?: number[]) => {
+    const results = await masterGenerateForModelInternal(modelId, primaryGcsUrl, sceneIndices);
+    if (results.length > 0) {
+      const latest = configRef.current;
+      const modelPerScene = masterPerModelResults[modelId] || {};
+      const allResults = flattenPerSceneResults(modelPerScene);
+      // Merge new results with existing flat list
+      const combined = [...allResults];
+      for (const r of results) {
+        if (!combined.some((c) => c.url === r.url)) combined.push(r);
+      }
+      const entries: CarouselImageEntry[] = combined.map((r) => ({
+        imageId: r.id,
+        imageUrl: r.url || r.gcsUrl,
+        filename: (r.url || r.gcsUrl).split('/').pop() || 'generated.jpg',
+      }));
+      onChange({
+        ...latest,
+        masterCarouselImages: { ...latest.masterCarouselImages, [modelId]: entries },
+      });
+    }
+    return results;
+  };
+
+  // Generate only missing scenes for a model
+  const masterGenerateMissing = async (modelId: string, primaryGcsUrl: string) => {
+    const existingResults = masterPerModelResults[modelId] || {};
+    const missingIndices = sceneImages
+      .map((s, i) => ({ scene: s, index: i }))
+      .filter(({ scene, index }) => scene.action === 'generate' && (!existingResults[index] || existingResults[index].length === 0))
+      .map(({ index }) => index);
+    if (missingIndices.length === 0) return;
+    return masterGenerateForModel(modelId, primaryGcsUrl, missingIndices);
+  };
+
+  // Generate for all models — accumulates results to avoid stale closure overwrites
   const masterGenerateAll = async () => {
     if (!masterModels || masterModels.length === 0 || sceneImages.length === 0) return;
     setIsMasterGeneratingAll(true);
     setMasterGenProgress({ done: 0, total: masterModels.length });
-    for (const model of masterModels) {
-      await masterGenerateForModel(model.modelId, model.primaryGcsUrl);
-      setMasterGenProgress((prev) => ({ ...prev, done: prev.done + 1 }));
-    }
+
+    const accumulated: Record<string, CarouselImageEntry[]> = { ...(configRef.current.masterCarouselImages || {}) };
+
+    // Fire all models in parallel
+    await Promise.all(
+      masterModels.map(async (model) => {
+        const results = await masterGenerateForModelInternal(model.modelId, model.primaryGcsUrl);
+        if (results.length > 0) {
+          const entries: CarouselImageEntry[] = results.map((r) => ({
+            imageId: r.id,
+            imageUrl: r.url || r.gcsUrl,
+            filename: (r.url || r.gcsUrl).split('/').pop() || 'generated.jpg',
+          }));
+          accumulated[model.modelId] = entries;
+          onChange({ ...configRef.current, masterCarouselImages: { ...accumulated }, preserveText });
+        }
+        setMasterGenProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+      })
+    );
     setIsMasterGeneratingAll(false);
   };
 
@@ -383,6 +623,132 @@ export default function CarouselStepConfig({
     return current.some((e) => e.imageUrl === url || e.imageId === result.id);
   };
 
+  // Per-model library: load generated images for a specific model
+  const loadModelLibrary = useCallback(async (modelId: string, page = 1) => {
+    setModelLibraryLoading(true);
+    try {
+      const params = new URLSearchParams({ modelId, page: String(page), limit: '24' });
+      const res = await fetch(`/api/generated-images?${params}`);
+      const data = await res.json();
+      setModelLibraryImages(data.images || []);
+      setModelLibraryTotal(data.total || 0);
+      setModelLibraryPage(page);
+    } catch {
+      setModelLibraryImages([]);
+    } finally {
+      setModelLibraryLoading(false);
+    }
+  }, []);
+
+  const toggleModelLibrary = useCallback((modelId: string) => {
+    setChoosingForScene(null);
+    setAddingExtraForModel(null);
+    if (browsingModelId === modelId) {
+      setBrowsingModelId(null);
+      setModelLibraryImages([]);
+    } else {
+      setBrowsingModelId(modelId);
+      loadModelLibrary(modelId, 1);
+    }
+  }, [browsingModelId, loadModelLibrary]);
+
+  // Toggle a library image into model's selected images
+  const masterToggleLibraryImage = (modelId: string, img: GeneratedImage) => {
+    const current = config.masterCarouselImages?.[modelId] || [];
+    const url = img.signedUrl || img.gcsUrl;
+    const isSelected = current.some((e) => e.imageId === img.id || e.imageUrl === url);
+    let updated: CarouselImageEntry[];
+    if (isSelected) {
+      updated = current.filter((e) => e.imageId !== img.id && e.imageUrl !== url);
+    } else {
+      if (current.length >= maxImages) return;
+      updated = [...current, { imageId: img.id, imageUrl: url, filename: img.filename }];
+    }
+    onChange({ ...config, masterCarouselImages: { ...config.masterCarouselImages, [modelId]: updated } });
+  };
+
+  // Choose a library image for a specific scene slot in master mode
+  const masterChooseLibraryForScene = (modelId: string, sceneIndex: number, img: GeneratedImage) => {
+    const url = img.signedUrl || img.gcsUrl;
+    const result: GenResult = { id: img.id, url, gcsUrl: img.gcsUrl };
+    // Replace result for this scene
+    setMasterPerModelResults((prev) => {
+      const existing = prev[modelId] || {};
+      return { ...prev, [modelId]: { ...existing, [sceneIndex]: [result] } };
+    });
+    // Auto-select: remove old scene result from selection, add new one
+    const latest = configRef.current;
+    const current = latest.masterCarouselImages?.[modelId] || [];
+    const oldResults = masterPerModelResults[modelId]?.[sceneIndex] || [];
+    const oldUrls = new Set(oldResults.map((r) => r.url || r.gcsUrl));
+    const filtered = current.filter((e) => !e.imageUrl || !oldUrls.has(e.imageUrl));
+    if (filtered.length < maxImages) {
+      const entries = [...filtered, { imageId: img.id, imageUrl: url, filename: img.filename }];
+      onChange({ ...latest, masterCarouselImages: { ...latest.masterCarouselImages, [modelId]: entries } });
+    }
+    setChoosingForScene(null);
+  };
+
+  // Add an extra image from library (beyond scene count)
+  const addExtraImage = (modelId: string, img: GeneratedImage) => {
+    const url = img.signedUrl || img.gcsUrl;
+    const result: GenResult = { id: img.id, url, gcsUrl: img.gcsUrl };
+    setMasterExtraImages((prev) => ({
+      ...prev,
+      [modelId]: [...(prev[modelId] || []), result],
+    }));
+    // Auto-select in config
+    const latest = configRef.current;
+    const current = latest.masterCarouselImages?.[modelId] || [];
+    if (current.length < maxImages && !current.some((e) => e.imageId === img.id || e.imageUrl === url)) {
+      onChange({
+        ...latest,
+        masterCarouselImages: {
+          ...latest.masterCarouselImages,
+          [modelId]: [...current, { imageId: img.id, imageUrl: url, filename: img.filename }],
+        },
+      });
+    }
+    setAddingExtraForModel(null);
+  };
+
+  // Remove an extra image
+  const removeExtraImage = (modelId: string, extraIndex: number) => {
+    const extras = masterExtraImages[modelId] || [];
+    const removed = extras[extraIndex];
+    setMasterExtraImages((prev) => ({
+      ...prev,
+      [modelId]: extras.filter((_, i) => i !== extraIndex),
+    }));
+    if (removed) {
+      const url = removed.url || removed.gcsUrl;
+      const latest = configRef.current;
+      const current = latest.masterCarouselImages?.[modelId] || [];
+      onChange({
+        ...latest,
+        masterCarouselImages: {
+          ...latest.masterCarouselImages,
+          [modelId]: current.filter((e) => e.imageUrl !== url && e.imageId !== removed.id),
+        },
+      });
+    }
+  };
+
+  // Open library for choosing (ensure it stays open, don't toggle closed)
+  const openLibraryForChoosing = (modelId: string, sceneIndex?: number) => {
+    if (sceneIndex !== undefined) {
+      setChoosingForScene({ modelId, sceneIndex });
+      setAddingExtraForModel(null);
+    } else {
+      setChoosingForScene(null);
+      setAddingExtraForModel(modelId);
+    }
+    if (browsingModelId !== modelId) {
+      setBrowsingModelId(modelId);
+      loadModelLibrary(modelId, 1);
+    }
+  };
+
   // Generate for one scene (non-master mode)
   const generateForScene = async (sceneIndex: number) => {
     const model = models.find((m) => m.id === config.modelId);
@@ -397,6 +763,8 @@ export default function CarouselStepConfig({
     setGenError(null);
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
       const res = await fetch('/api/generate-carousel-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -407,8 +775,11 @@ export default function CarouselStepConfig({
           provider: genProvider,
           resolution: genResolution,
           modelId: config.modelId,
+          preserveText,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Generation failed');
 
@@ -416,7 +787,10 @@ export default function CarouselStepConfig({
       setGenResults((prev) => new Map(prev).set(sceneIndex, results));
       return results;
     } catch (err) {
-      setGenError(err instanceof Error ? err.message : 'Generation failed');
+      const msg = err instanceof Error
+        ? (err.name === 'AbortError' ? 'Request timed out (2 min)' : err.message)
+        : 'Generation failed';
+      setGenError(msg);
       return null;
     } finally {
       setGeneratingScenes((prev) => {
@@ -454,12 +828,14 @@ export default function CarouselStepConfig({
       }
     }
 
-    // Process only "generate" scenes sequentially
-    for (let i = 0; i < sceneImages.length; i++) {
-      if (sceneImages[i].action !== 'generate') continue;
-      await generateForScene(i);
-      setGenProgress((prev) => ({ ...prev, done: prev.done + 1 }));
-    }
+    // Process all "generate" scenes in parallel
+    const generateIndices = sceneImages.map((s, i) => ({ s, i })).filter(({ s }) => s.action === 'generate').map(({ i }) => i);
+    await Promise.all(
+      generateIndices.map(async (i) => {
+        await generateForScene(i);
+        setGenProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+      })
+    );
 
     setIsGeneratingAll(false);
     refreshLibrary();
@@ -525,99 +901,114 @@ export default function CarouselStepConfig({
 
   return (
     <div className={`space-y-4 ${isExpanded && !masterMode ? 'mx-auto max-w-2xl' : ''}`}>
-      {/* Image source toggle */}
-      <div>
-        <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-          Image Source
-        </label>
-        <div className="flex gap-2">
-          {(masterMode
-            ? (['upload', 'generate'] as const)
-            : (['model', 'upload', 'generate'] as const)
-          ).map((src) => (
-            <button
-              key={src}
-              onClick={() => handleImageSourceChange(src)}
-              className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-150 ${
-                imageSource === src
-                  ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
-              }`}
-            >
-              {src === 'model' ? 'Model Gallery' : src === 'upload' ? 'Upload' : 'Generate'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Target platform */}
-      <div>
-        <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-          Target Platform
-        </label>
-        <div className="flex gap-2">
-          {(['instagram', 'tiktok', 'both'] as const).map((p) => (
-            <button
-              key={p}
-              onClick={() => onChange({ ...config, targetPlatform: p, maxImages: PLATFORM_LIMITS[p] })}
-              className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium capitalize transition-all duration-150 ${
-                platform === p
-                  ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
-              }`}
-            >
-              {p === 'both' ? 'Both' : p}
-            </button>
-          ))}
-        </div>
-        <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-          Max {maxImages} images for {platform === 'both' ? 'Instagram (10 limit)' : platform}
-        </p>
-      </div>
-
-      {/* Model selector (only in non-master mode for model gallery & generate) */}
-      {!masterMode && (imageSource === 'model' || imageSource === 'generate') && (
-        <div>
-          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-            Model
-          </label>
+      {/* Compact controls row: Image Source + Target Platform + Model (dropdowns) */}
+      <div className="flex flex-wrap items-end gap-3">
+        {/* Image Source dropdown */}
+        <div className="min-w-[120px]">
+          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Source</label>
           <div className="relative">
             <select
-              value={config.modelId || ''}
-              onChange={(e) => onChange({ ...config, modelId: e.target.value || undefined, images: [] })}
-              className="w-full appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 pr-8 text-sm text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+              value={imageSource}
+              onChange={(e) => handleImageSourceChange(e.target.value as ImageSource)}
+              className="w-full appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 pr-7 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
             >
-              <option value="">Select a model...</option>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
+              {!masterMode && <option value="model">Model Gallery</option>}
+              <option value="upload">Upload</option>
+              <option value="generate">Generate</option>
             </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
           </div>
         </div>
-      )}
 
-      {/* Image count indicator */}
-      <div className="flex items-center justify-between rounded-lg bg-[var(--accent)] px-3 py-2">
-        <div className="flex items-center gap-2">
-          <ImageIcon className="h-4 w-4 text-pink-500" />
-          <span className="text-xs font-medium text-[var(--text)]">
-            {config.images.length} / {maxImages} images selected
+        {/* Target Platform dropdown */}
+        <div className="min-w-[120px]">
+          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Platform</label>
+          <div className="relative">
+            <select
+              value={platform}
+              onChange={(e) => {
+                const p = e.target.value as 'instagram' | 'tiktok' | 'both';
+                onChange({ ...config, targetPlatform: p, maxImages: PLATFORM_LIMITS[p] });
+              }}
+              className="w-full appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 pr-7 text-xs font-medium capitalize text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+            >
+              <option value="instagram">Instagram</option>
+              <option value="tiktok">TikTok</option>
+              <option value="both">Both</option>
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
+          </div>
+        </div>
+
+        {/* Model selector (non-master, model gallery & generate) */}
+        {!masterMode && (imageSource === 'model' || imageSource === 'generate') && (
+          <div className="min-w-[160px] flex-1">
+            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Model</label>
+            <div className="relative">
+              <select
+                value={config.modelId || ''}
+                onChange={(e) => onChange({ ...config, modelId: e.target.value || undefined, images: [] })}
+                className="w-full appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 pr-7 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+              >
+                <option value="">Select a model...</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
+            </div>
+          </div>
+        )}
+
+        {/* Inline image count + limit info */}
+        <div className="flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-2.5 py-1.5">
+          <ImageIcon className="h-3.5 w-3.5 text-pink-500" />
+          <span className="text-[11px] font-medium text-[var(--text)]">
+            {(() => {
+              const activeScenes = sceneImages.filter((s) => s.action !== 'skip').length;
+              if (masterMode && masterModels && masterModels.length > 0) {
+                const totalSelected = Object.values(config.masterCarouselImages || {}).reduce((sum, arr) => sum + arr.length, 0);
+                if (activeScenes > 0) return `${totalSelected} sel · ${activeScenes} scenes · ${masterModels.length} models`;
+                return `${totalSelected} selected · ${masterModels.length} models`;
+              }
+              if (activeScenes > 0) return `${config.images.length} / ${activeScenes} selected`;
+              return `${config.images.length} selected`;
+            })()}
           </span>
+          {(() => {
+            const activeScenes = sceneImages.filter((s) => s.action !== 'skip').length;
+            if (activeScenes > maxImages) {
+              return <span className="text-[9px] font-medium text-amber-500">({maxImages} max)</span>;
+            }
+            return null;
+          })()}
         </div>
-        <div className="flex gap-2">
-          {imageSource === 'model' && config.modelId && modelImages.length > 0 && (
-            <button onClick={selectAll} className="text-[10px] font-medium text-[var(--primary)] hover:underline">
-              Select all
-            </button>
-          )}
-          {config.images.length > 0 && (
-            <button onClick={deselectAll} className="text-[10px] font-medium text-red-500 hover:underline">
-              Clear
-            </button>
-          )}
-        </div>
+
+        {/* Select all / Clear */}
+        {imageSource === 'model' && config.modelId && modelImages.length > 0 && (
+          <button onClick={selectAll} className="text-[10px] font-medium text-[var(--primary)] hover:underline pb-1">
+            Select all
+          </button>
+        )}
+        {config.images.length > 0 && (
+          <button onClick={deselectAll} className="text-[10px] font-medium text-red-500 hover:underline pb-1">
+            Clear
+          </button>
+        )}
       </div>
+
+      {/* Warning when scenes exceed platform limit */}
+      {(() => {
+        const activeScenes = sceneImages.filter((s) => s.action !== 'skip').length;
+        if (activeScenes > maxImages) {
+          return (
+            <p className="text-[10px] text-amber-500 font-medium">
+              You have {activeScenes} active scenes but {platform === 'both' ? 'Instagram' : platform} allows max {maxImages} images. Only the first {maxImages} will be used.
+            </p>
+          );
+        }
+        return null;
+      })()}
 
       {/* ─── Model Gallery mode ─── */}
       {imageSource === 'model' && config.modelId && (
@@ -694,9 +1085,9 @@ export default function CarouselStepConfig({
 
       {/* ─── Generate mode ─── */}
       {imageSource === 'generate' && (
-        <div className={isExpanded && masterMode ? 'flex gap-6 items-start' : ''}>
+        <div ref={splitContainerRef} className={isExpanded && masterMode ? 'flex items-start' : ''}>
         {/* Left column (or full width when not expanded/master) */}
-        <div className={`space-y-4 ${isExpanded && masterMode ? 'w-1/2 shrink-0' : ''}`}>
+        <div className={`space-y-4 ${isExpanded && masterMode ? 'shrink-0 pr-3' : ''}`} style={isExpanded && masterMode ? { width: `${splitPercent}%` } : undefined}>
           {/* Paste carousel post URL */}
           <div>
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
@@ -772,6 +1163,24 @@ export default function CarouselStepConfig({
             </div>
           </div>
 
+          {/* Preserve Text toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-[var(--border)] px-3 py-2">
+            <div>
+              <span className="text-[11px] font-semibold text-[var(--text)]">Preserve Text</span>
+              <p className="text-[9px] text-[var(--text-muted)]">Keep text/captions from scene images instead of removing them</p>
+            </div>
+            <button
+              onClick={() => {
+                const next = !preserveText;
+                setPreserveText(next);
+                onChange({ ...config, preserveText: next });
+              }}
+              className={`relative h-5 w-9 rounded-full transition-colors ${preserveText ? 'bg-[var(--primary)]' : 'bg-[var(--border)]'}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${preserveText ? 'translate-x-4' : ''}`} />
+            </button>
+          </div>
+
           {/* Scene images upload */}
           <div>
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
@@ -799,8 +1208,11 @@ export default function CarouselStepConfig({
                           : 'border-[var(--border)] bg-[var(--surface)]'
                       }`}
                     >
-                      {/* Thumbnail */}
-                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg">
+                      {/* Thumbnail — click to preview */}
+                      <div
+                        className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg cursor-pointer"
+                        onClick={() => setPreviewUrl(scene.url)}
+                      >
                         <img src={scene.url} alt={scene.filename} className="h-full w-full object-cover" />
                         {isSceneGenerating && (
                           <div className="absolute inset-0 flex items-center justify-center bg-black/30">
@@ -886,35 +1298,16 @@ export default function CarouselStepConfig({
             </div>
           </div>
 
-          {/* Master mode: summary + generate all */}
-          {masterMode && masterModels && masterModels.length > 0 && (() => {
+          {/* Master mode: scene action summary (badges only — Generate All button is in the right column) */}
+          {masterMode && masterModels && masterModels.length > 0 && sceneImages.length > 0 && (() => {
             const generateCount = sceneImages.filter((s) => s.action === 'generate').length;
             const useAsIsCount = sceneImages.filter((s) => s.action === 'use-as-is').length;
             const skipCount = sceneImages.filter((s) => s.action === 'skip').length;
-            return sceneImages.length > 0 && (
-              <div className="space-y-2">
-                <div className="flex flex-wrap gap-2 text-[10px] text-[var(--text-muted)]">
-                  {generateCount > 0 && <span className="rounded bg-[var(--accent)] dark:bg-[var(--primary)]/10 px-1.5 py-0.5 text-[var(--primary)] dark:text-[var(--primary)]">{generateCount} to generate</span>}
-                  {useAsIsCount > 0 && <span className="rounded bg-blue-100 dark:bg-blue-950/30 px-1.5 py-0.5 text-blue-600 dark:text-blue-400">{useAsIsCount} use as-is</span>}
-                  {skipCount > 0 && <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-gray-500">{skipCount} skipped</span>}
-                </div>
-                {generateCount > 0 && (
-                  <button
-                    onClick={masterGenerateAll}
-                    disabled={isMasterGeneratingAll || sceneImages.length === 0}
-                    className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
-                      isMasterGeneratingAll || sceneImages.length === 0
-                        ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
-                        : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-hover)] shadow-sm'
-                    }`}
-                  >
-                    {isMasterGeneratingAll ? (
-                      <><Loader2 className="h-4 w-4 animate-spin" /> Generating... {masterGenProgress.done}/{masterGenProgress.total} models</>
-                    ) : (
-                      <><Sparkles className="h-4 w-4" /> Generate All ({masterModels.length} model{masterModels.length !== 1 ? 's' : ''} × {generateCount} scene{generateCount !== 1 ? 's' : ''})</>
-                    )}
-                  </button>
-                )}
+            return (
+              <div className="flex flex-wrap gap-2 text-[10px] text-[var(--text-muted)]">
+                {generateCount > 0 && <span className="rounded bg-[var(--accent)] dark:bg-[var(--primary)]/10 px-1.5 py-0.5 text-[var(--primary)] dark:text-[var(--primary)]">{generateCount} to generate</span>}
+                {useAsIsCount > 0 && <span className="rounded bg-blue-100 dark:bg-blue-950/30 px-1.5 py-0.5 text-blue-600 dark:text-blue-400">{useAsIsCount} use as-is</span>}
+                {skipCount > 0 && <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-gray-500">{skipCount} skipped</span>}
               </div>
             );
           })()}
@@ -957,61 +1350,474 @@ export default function CarouselStepConfig({
           {genError && <p className="text-[10px] text-red-500">{genError}</p>}
           </div>{/* end left column */}
 
+          {/* Resizable drag handle */}
+          {isExpanded && masterMode && masterModels && masterModels.length > 0 && (
+            <div
+              className="shrink-0 w-1.5 cursor-col-resize self-stretch flex items-center justify-center group"
+              onMouseDown={() => { isDraggingSplit.current = true; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'; }}
+            >
+              <div className="w-0.5 h-full rounded-full bg-[var(--border)] transition-colors group-hover:bg-[var(--primary)]/60 group-active:bg-[var(--primary)]" />
+            </div>
+          )}
+
           {/* Right column: per-model cards (only in master mode) */}
           {masterMode && masterModels && masterModels.length > 0 && (() => {
             const generateCount = sceneImages.filter((s) => s.action === 'generate').length;
+            const activeSceneCount = sceneImages.filter((s) => s.action !== 'skip').length;
             return (
-              <div className={isExpanded ? 'flex-1 min-w-0 max-h-[70vh] overflow-y-auto space-y-2' : 'space-y-2'}>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  Per Model — {generateCount > 0 ? 'generate or choose images' : 'choose images'}
-                </label>
+              <div className={isExpanded ? 'flex-1 min-w-0 max-h-[70vh] overflow-y-auto space-y-2 pl-3' : 'space-y-2'}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    Per Model — {generateCount > 0 ? 'generate or choose images' : 'choose images'}
+                  </label>
+                  {generateCount > 0 && (
+                    <button
+                      onClick={masterGenerateAll}
+                      disabled={isMasterGeneratingAll || sceneImages.length === 0}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                        isMasterGeneratingAll || sceneImages.length === 0
+                          ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
+                          : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-hover)] shadow-sm'
+                      }`}
+                    >
+                      {isMasterGeneratingAll ? (
+                        <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating {masterGenProgress.done}/{masterGenProgress.total}...</>
+                      ) : (
+                        <><Sparkles className="h-3.5 w-3.5" /> Generate All ({masterModels.length} models)</>
+                      )}
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-2">
                   {masterModels.map((model) => {
                     const isGenerating = masterGeneratingIds.has(model.modelId);
-                    const results = masterPerModelResults[model.modelId] || [];
+                    const perSceneResults = masterPerModelResults[model.modelId] || {};
+                    const allResults = flattenPerSceneResults(perSceneResults);
                     const selectedImages = config.masterCarouselImages?.[model.modelId] || [];
+                    const isCollapsed = collapsedModels.has(model.modelId);
+                    const totalScenes = sceneImages.filter((s) => s.action === 'generate').length;
+                    const completedScenes = Object.entries(perSceneResults).filter(([idx, r]) => {
+                      const si = sceneImages[Number(idx)];
+                      return si?.action === 'generate' && r.length > 0;
+                    }).length;
+                    const hasMissing = totalScenes > 0 && completedScenes < totalScenes && completedScenes > 0;
                     return (
                       <div key={model.modelId} className="rounded-xl border border-[var(--border)] p-2.5 space-y-2">
-                        <div className="flex items-center gap-2.5">
-                          <img src={model.primaryImageUrl} alt={model.modelName} className="h-10 w-10 rounded-lg object-cover shrink-0 border border-[var(--border)] cursor-pointer" onClick={() => setPreviewUrl(model.primaryImageUrl)} />
+                        {/* Clickable header row */}
+                        <div
+                          className="flex items-center gap-2.5 cursor-pointer select-none"
+                          onClick={() => setCollapsedModels((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(model.modelId)) next.delete(model.modelId);
+                            else next.add(model.modelId);
+                            return next;
+                          })}
+                        >
+                          {isCollapsed
+                            ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
+                            : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
+                          }
+                          <img
+                            src={model.primaryImageUrl}
+                            alt={model.modelName}
+                            className="h-10 w-10 rounded-lg object-cover shrink-0 border border-[var(--border)] cursor-pointer"
+                            onClick={(e) => { e.stopPropagation(); setPreviewUrl(model.primaryImageUrl); }}
+                          />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-[var(--text)] truncate">{model.modelName}</p>
-                            <p className="text-[10px] text-[var(--text-muted)]">{selectedImages.length} / {maxImages} images</p>
+                            <p className="text-[10px] text-[var(--text-muted)]">
+                              {activeSceneCount > 0
+                                ? `${selectedImages.length} / ${Math.min(activeSceneCount, maxImages)} images`
+                                : `${selectedImages.length} images`
+                              }
+                              {totalScenes > 0 && completedScenes > 0 && ` · ${completedScenes}/${totalScenes} done`}
+                              {selectedImages.length === 0 && activeSceneCount > 0 && !isGenerating && (
+                                <span className="ml-1 text-amber-500">· pending</span>
+                              )}
+                            </p>
                           </div>
                           {isGenerating && <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-[var(--primary)] animate-spin shrink-0" />}
-                          {!isGenerating && generateCount > 0 && (
+                          {/* Action buttons — stop propagation so clicking them doesn't toggle collapse */}
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                            {/* Browse library for this model */}
                             <button
-                              onClick={() => masterGenerateForModel(model.modelId, model.primaryGcsUrl)}
-                              disabled={isMasterGeneratingAll || sceneImages.length === 0}
-                              className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-colors ${results.length > 0 ? 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]' : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-hover)]'} disabled:opacity-50`}
+                              onClick={() => toggleModelLibrary(model.modelId)}
+                              className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border transition-colors ${browsingModelId === model.modelId ? 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary)]/10' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'}`}
                             >
-                              {results.length > 0 ? <RefreshCw className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
-                              {results.length > 0 ? 'Redo' : 'Generate'}
+                              <ImageIcon className="h-3 w-3" /> Browse
                             </button>
-                          )}
+                            {!isGenerating && !isMasterGeneratingAll && hasMissing && (
+                              <button
+                                onClick={() => masterGenerateMissing(model.modelId, model.primaryGcsUrl)}
+                                disabled={isMasterGeneratingAll}
+                                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border border-amber-400 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20 disabled:opacity-50"
+                              >
+                                <Sparkles className="h-3 w-3" /> Missing
+                              </button>
+                            )}
+                            {!isGenerating && !isMasterGeneratingAll && generateCount > 0 && (
+                              <button
+                                onClick={() => masterGenerateForModel(model.modelId, model.primaryGcsUrl)}
+                                disabled={isMasterGeneratingAll || sceneImages.length === 0}
+                                className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-colors ${allResults.length > 0 ? 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]' : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-hover)]'} disabled:opacity-50`}
+                              >
+                                {allResults.length > 0 ? <RefreshCw className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
+                                {allResults.length > 0 ? 'Redo' : 'Generate'}
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        {results.length > 0 && (
-                          <div className={`grid gap-1.5 ${isExpanded ? 'grid-cols-5' : 'grid-cols-4'}`}>
-                            {results.map((result, ri) => {
-                              const selected = isMasterResultSelected(model.modelId, result);
-                              const atLimit = !selected && selectedImages.length >= maxImages;
-                              const orderIdx = selectedImages.findIndex((e) => e.imageUrl === (result.url || result.gcsUrl) || e.imageId === result.id);
-                              return (
-                                <button key={ri} onClick={() => !atLimit && masterToggleResult(model.modelId, result)} className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${selected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20' : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed' : 'border-[var(--border)] hover:border-[var(--primary)]/50'}`}>
-                                  <img src={result.url} alt="" className="h-full w-full object-cover" />
-                                  {selected && (<div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20"><div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] font-bold">{orderIdx + 1}</div></div>)}
-                                  <div onClick={(e) => { e.stopPropagation(); setPreviewUrl(result.url); }} className="absolute bottom-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"><Expand className="h-2 w-2" /></div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {selectedImages.length > 0 && (
-                          <div className="flex items-center justify-between">
-                            <p className="text-[10px] text-green-600 dark:text-green-400 font-medium">{selectedImages.length} image{selectedImages.length !== 1 ? 's' : ''} selected</p>
-                            <button onClick={() => onChange({ ...config, masterCarouselImages: { ...config.masterCarouselImages, [model.modelId]: [] } })} className="text-[10px] text-red-500 hover:underline">Clear</button>
-                          </div>
-                        )}
+                        {/* Expanded content: flat grid of all scene results + failed/pending placeholders */}
+                        {!isCollapsed && (() => {
+                          // Build a flat list of all active scenes with their status
+                          const activeScenes = sceneImages
+                            .map((s, i) => ({ scene: s, index: i }))
+                            .filter(({ scene }) => scene.action !== 'skip');
+                          const extras = masterExtraImages[model.modelId] || [];
+                          const hasAnyContent = isGenerating || allResults.length > 0 || extras.length > 0 || activeScenes.some(({ index }) => perSceneResults[index]?.length === 0);
+
+                          if (!hasAnyContent && activeScenes.length === 0) return null;
+
+                          return (
+                            <>
+                              {/* Fixed-height scrollable grid */}
+                              <div className="max-h-[280px] overflow-y-auto rounded-lg">
+                                <div className={`grid gap-1.5 ${isExpanded ? 'grid-cols-5' : 'grid-cols-3'}`}>
+                                  {activeScenes.map(({ scene, index: sceneIdx }) => {
+                                    const sceneResult = perSceneResults[sceneIdx];
+                                    const hasResults = sceneResult && sceneResult.length > 0;
+                                    const isFailed = Array.isArray(sceneResult) && sceneResult.length === 0;
+                                    const isPending = !sceneResult && isGenerating;
+                                    const isSceneRegenerating = masterRegeneratingScenes.has(`${model.modelId}:${sceneIdx}`);
+
+                                    // Scene has results — show result image with hover actions
+                                    if (hasResults) {
+                                      return sceneResult.map((result, ri) => {
+                                        const selected = isMasterResultSelected(model.modelId, result);
+                                        const atLimit = !selected && selectedImages.length >= maxImages;
+                                        const orderIdx = selectedImages.findIndex((e) => e.imageUrl === (result.url || result.gcsUrl) || e.imageId === result.id);
+                                        return (
+                                          <button
+                                            key={`${sceneIdx}-${ri}`}
+                                            onClick={() => !atLimit && masterToggleResult(model.modelId, result)}
+                                            className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${selected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20' : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed' : 'border-[var(--border)] hover:border-[var(--primary)]/50'}`}
+                                          >
+                                            <img src={result.url} alt="" className="h-full w-full object-cover" />
+                                            <div className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 py-0.5 text-[8px] font-bold text-white">
+                                              {sceneIdx + 1}
+                                            </div>
+                                            {selected && (
+                                              <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
+                                                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] font-bold">{orderIdx + 1}</div>
+                                              </div>
+                                            )}
+                                            <div className="absolute bottom-0.5 right-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                              {scene.action === 'generate' && (
+                                                <div
+                                                  onClick={(e) => { e.stopPropagation(); masterRegenerateScene(model.modelId, model.primaryGcsUrl, sceneIdx); }}
+                                                  className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-black/70"
+                                                  title="Re-generate"
+                                                >
+                                                  <RotateCcw className="h-2 w-2" />
+                                                </div>
+                                              )}
+                                              <div
+                                                onClick={(e) => { e.stopPropagation(); openLibraryForChoosing(model.modelId, sceneIdx); }}
+                                                className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-black/70"
+                                                title="Choose from library"
+                                              >
+                                                <ImageIcon className="h-2 w-2" />
+                                              </div>
+                                              <div
+                                                onClick={(e) => { e.stopPropagation(); setPreviewUrl(result.url); }}
+                                                className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-black/70"
+                                              >
+                                                <Expand className="h-2 w-2" />
+                                              </div>
+                                            </div>
+                                          </button>
+                                        );
+                                      });
+                                    }
+
+                                    // Failed scene — show scene bg with Retry + Choose + Generate icons
+                                    if (isFailed) {
+                                      return (
+                                        <div
+                                          key={`failed-${sceneIdx}`}
+                                          className="group relative aspect-[3/4] overflow-hidden rounded-lg border-2 border-dashed border-red-400/50 bg-[var(--accent)]"
+                                        >
+                                          <img src={scene.url} alt="" className="h-full w-full object-cover opacity-20" />
+                                          <div className="absolute left-0.5 top-0.5 rounded bg-red-500/80 px-1 py-0.5 text-[8px] font-bold text-white">
+                                            {sceneIdx + 1}
+                                          </div>
+                                          <div className="absolute right-0.5 top-0.5 rounded bg-red-500/80 px-1 py-0.5 text-[7px] font-bold text-white">
+                                            Failed
+                                          </div>
+                                          <div className="absolute inset-0 flex items-center justify-center gap-1.5">
+                                            {isSceneRegenerating ? (
+                                              <Loader2 className="h-4 w-4 animate-spin text-[var(--primary)]" />
+                                            ) : (
+                                              <>
+                                                <div
+                                                  onClick={() => masterRegenerateScene(model.modelId, model.primaryGcsUrl, sceneIdx)}
+                                                  className={`flex flex-col items-center gap-0.5 rounded-lg bg-black/50 text-white cursor-pointer hover:bg-black/70 transition-colors ${isExpanded ? 'px-1.5 py-1' : 'p-1.5'}`}
+                                                  title="Retry"
+                                                >
+                                                  <RotateCcw className="h-3 w-3" />
+                                                  {isExpanded && <span className="text-[6px] font-bold">Retry</span>}
+                                                </div>
+                                                <div
+                                                  onClick={() => openLibraryForChoosing(model.modelId, sceneIdx)}
+                                                  className={`flex flex-col items-center gap-0.5 rounded-lg bg-black/50 text-white cursor-pointer hover:bg-black/70 transition-colors ${isExpanded ? 'px-1.5 py-1' : 'p-1.5'}`}
+                                                  title="Choose from library"
+                                                >
+                                                  <ImageIcon className="h-3 w-3" />
+                                                  {isExpanded && <span className="text-[6px] font-bold">Choose</span>}
+                                                </div>
+                                              </>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+
+                                    // Pending / generating — skeleton
+                                    if (isPending || isSceneRegenerating) {
+                                      return (
+                                        <div key={`pending-${sceneIdx}`} className="relative aspect-[3/4] overflow-hidden rounded-lg border-2 border-[var(--border)] bg-[var(--accent)]">
+                                          <img src={scene.url} alt="" className="h-full w-full object-cover opacity-25" />
+                                          <div className="absolute left-0.5 top-0.5 rounded bg-black/40 px-1 py-0.5 text-[8px] font-bold text-white">
+                                            {sceneIdx + 1}
+                                          </div>
+                                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                                            <Loader2 className="h-4 w-4 animate-spin text-[var(--primary)]" />
+                                          </div>
+                                          <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/5 to-transparent" />
+                                        </div>
+                                      );
+                                    }
+
+                                    // No results yet, not generating — show Generate + Choose icons
+                                    if (!sceneResult && !isGenerating && scene.action === 'generate') {
+                                      return (
+                                        <div
+                                          key={`empty-${sceneIdx}`}
+                                          className="group relative aspect-[3/4] overflow-hidden rounded-lg border-2 border-dashed border-[var(--border)] bg-[var(--accent)]"
+                                        >
+                                          <img src={scene.url} alt="" className="h-full w-full object-cover opacity-25" />
+                                          <div className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 py-0.5 text-[8px] font-bold text-white">
+                                            {sceneIdx + 1}
+                                          </div>
+                                          <div className="absolute inset-0 flex items-center justify-center gap-1.5">
+                                            <div
+                                              onClick={() => masterRegenerateScene(model.modelId, model.primaryGcsUrl, sceneIdx)}
+                                              className={`flex flex-col items-center gap-0.5 rounded-lg bg-black/40 text-white cursor-pointer hover:bg-black/60 transition-colors ${isExpanded ? 'px-2 py-1.5' : 'p-1.5'}`}
+                                              title="Generate"
+                                            >
+                                              <Sparkles className={isExpanded ? 'h-3.5 w-3.5' : 'h-3 w-3'} />
+                                              {isExpanded && <span className="text-[7px] font-semibold">Generate</span>}
+                                            </div>
+                                            <div
+                                              onClick={() => openLibraryForChoosing(model.modelId, sceneIdx)}
+                                              className={`flex flex-col items-center gap-0.5 rounded-lg bg-black/40 text-white cursor-pointer hover:bg-black/60 transition-colors ${isExpanded ? 'px-2 py-1.5' : 'p-1.5'}`}
+                                              title="Choose from library"
+                                            >
+                                              <ImageIcon className={isExpanded ? 'h-3.5 w-3.5' : 'h-3 w-3'} />
+                                              {isExpanded && <span className="text-[7px] font-semibold">Choose</span>}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+
+                                    return null;
+                                  })}
+                                  {/* Extra images from library (added via "+") */}
+                                  {(masterExtraImages[model.modelId] || []).map((extra, ei) => {
+                                    const extraSelected = isMasterResultSelected(model.modelId, extra);
+                                    const extraAtLimit = !extraSelected && selectedImages.length >= maxImages;
+                                    const extraOrderIdx = selectedImages.findIndex((e) => e.imageUrl === (extra.url || extra.gcsUrl) || e.imageId === extra.id);
+                                    return (
+                                      <button
+                                        key={`extra-${ei}`}
+                                        onClick={() => !extraAtLimit && masterToggleResult(model.modelId, extra)}
+                                        className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${extraSelected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20' : extraAtLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed' : 'border-[var(--border)] hover:border-[var(--primary)]/50'}`}
+                                      >
+                                        <img src={extra.url} alt="" className="h-full w-full object-cover" />
+                                        <div className="absolute left-0.5 top-0.5 rounded bg-purple-600/80 px-1 py-0.5 text-[8px] font-bold text-white">
+                                          +{ei + 1}
+                                        </div>
+                                        {extraSelected && (
+                                          <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
+                                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] font-bold">{extraOrderIdx + 1}</div>
+                                          </div>
+                                        )}
+                                        <div className="absolute bottom-0.5 right-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                          <div
+                                            onClick={(e) => { e.stopPropagation(); removeExtraImage(model.modelId, ei); }}
+                                            className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-red-500/70"
+                                            title="Remove"
+                                          >
+                                            <X className="h-2 w-2" />
+                                          </div>
+                                          <div
+                                            onClick={(e) => { e.stopPropagation(); setPreviewUrl(extra.url); }}
+                                            className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-black/70"
+                                          >
+                                            <Expand className="h-2 w-2" />
+                                          </div>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                  {/* "+" card to add extra images from library */}
+                                  <div
+                                    onClick={() => openLibraryForChoosing(model.modelId)}
+                                    className="relative aspect-[3/4] overflow-hidden rounded-lg border-2 border-dashed border-[var(--border)] bg-[var(--accent)] cursor-pointer hover:border-[var(--primary)]/50 hover:bg-[var(--primary)]/5 transition-all flex items-center justify-center"
+                                  >
+                                    <div className="flex flex-col items-center gap-1 text-[var(--text-muted)]">
+                                      <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-dashed border-[var(--border)]">
+                                        <span className="text-base font-medium leading-none">+</span>
+                                      </div>
+                                      <span className="text-[7px] font-medium">Add image</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              {/* Library browser for this model */}
+                              {browsingModelId === model.modelId && (
+                                <div className="rounded-lg border border-[var(--primary)]/20 bg-[var(--primary)]/5 p-2 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-semibold text-[var(--text-muted)]">
+                                      Previously Generated {modelLibraryTotal > 0 && `(${modelLibraryTotal})`}
+                                    </span>
+                                    <button
+                                      onClick={() => { setBrowsingModelId(null); setChoosingForScene(null); setAddingExtraForModel(null); }}
+                                      className="rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--accent)]"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                  {/* Scene assignment banner */}
+                                  {choosingForScene && choosingForScene.modelId === model.modelId && (
+                                    <div className="flex items-center gap-1.5 rounded-md bg-[var(--primary)]/10 px-2 py-1">
+                                      <ImageIcon className="h-3 w-3 text-[var(--primary)]" />
+                                      <span className="text-[10px] font-medium text-[var(--primary)]">
+                                        Pick image for Scene {choosingForScene.sceneIndex + 1}
+                                      </span>
+                                      <button
+                                        onClick={() => setChoosingForScene(null)}
+                                        className="ml-auto text-[var(--text-muted)] hover:text-[var(--text)]"
+                                      >
+                                        <X className="h-2.5 w-2.5" />
+                                      </button>
+                                    </div>
+                                  )}
+                                  {/* Add extra image banner */}
+                                  {addingExtraForModel === model.modelId && !choosingForScene && (
+                                    <div className="flex items-center gap-1.5 rounded-md bg-purple-500/10 px-2 py-1">
+                                      <span className="text-[10px] font-medium text-purple-500">
+                                        Pick an image to add to the carousel
+                                      </span>
+                                      <button
+                                        onClick={() => setAddingExtraForModel(null)}
+                                        className="ml-auto text-[var(--text-muted)] hover:text-[var(--text)]"
+                                      >
+                                        <X className="h-2.5 w-2.5" />
+                                      </button>
+                                    </div>
+                                  )}
+                                  {modelLibraryLoading ? (
+                                    <div className="flex items-center justify-center gap-2 py-4">
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--primary)]" />
+                                      <span className="text-[10px] text-[var(--text-muted)]">Loading...</span>
+                                    </div>
+                                  ) : modelLibraryImages.length === 0 ? (
+                                    <div className="py-3 text-center text-[10px] text-[var(--text-muted)]">
+                                      No previously generated images for this model.
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="max-h-[280px] overflow-y-auto rounded-lg">
+                                      <div className={`grid gap-1.5 ${isExpanded ? 'grid-cols-5' : 'grid-cols-3'}`}>
+                                        {modelLibraryImages.map((img) => {
+                                          const url = img.signedUrl || img.gcsUrl;
+                                          const current = config.masterCarouselImages?.[model.modelId] || [];
+                                          const libSelected = current.some((e) => e.imageId === img.id || e.imageUrl === url);
+                                          const atLimit = !libSelected && current.length >= maxImages;
+                                          const orderIdx = current.findIndex((e) => e.imageId === img.id || e.imageUrl === url);
+                                          const isChoosingForThisModel = choosingForScene && choosingForScene.modelId === model.modelId;
+                                          const isAddingExtra = addingExtraForModel === model.modelId && !isChoosingForThisModel;
+                                          const isPickMode = isChoosingForThisModel || isAddingExtra;
+                                          return (
+                                            <button
+                                              key={img.id}
+                                              onClick={() => {
+                                                if (isChoosingForThisModel) {
+                                                  masterChooseLibraryForScene(model.modelId, choosingForScene!.sceneIndex, img);
+                                                } else if (isAddingExtra) {
+                                                  addExtraImage(model.modelId, img);
+                                                } else if (!atLimit) {
+                                                  masterToggleLibraryImage(model.modelId, img);
+                                                }
+                                              }}
+                                              className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${
+                                                isPickMode ? 'border-[var(--border)] hover:border-[var(--primary)] hover:ring-2 hover:ring-[var(--primary)]/20'
+                                                  : libSelected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
+                                                  : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed'
+                                                  : 'border-[var(--border)] hover:border-[var(--primary)]/50'
+                                              }`}
+                                            >
+                                              <img src={url} alt={img.filename} className="h-full w-full object-cover" loading="lazy" />
+                                              {!isPickMode && libSelected && (
+                                                <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
+                                                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] font-bold">{orderIdx + 1}</div>
+                                                </div>
+                                              )}
+                                              <div
+                                                onClick={(e) => { e.stopPropagation(); setPreviewUrl(url); }}
+                                                className="absolute bottom-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
+                                              >
+                                                <Expand className="h-2 w-2" />
+                                              </div>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                      </div>
+                                      {modelLibraryTotalPages > 1 && (
+                                        <div className="flex items-center justify-center gap-2">
+                                          <button
+                                            onClick={() => loadModelLibrary(model.modelId, Math.max(1, modelLibraryPage - 1))}
+                                            disabled={modelLibraryPage <= 1}
+                                            className="rounded-md border border-[var(--border)] px-2 py-0.5 text-[9px] font-medium text-[var(--text-muted)] hover:bg-[var(--accent)] disabled:opacity-40"
+                                          >
+                                            Prev
+                                          </button>
+                                          <span className="text-[9px] text-[var(--text-muted)]">{modelLibraryPage} / {modelLibraryTotalPages}</span>
+                                          <button
+                                            onClick={() => loadModelLibrary(model.modelId, Math.min(modelLibraryTotalPages, modelLibraryPage + 1))}
+                                            disabled={modelLibraryPage >= modelLibraryTotalPages}
+                                            className="rounded-md border border-[var(--border)] px-2 py-0.5 text-[9px] font-medium text-[var(--text-muted)] hover:bg-[var(--accent)] disabled:opacity-40"
+                                          >
+                                            Next
+                                          </button>
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                              {selectedImages.length > 0 && (
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[10px] text-green-600 dark:text-green-400 font-medium">{selectedImages.length} image{selectedImages.length !== 1 ? 's' : ''} selected</p>
+                                  <button onClick={() => onChange({ ...config, masterCarouselImages: { ...config.masterCarouselImages, [model.modelId]: [] } })} className="text-[10px] text-red-500 hover:underline">Clear</button>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     );
                   })}
