@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/api/templates': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
     '/api/templates/[id]': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
+    '/api/video-duration': ['./node_modules/@ffprobe-installer/**'],
     '/api/generate-first-frame': ['./node_modules/@fal-ai/**'],
   },
 };
