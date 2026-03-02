@@ -36,10 +36,13 @@ export async function POST(request: NextRequest) {
     const firstIsBatchVideo = firstEnabled.type === 'batch-video-generation';
     const firstIsVideo = firstEnabled.type === 'video-generation';
 
+    // Determine whether the pipeline actually needs an input video
+    let needsInputVideo = false;
+
     if (firstIsBatchVideo) {
       const batchConfig = firstEnabled.config as BatchVideoGenConfig;
       if (batchConfig.mode !== 'subtle-animation') {
-        // Motion control needs input video
+        needsInputVideo = true;
         if (!tiktokUrl && !videoUrl && videoSource !== 'library') {
           return NextResponse.json({ error: 'A video source is required for Motion Control mode' }, { status: 400 });
         }
@@ -47,19 +50,21 @@ export async function POST(request: NextRequest) {
     } else if (firstIsVideo) {
       const videoConfig = firstEnabled.config as VideoGenConfig;
       if (videoConfig.mode !== 'subtle-animation') {
+        needsInputVideo = true;
         if (!tiktokUrl && !videoUrl && videoSource !== 'library') {
           return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
         }
       }
     } else if (firstEnabled.type !== 'compose' && firstEnabled.type !== 'carousel') {
       // Non-video, non-compose, non-carousel first step always needs input video
+      needsInputVideo = true;
       if (!tiktokUrl && !videoUrl && videoSource !== 'library') {
         return NextResponse.json({ error: 'A video source is required (TikTok URL or uploaded video)' }, { status: 400 });
       }
     }
 
-    // Library mode: validate per-model video URLs
-    if (videoSource === 'library') {
+    // Library mode: validate per-model video URLs only when pipeline needs input video
+    if (needsInputVideo && videoSource === 'library') {
       if (!libraryVideos || typeof libraryVideos !== 'object') {
         return NextResponse.json({ error: 'Library videos mapping is required for library mode' }, { status: 400 });
       }

@@ -575,6 +575,17 @@ export default function CarouselStepConfig({
     return masterGenerateForModel(modelId, primaryGcsUrl, missingIndices);
   };
 
+  // Retry only explicitly failed scenes for a model (empty array result, not undefined/never-attempted)
+  const masterRetryFailed = async (modelId: string, primaryGcsUrl: string) => {
+    const existingResults = masterPerModelResults[modelId] || {};
+    const failedIndices = sceneImages
+      .map((s, i) => ({ scene: s, index: i }))
+      .filter(({ scene, index }) => scene.action === 'generate' && Array.isArray(existingResults[index]) && existingResults[index].length === 0)
+      .map(({ index }) => index);
+    if (failedIndices.length === 0) return;
+    return masterGenerateForModel(modelId, primaryGcsUrl, failedIndices);
+  };
+
   // Generate for all models — accumulates results to avoid stale closure overwrites
   const masterGenerateAll = async () => {
     if (!masterModels || masterModels.length === 0 || sceneImages.length === 0) return;
@@ -1401,6 +1412,11 @@ export default function CarouselStepConfig({
                       return si?.action === 'generate' && r.length > 0;
                     }).length;
                     const hasMissing = totalScenes > 0 && completedScenes < totalScenes && completedScenes > 0;
+                    const failedCount = Object.entries(perSceneResults).filter(([idx, r]) => {
+                      const si = sceneImages[Number(idx)];
+                      return si?.action === 'generate' && Array.isArray(r) && r.length === 0;
+                    }).length;
+                    const hasFailed = failedCount > 0;
                     return (
                       <div key={model.modelId} className="rounded-xl border border-[var(--border)] p-2.5 space-y-2">
                         {/* Clickable header row */}
@@ -1426,10 +1442,8 @@ export default function CarouselStepConfig({
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-[var(--text)] truncate">{model.modelName}</p>
                             <p className="text-[10px] text-[var(--text-muted)]">
-                              {activeSceneCount > 0
-                                ? `${selectedImages.length} / ${Math.min(activeSceneCount, maxImages)} images`
-                                : `${selectedImages.length} images`
-                              }
+                              {`${selectedImages.length} image${selectedImages.length !== 1 ? 's' : ''}`}
+                              {selectedImages.length > 0 && ` / ${maxImages} max`}
                               {totalScenes > 0 && completedScenes > 0 && ` · ${completedScenes}/${totalScenes} done`}
                               {selectedImages.length === 0 && activeSceneCount > 0 && !isGenerating && (
                                 <span className="ml-1 text-amber-500">· pending</span>
@@ -1453,6 +1467,15 @@ export default function CarouselStepConfig({
                                 className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border border-amber-400 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20 disabled:opacity-50"
                               >
                                 <Sparkles className="h-3 w-3" /> Missing
+                              </button>
+                            )}
+                            {!isGenerating && !isMasterGeneratingAll && hasFailed && (
+                              <button
+                                onClick={() => masterRetryFailed(model.modelId, model.primaryGcsUrl)}
+                                disabled={isMasterGeneratingAll}
+                                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border border-red-400 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50"
+                              >
+                                <RotateCcw className="h-3 w-3" /> Retry ({failedCount})
                               </button>
                             )}
                             {!isGenerating && !isMasterGeneratingAll && generateCount > 0 && (
