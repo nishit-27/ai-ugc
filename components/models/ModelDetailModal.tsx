@@ -74,7 +74,7 @@ export default function ModelDetailModal({
   model: Model | null;
   modelImages: ModelImage[];
   imagesLoading?: boolean;
-  loadModelImages: (modelId: string) => Promise<void>;
+  loadModelImages: (modelId: string, skipCache?: boolean) => Promise<void>;
   loadModels: () => Promise<void>;
   existingGroupNames?: string[];
 }) {
@@ -584,14 +584,21 @@ export default function ModelDetailModal({
                           onClick={async () => {
                             setIsSettingPrimary(img.id);
                             try {
-                              await fetch(`/api/models/${model.id}/images/${img.id}`, {
+                              const res = await fetch(`/api/models/${model.id}/images/${img.id}`, {
                                 method: 'PATCH',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ isPrimary: true }),
                               });
-                              loadModelImages(model.id);
+                              if (!res.ok) {
+                                const data = await res.json().catch(() => ({ error: 'Failed' }));
+                                showToast(data.error || 'Failed to set primary', 'error');
+                                return;
+                              }
+                              await loadModelImages(model.id, true);
                               loadModels();
                               showToast('Set as primary', 'success');
+                            } catch {
+                              showToast('Failed to set primary', 'error');
                             } finally {
                               setIsSettingPrimary(null);
                             }
@@ -610,7 +617,7 @@ export default function ModelDetailModal({
                           setIsDeletingImage(img.id);
                           try {
                             await fetch(`/api/models/${model.id}/images/${img.id}`, { method: 'DELETE' });
-                            loadModelImages(model.id);
+                            await loadModelImages(model.id, true);
                             loadModels();
                             showToast('Image deleted', 'success');
                           } finally {

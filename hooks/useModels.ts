@@ -42,17 +42,24 @@ export function useModels() {
     }
   }, []);
 
-  const loadModelImages = useCallback(async (modelId: string) => {
-    // Serve from cache instantly
-    const cached = _imageCache.get(modelId);
-    if (cached) {
-      setModelImages(cached);
+  const loadModelImages = useCallback(async (modelId: string, skipCache = false) => {
+    if (!skipCache) {
+      const cached = _imageCache.get(modelId);
+      if (cached) {
+        setModelImages(cached);
+      } else {
+        setImagesLoading(true);
+      }
     } else {
+      _imageCache.delete(modelId);
       setImagesLoading(true);
     }
 
     try {
-      const res = await fetch(`/api/models/${modelId}/images`);
+      const url = skipCache
+        ? `/api/models/${modelId}/images?t=${Date.now()}`
+        : `/api/models/${modelId}/images`;
+      const res = await fetch(url, skipCache ? { cache: 'no-store' } : undefined);
       const data = await res.json();
       const images: ModelImage[] = Array.isArray(data) ? data : [];
 

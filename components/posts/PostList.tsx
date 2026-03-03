@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, Trash2, RotateCw, ExternalLink, Copy, AlertTriangle } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaXTwitter } from 'react-icons/fa6';
 import type { Post } from '@/types';
@@ -183,8 +183,11 @@ export default function PostList({
         )}
         {paginatedPosts.map((post) => {
           const status = postStatus(post);
-          const thumbnailImage = post.mediaItems?.[0]?.thumbnailUrl;
-          const previewVideo = post.mediaItems?.[0]?.url || post.mediaItems?.[0]?.thumbnailUrl;
+          const firstMedia = post.mediaItems?.[0];
+          const isImagePost = firstMedia?.type === 'image';
+          const imageCount = isImagePost ? (post.mediaItems?.filter(m => m.type === 'image').length || 0) : 0;
+          const thumbnailImage = firstMedia?.thumbnailUrl || (isImagePost ? firstMedia?.url : undefined);
+          const previewVideo = !isImagePost ? (firstMedia?.url || firstMedia?.thumbnailUrl) : undefined;
           const isActive = isActiveStatus(status);
           const isScheduled = status === 'scheduled';
           const isDuplicate = duplicateIds.has(post._id);
@@ -204,13 +207,21 @@ export default function PostList({
                 style={{ aspectRatio: '9/16' }}
               >
                 {thumbnailImage ? (
-                  <img
-                    src={thumbnailImage}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
+                  <>
+                    <img
+                      src={thumbnailImage}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                    {isImagePost && imageCount > 1 && (
+                      <div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                        {imageCount}
+                      </div>
+                    )}
+                  </>
                 ) : previewVideo ? (
                   <video
                     src={previewVideo}
@@ -221,7 +232,7 @@ export default function PostList({
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-[10px] text-white/40">No video</span>
+                    <span className="text-[10px] text-white/40">No media</span>
                   </div>
                 )}
 
@@ -338,7 +349,10 @@ export default function PostList({
       >
         {livePost && (() => {
           const status = postStatus(livePost);
-          const videoSrc = livePost.mediaItems?.[0]?.url || livePost.mediaItems?.[0]?.thumbnailUrl;
+          const liveFirstMedia = livePost.mediaItems?.[0];
+          const liveIsImage = liveFirstMedia?.type === 'image';
+          const liveImageUrls = liveIsImage ? (livePost.mediaItems?.filter(m => m.type === 'image').map(m => m.url).filter((u): u is string => !!u) || []) : [];
+          const videoSrc = !liveIsImage ? (liveFirstMedia?.url || liveFirstMedia?.thumbnailUrl) : undefined;
           const isFailed = status === 'failed' || status === 'partial';
           const isPublished = status === 'published';
           const isLivePostDuplicate = duplicateIds.has(livePost._id);
@@ -346,13 +360,14 @@ export default function PostList({
 
           return (
             <div className="flex flex-col sm:flex-row">
-              {/* Video — fixed width on desktop, full width on mobile */}
               <div className="w-full sm:w-56 md:w-64 flex-shrink-0 bg-black">
                 <div
                   className="relative w-full"
                   style={{ aspectRatio: '9/16' }}
                 >
-                  {videoSrc ? (
+                  {liveIsImage && liveImageUrls.length > 0 ? (
+                    <CarouselPreview images={liveImageUrls} />
+                  ) : videoSrc ? (
                     <video
                       src={videoSrc}
                       controls
@@ -362,7 +377,7 @@ export default function PostList({
                     />
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-xs text-white/40">No video</span>
+                      <span className="text-xs text-white/40">No media</span>
                     </div>
                   )}
                 </div>
@@ -576,5 +591,40 @@ export default function PostList({
         })()}
       </Modal>
     </>
+  );
+}
+
+function CarouselPreview({ images }: { images: string[] }) {
+  const [idx, setIdx] = useState(0);
+  const prev = useCallback(() => setIdx((i) => (i > 0 ? i - 1 : images.length - 1)), [images.length]);
+  const next = useCallback(() => setIdx((i) => (i < images.length - 1 ? i + 1 : 0)), [images.length]);
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-black">
+      <img
+        src={images[idx]}
+        alt={`Slide ${idx + 1}`}
+        className="h-full w-full object-contain"
+      />
+      {images.length > 1 && (
+        <>
+          <button
+            onClick={(e) => { e.stopPropagation(); prev(); }}
+            className="absolute left-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); next(); }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+            {idx + 1} / {images.length}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
