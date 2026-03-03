@@ -274,6 +274,8 @@ export type CarouselConfig = {
   masterCarouselImages?: Record<string, CarouselImageEntry[]>;
   // Preserve text in scene images during face-swap generation
   preserveText?: boolean;
+  // TikTok auto-add music (TikTok picks trending music for carousel)
+  autoAddMusic?: boolean;
   // First frame fields (kept for compatibility)
   firstFrameEnabled?: boolean;
   extractedFrameUrl?: string;

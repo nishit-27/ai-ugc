@@ -4,6 +4,7 @@ import { initDatabase, getPipelineBatch, getTemplateJob, getTemplateJobsByBatchI
 import { lateApiRequest, LateApiError } from '@/lib/lateApi';
 import { getApiKeyByIndex } from '@/lib/lateAccountPool';
 import { downloadToBuffer } from '@/lib/storage';
+import { isR2Url } from '@/lib/r2';
 import { config } from '@/lib/config';
 import path from 'path';
 import sharp from 'sharp';
@@ -268,20 +269,13 @@ export async function POST(
           jobIdempotencyAcquired = true;
         }
 
-        // Group platform targets by apiKeyIndex
-        const targetsByKey = new Map<number, typeof platformTargets>();
-        for (const target of platformTargets) {
-          const list = targetsByKey.get(target.apiKeyIndex) || [];
-          list.push(target);
-          targetsByKey.set(target.apiKeyIndex, list);
-        }
-
         // Detect carousel output
         const isCarousel = job.outputUrl?.startsWith('carousel:');
         let carouselUrls: string[] = [];
         if (isCarousel) {
           try {
             carouselUrls = JSON.parse(job.outputUrl.slice('carousel:'.length));
+            console.log(`[MasterPost] Job ${jobId}: carousel with ${carouselUrls.length} images`);
           } catch {
             throw new Error('Failed to parse carousel URLs from outputUrl');
           }
@@ -297,15 +291,25 @@ export async function POST(
           }
         }
 
+        // Group platform targets by apiKeyIndex (after filtering out incompatible platforms)
+        const targetsByKey = new Map<number, typeof platformTargets>();
+        for (const target of platformTargets) {
+          const list = targetsByKey.get(target.apiKeyIndex) || [];
+          list.push(target);
+          targetsByKey.set(target.apiKeyIndex, list);
+        }
+
         // Download media once
         let fileBuffer: Buffer | null = null;
         const carouselBuffers: { buffer: Buffer; ext: string }[] = [];
 
         if (isCarousel) {
-          for (const url of carouselUrls) {
+          // Download + process all carousel images in parallel
+          const processedImages = await Promise.all(carouselUrls.map(async (url) => {
             let buf: Buffer;
-            if (url.startsWith('https://storage.googleapis.com')) {
-              buf = await downloadToBuffer(url);
+            const isGcs = url.includes('storage.googleapis.com') || url.includes('storage.cloud.google.com');
+            if (isGcs || isR2Url(url)) {
+              buf = Buffer.from(await downloadToBuffer(url));
             } else {
               const response = await fetch(url);
               if (!response.ok) throw new Error(`Failed to download carousel image: ${response.status}`);
@@ -323,33 +327,29 @@ export async function POST(
             const h = meta.height || 1;
             const ratio = w / h;
             if (ratio < 0.75) {
-              // Too tall — pad width to 4:5
               const targetW = Math.ceil(h * 4 / 5);
               const padTotal = targetW - w;
-              const padLeft = Math.floor(padTotal / 2);
-              const padRight = padTotal - padLeft;
               buf = await sharp(buf)
-                .extend({ top: 0, bottom: 0, left: padLeft, right: padRight, background: { r: 255, g: 255, b: 255 } })
+                .extend({ top: 0, bottom: 0, left: Math.floor(padTotal / 2), right: padTotal - Math.floor(padTotal / 2), background: { r: 255, g: 255, b: 255 } })
                 .jpeg({ quality: 92 })
                 .toBuffer();
               ext = '.jpg';
             } else if (ratio > 1.91) {
-              // Too wide — pad height to 1.91:1
               const targetH = Math.ceil(w / 1.91);
               const padTotal = targetH - h;
-              const padTop = Math.floor(padTotal / 2);
-              const padBottom = padTotal - padTop;
               buf = await sharp(buf)
-                .extend({ top: padTop, bottom: padBottom, left: 0, right: 0, background: { r: 255, g: 255, b: 255 } })
+                .extend({ top: Math.floor(padTotal / 2), bottom: padTotal - Math.floor(padTotal / 2), left: 0, right: 0, background: { r: 255, g: 255, b: 255 } })
                 .jpeg({ quality: 92 })
                 .toBuffer();
               ext = '.jpg';
             }
-            carouselBuffers.push({ buffer: buf, ext });
-          }
+            return { buffer: buf, ext };
+          }));
+          carouselBuffers.push(...processedImages);
         } else {
-          if (job.outputUrl.startsWith('https://storage.googleapis.com')) {
-            fileBuffer = await downloadToBuffer(job.outputUrl);
+          const isGcsVideo = job.outputUrl.includes('storage.googleapis.com') || job.outputUrl.includes('storage.cloud.google.com');
+          if (isGcsVideo || isR2Url(job.outputUrl)) {
+            fileBuffer = Buffer.from(await downloadToBuffer(job.outputUrl));
           } else {
             const response = await fetch(job.outputUrl);
             if (!response.ok) {
@@ -360,12 +360,15 @@ export async function POST(
           }
         }
 
-        // Parse photoCoverIndex from carousel step config
+        // Parse photoCoverIndex and autoAddMusic from carousel step config
         let photoCoverIndex = 0;
+        let autoAddMusic = false;
         if (isCarousel) {
           const carouselStep = (job.pipeline || []).find((s: { type: string }) => s.type === 'carousel');
           if (carouselStep) {
-            photoCoverIndex = (carouselStep.config as { photoCoverIndex?: number }).photoCoverIndex ?? 0;
+            const cc = carouselStep.config as { photoCoverIndex?: number; autoAddMusic?: boolean };
+            photoCoverIndex = cc.photoCoverIndex ?? 0;
+            autoAddMusic = cc.autoAddMusic ?? false;
           }
         }
 
@@ -376,30 +379,30 @@ export async function POST(
           let mediaItems: { type: string; url: string }[];
 
           if (isCarousel) {
-            // Upload each carousel image to Late storage
-            const uploadedImageUrls: string[] = [];
-            for (let imgIdx = 0; imgIdx < carouselBuffers.length; imgIdx++) {
-              const { buffer, ext } = carouselBuffers[imgIdx];
-              const imgFilename = `carousel-${jobId}-${imgIdx}${ext}`;
-              const contentType = ext === '.png' ? 'image/png' : 'image/jpeg';
+            // Upload all carousel images to Late storage in parallel
+            const uploadedImageUrls = await Promise.all(
+              carouselBuffers.map(async ({ buffer, ext }, imgIdx) => {
+                const imgFilename = `carousel-${jobId}-${imgIdx}${ext}`;
+                const contentType = ext === '.png' ? 'image/png' : 'image/jpeg';
 
-              const presignData = await lateApiRequest<PresignResponse>('/media/presign', {
-                method: 'POST',
-                body: JSON.stringify({ filename: imgFilename, contentType }),
-                apiKey,
-              });
+                const presignData = await lateApiRequest<PresignResponse>('/media/presign', {
+                  method: 'POST',
+                  body: JSON.stringify({ filename: imgFilename, contentType }),
+                  apiKey,
+                });
 
-              const uploadResponse = await fetch(presignData.uploadUrl, {
-                method: 'PUT',
-                headers: { 'Content-Type': contentType, 'Content-Length': String(buffer.length) },
-                body: new Uint8Array(buffer),
-              });
-              if (!uploadResponse.ok) {
-                const errorText = await uploadResponse.text();
-                throw new Error(`Carousel image upload failed: ${uploadResponse.status} - ${errorText}`);
-              }
-              uploadedImageUrls.push(presignData.publicUrl);
-            }
+                const uploadResponse = await fetch(presignData.uploadUrl, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': contentType, 'Content-Length': String(buffer.length) },
+                  body: new Uint8Array(buffer),
+                });
+                if (!uploadResponse.ok) {
+                  const errorText = await uploadResponse.text();
+                  throw new Error(`Carousel image upload failed: ${uploadResponse.status} - ${errorText}`);
+                }
+                return presignData.publicUrl;
+              })
+            );
             mediaItems = uploadedImageUrls.map((url) => ({ type: 'image', url }));
           } else {
             const filename = path.basename(job.outputUrl.split('?')[0]);
@@ -437,7 +440,7 @@ export async function POST(
             mediaItems = [{ type: 'video', url: presignData.publicUrl }];
           }
 
-          await new Promise((r) => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 500));
 
           const latePlatforms = groupTargets.map((t) => {
             if (t.platform === 'tiktok') {
@@ -451,6 +454,7 @@ export async function POST(
                     contentPreviewConfirmed: true,
                     expressConsentGiven: true,
                     photoCoverIndex,
+                    autoAddMusic,
                   },
                 };
               }
@@ -605,6 +609,7 @@ export async function POST(
           ? `Late API ${jobError.status}: ${jobError.message}`
           : (jobError as Error).message;
 
+        console.error(`[MasterPost] Job ${jobId} failed:`, errorMessage, jobError instanceof Error ? jobError.stack : '');
         results.push({ jobId, status: 'failed', error: errorMessage });
 
         if (jobIdempotencyAcquired && jobIdempotencyKey) {

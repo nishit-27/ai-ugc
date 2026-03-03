@@ -912,97 +912,104 @@ export default function CarouselStepConfig({
 
   return (
     <div className={`space-y-4 ${isExpanded && !masterMode ? 'mx-auto max-w-2xl' : ''}`}>
-      {/* Compact controls row: Image Source + Target Platform + Model (dropdowns) */}
-      <div className="flex flex-wrap items-end gap-3">
-        {/* Image Source dropdown */}
-        <div className="min-w-[120px]">
-          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Source</label>
-          <div className="relative">
+      {/* Controls bar */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Source */}
+        <div className="relative">
+          <select
+            value={imageSource}
+            onChange={(e) => handleImageSourceChange(e.target.value as ImageSource)}
+            className="appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 pr-7 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+          >
+            {!masterMode && <option value="model">Model Gallery</option>}
+            <option value="upload">Upload</option>
+            <option value="generate">Generate</option>
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
+        </div>
+
+        {/* Platform */}
+        <div className="relative">
+          <select
+            value={platform}
+            onChange={(e) => {
+              const p = e.target.value as 'instagram' | 'tiktok' | 'both';
+              onChange({ ...config, targetPlatform: p, maxImages: PLATFORM_LIMITS[p] });
+            }}
+            className="appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 pr-7 text-xs font-medium capitalize text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+          >
+            <option value="instagram">Instagram</option>
+            <option value="tiktok">TikTok</option>
+            <option value="both">Both</option>
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
+        </div>
+
+        {/* Model selector (non-master) */}
+        {!masterMode && (imageSource === 'model' || imageSource === 'generate') && (
+          <div className="relative min-w-[140px] flex-1">
             <select
-              value={imageSource}
-              onChange={(e) => handleImageSourceChange(e.target.value as ImageSource)}
+              value={config.modelId || ''}
+              onChange={(e) => onChange({ ...config, modelId: e.target.value || undefined, images: [] })}
               className="w-full appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 pr-7 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
             >
-              {!masterMode && <option value="model">Model Gallery</option>}
-              <option value="upload">Upload</option>
-              <option value="generate">Generate</option>
+              <option value="">Select model...</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
             </select>
             <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
-          </div>
-        </div>
-
-        {/* Target Platform dropdown */}
-        <div className="min-w-[120px]">
-          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Platform</label>
-          <div className="relative">
-            <select
-              value={platform}
-              onChange={(e) => {
-                const p = e.target.value as 'instagram' | 'tiktok' | 'both';
-                onChange({ ...config, targetPlatform: p, maxImages: PLATFORM_LIMITS[p] });
-              }}
-              className="w-full appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 pr-7 text-xs font-medium capitalize text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
-            >
-              <option value="instagram">Instagram</option>
-              <option value="tiktok">TikTok</option>
-              <option value="both">Both</option>
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
-          </div>
-        </div>
-
-        {/* Model selector (non-master, model gallery & generate) */}
-        {!masterMode && (imageSource === 'model' || imageSource === 'generate') && (
-          <div className="min-w-[160px] flex-1">
-            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Model</label>
-            <div className="relative">
-              <select
-                value={config.modelId || ''}
-                onChange={(e) => onChange({ ...config, modelId: e.target.value || undefined, images: [] })}
-                className="w-full appearance-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 pr-7 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
-              >
-                <option value="">Select a model...</option>
-                {models.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
-            </div>
           </div>
         )}
 
-        {/* Inline image count + limit info */}
+        {/* TikTok auto-add music */}
+        {(platform === 'tiktok' || platform === 'both') && (
+          <label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-[var(--border)] px-2.5 py-1.5">
+            <input
+              type="checkbox"
+              checked={config.autoAddMusic ?? false}
+              onChange={(e) => onChange({ ...config, autoAddMusic: e.target.checked })}
+              className="h-3 w-3 rounded accent-[var(--primary)]"
+            />
+            <span className="text-[10px] font-medium text-[var(--text-muted)] whitespace-nowrap">Music</span>
+          </label>
+        )}
+
+        <div className="ml-auto" />
+
+        {/* Status pill */}
         <div className="flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-2.5 py-1.5">
-          <ImageIcon className="h-3.5 w-3.5 text-pink-500" />
-          <span className="text-[11px] font-medium text-[var(--text)]">
+          <ImageIcon className="h-3 w-3 text-pink-500" />
+          <span className="text-[10px] font-medium text-[var(--text)]">
             {(() => {
               const activeScenes = sceneImages.filter((s) => s.action !== 'skip').length;
               if (masterMode && masterModels && masterModels.length > 0) {
                 const totalSelected = Object.values(config.masterCarouselImages || {}).reduce((sum, arr) => sum + arr.length, 0);
-                if (activeScenes > 0) return `${totalSelected} sel · ${activeScenes} scenes · ${masterModels.length} models`;
-                return `${totalSelected} selected · ${masterModels.length} models`;
+                return activeScenes > 0
+                  ? `${totalSelected} sel · ${activeScenes} scenes · ${masterModels.length} models`
+                  : `${totalSelected} sel · ${masterModels.length} models`;
               }
-              if (activeScenes > 0) return `${config.images.length} / ${activeScenes} selected`;
-              return `${config.images.length} selected`;
+              return activeScenes > 0
+                ? `${config.images.length}/${activeScenes}`
+                : `${config.images.length} sel`;
             })()}
           </span>
           {(() => {
             const activeScenes = sceneImages.filter((s) => s.action !== 'skip').length;
-            if (activeScenes > maxImages) {
-              return <span className="text-[9px] font-medium text-amber-500">({maxImages} max)</span>;
-            }
-            return null;
+            return activeScenes > maxImages
+              ? <span className="text-[9px] font-medium text-amber-500">max {maxImages}</span>
+              : null;
           })()}
         </div>
 
         {/* Select all / Clear */}
         {imageSource === 'model' && config.modelId && modelImages.length > 0 && (
-          <button onClick={selectAll} className="text-[10px] font-medium text-[var(--primary)] hover:underline pb-1">
+          <button onClick={selectAll} className="text-[10px] font-medium text-[var(--primary)] hover:underline">
             Select all
           </button>
         )}
         {config.images.length > 0 && (
-          <button onClick={deselectAll} className="text-[10px] font-medium text-red-500 hover:underline pb-1">
+          <button onClick={deselectAll} className="text-[10px] font-medium text-red-500 hover:underline">
             Clear
           </button>
         )}
@@ -1014,7 +1021,7 @@ export default function CarouselStepConfig({
         if (activeScenes > maxImages) {
           return (
             <p className="text-[10px] text-amber-500 font-medium">
-              You have {activeScenes} active scenes but {platform === 'both' ? 'Instagram' : platform} allows max {maxImages} images. Only the first {maxImages} will be used.
+              {activeScenes} scenes but {platform === 'both' ? 'Instagram' : platform} allows max {maxImages}. First {maxImages} will be used.
             </p>
           );
         }
@@ -1099,107 +1106,80 @@ export default function CarouselStepConfig({
         <div ref={splitContainerRef} className={isExpanded && masterMode ? 'flex items-start' : ''}>
         {/* Left column (or full width when not expanded/master) */}
         <div className={`space-y-4 ${isExpanded && masterMode ? 'shrink-0 pr-3' : ''}`} style={isExpanded && masterMode ? { width: `${splitPercent}%` } : undefined}>
-          {/* Paste carousel post URL */}
-          <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-              Import from Post URL
-              <span className="ml-1 font-normal normal-case text-[var(--text-muted)]">
-                — paste an Instagram or TikTok carousel link
-              </span>
-            </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Link2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
-                <input
-                  type="text"
-                  value={carouselUrl}
-                  onChange={(e) => setCarouselUrl(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleLoadCarouselUrl()}
-                  placeholder="https://instagram.com/p/... or https://tiktok.com/..."
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] py-2 pl-8 pr-3 text-xs text-[var(--text)] placeholder:text-[var(--text-muted)]/50 focus:border-[var(--accent-border)] focus:outline-none"
-                />
-              </div>
-              <button
-                onClick={handleLoadCarouselUrl}
-                disabled={isLoadingUrl || !carouselUrl.trim()}
-                className={`shrink-0 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
-                  isLoadingUrl || !carouselUrl.trim()
-                    ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
-                    : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90'
-                }`}
-              >
-                {isLoadingUrl ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Load'}
-              </button>
-            </div>
-            {urlError && <p className="mt-1 text-[10px] text-red-500">{urlError}</p>}
-          </div>
-
-          {/* Provider + Resolution + Variants row */}
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Provider</label>
-              <select
-                value={genProvider}
-                onChange={(e) => setGenProvider(e.target.value as 'gemini' | 'fal' | 'gpt-image')}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
-              >
-                <option value="gpt-image">GPT Image</option>
-                <option value="gemini">Gemini</option>
-                <option value="fal">FAL</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Resolution</label>
-              <select
-                value={genResolution}
-                onChange={(e) => setGenResolution(e.target.value as '1K' | '2K' | '4K')}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
-              >
-                <option value="1K">1K</option>
-                <option value="2K">2K</option>
-                <option value="4K">4K</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Per Scene</label>
-              <select
-                value={genVariantsPerScene}
-                onChange={(e) => setGenVariantsPerScene(Number(e.target.value))}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
-              >
-                {[1, 2, 3, 4].map((n) => (
-                  <option key={n} value={n}>{n} variant{n !== 1 ? 's' : ''}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Preserve Text toggle */}
-          <div className="flex items-center justify-between rounded-lg border border-[var(--border)] px-3 py-2">
-            <div>
-              <span className="text-[11px] font-semibold text-[var(--text)]">Preserve Text</span>
-              <p className="text-[9px] text-[var(--text-muted)]">Keep text/captions from scene images instead of removing them</p>
+          {/* Import URL */}
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Link2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input
+                type="text"
+                value={carouselUrl}
+                onChange={(e) => setCarouselUrl(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLoadCarouselUrl()}
+                placeholder="Paste Instagram or TikTok carousel URL..."
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] py-1.5 pl-8 pr-3 text-xs text-[var(--text)] placeholder:text-[var(--text-muted)]/50 focus:border-[var(--accent-border)] focus:outline-none"
+              />
             </div>
             <button
-              onClick={() => {
-                const next = !preserveText;
-                setPreserveText(next);
-                onChange({ ...config, preserveText: next });
-              }}
-              className={`relative h-5 w-9 rounded-full transition-colors ${preserveText ? 'bg-[var(--primary)]' : 'bg-[var(--border)]'}`}
+              onClick={handleLoadCarouselUrl}
+              disabled={isLoadingUrl || !carouselUrl.trim()}
+              className={`shrink-0 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                isLoadingUrl || !carouselUrl.trim()
+                  ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
+                  : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90'
+              }`}
             >
-              <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${preserveText ? 'translate-x-4' : ''}`} />
+              {isLoadingUrl ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Load'}
             </button>
           </div>
+          {urlError && <p className="text-[10px] text-red-500">{urlError}</p>}
 
-          {/* Scene images upload */}
-          <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-              Scene Images
-              <span className="ml-1 font-normal normal-case text-[var(--text-muted)]">
-                — upload backgrounds to face-swap the model into
-              </span>
+          {/* Generation settings row */}
+          <div className="flex items-center gap-2">
+            <select
+              value={genProvider}
+              onChange={(e) => setGenProvider(e.target.value as 'gemini' | 'fal' | 'gpt-image')}
+              className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+            >
+              <option value="gpt-image">GPT Image</option>
+              <option value="gemini">Gemini</option>
+              <option value="fal">FAL</option>
+            </select>
+            <select
+              value={genResolution}
+              onChange={(e) => setGenResolution(e.target.value as '1K' | '2K' | '4K')}
+              className="w-[70px] rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+            >
+              <option value="1K">1K</option>
+              <option value="2K">2K</option>
+              <option value="4K">4K</option>
+            </select>
+            <select
+              value={genVariantsPerScene}
+              onChange={(e) => setGenVariantsPerScene(Number(e.target.value))}
+              className="w-[100px] rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+            >
+              {[1, 2, 3, 4].map((n) => (
+                <option key={n} value={n}>{n} variant{n !== 1 ? 's' : ''}</option>
+              ))}
+            </select>
+            {/* Preserve Text inline toggle */}
+            <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+              <span className="text-[10px] font-medium text-[var(--text-muted)]">Keep text</span>
+              <button
+                onClick={() => {
+                  const next = !preserveText;
+                  setPreserveText(next);
+                  onChange({ ...config, preserveText: next });
+                }}
+                className={`relative h-4 w-7 rounded-full transition-colors ${preserveText ? 'bg-[var(--primary)]' : 'bg-[var(--border)]'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform ${preserveText ? 'translate-x-3' : ''}`} />
+              </button>
             </label>
+          </div>
+
+          {/* Scene images */}
+          <div>
             <input ref={sceneFileRef} type="file" accept="image/*" multiple onChange={handleSceneFileChange} className="hidden" />
 
             {/* Scene thumbnails with per-scene action */}

@@ -227,11 +227,19 @@ export default function MasterBatchDetailPage() {
 
     addBusy(jobId);
     try {
-      const res = await fetch(`/api/templates/master/${id}/post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobIds: [jobId] }),
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
+      let res: Response;
+      try {
+        res = await fetch(`/api/templates/master/${id}/post`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobIds: [jobId] }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       const data = await res.json();
       if (res.ok && data.summary?.posted > 0) {
         showToast('Approved & posted!', 'success');
@@ -267,8 +275,11 @@ export default function MasterBatchDetailPage() {
 
       setModalJob(null);
       await loadBatch();
-    } catch {
-      showToast('Failed to approve', 'error');
+    } catch (err) {
+      const msg = err instanceof Error && err.name === 'AbortError'
+        ? 'Approve timed out — check server logs'
+        : 'Failed to approve';
+      showToast(msg, 'error');
     } finally {
       removeBusy(jobId);
     }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { initDatabase, createPipelineBatch, createTemplateJob, updatePipelineBatch, getModelAccountMappingsForModels, getAllModels, getModelImages } from '@/lib/db';
+import { initDatabase, createPipelineBatch, createTemplateJob, updateTemplateJob, updatePipelineBatch, updatePipelineBatchProgress, getModelAccountMappingsForModels, getAllModels, getModelImages } from '@/lib/db';
 import { processPipelineBatch } from '@/lib/processTemplateJob';
 import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, ComposeConfig, CarouselConfig, MasterConfig } from '@/types';
 import { auth } from '@/lib/auth';
@@ -263,16 +263,83 @@ export async function POST(request: NextRequest) {
       childJobs.push(job);
     }
 
+    // --- Detect carousel-only pipeline (no processing needed) ---
+    const enabledTypes = new Set(
+      pipeline.filter((s: MiniAppStep) => s.enabled).map((s: MiniAppStep) => s.type)
+    );
+    const isCarouselOnly = enabledTypes.has('carousel') &&
+      !enabledTypes.has('video-generation') &&
+      !enabledTypes.has('batch-video-generation') &&
+      !enabledTypes.has('text-overlay') &&
+      !enabledTypes.has('bg-music') &&
+      !enabledTypes.has('attach-video') &&
+      !enabledTypes.has('compose');
+
+    const allChildJobIds = childJobs.filter(Boolean).map((j) => j!.id);
+
+    if (isCarouselOnly) {
+      // --- Carousel-only: complete all jobs instantly (images already exist) ---
+      console.log(`[Master] Carousel-only pipeline — completing ${allChildJobIds.length} jobs instantly`);
+
+      for (const job of childJobs) {
+        if (!job) continue;
+        const carouselStep = (job.pipeline || pipeline).find(
+          (s: MiniAppStep) => s.enabled && s.type === 'carousel'
+        );
+        if (!carouselStep) continue;
+
+        const carouselConfig = carouselStep.config as CarouselConfig;
+        const imageUrls = (carouselConfig.images || [])
+          .map((img: { imageUrl?: string }) => img.imageUrl)
+          .filter(Boolean) as string[];
+
+        if (imageUrls.length > 0) {
+          const outputUrl = `carousel:${JSON.stringify(imageUrls)}`;
+          await updateTemplateJob(job.id, {
+            status: 'completed',
+            step: 'Done!',
+            outputUrl,
+            stepResults: [{
+              stepId: carouselStep.id,
+              type: 'carousel',
+              label: 'Carousel images',
+              outputUrl: imageUrls[0],
+              outputUrls: imageUrls,
+              isCarousel: true,
+            }],
+            completedAt: new Date().toISOString(),
+          });
+        } else {
+          // No images for this model — mark as failed so it doesn't stay queued forever
+          await updateTemplateJob(job.id, {
+            status: 'failed',
+            step: 'Failed',
+            error: 'No carousel images found for this model',
+            completedAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      // Mark batch as completed
+      await updatePipelineBatchProgress(batch.id);
+
+      return NextResponse.json({
+        ...batch,
+        isBatch: true,
+        isMaster: true,
+        childJobIds: allChildJobIds,
+      });
+    }
+
     // --- Update batch status to processing ---
     await updatePipelineBatch(batch.id, { status: 'processing' });
 
     // --- Schedule batch processing ---
-    const childJobIds = childJobs.filter(Boolean).map((j) => j!.id);
     const batchTiktokUrl = videoSource === 'library' ? null : (tiktokUrl || null);
     const batchVideoUrl = videoSource === 'library' ? null : (videoUrl || null);
     after(async () => {
       try {
-        await processPipelineBatch(childJobIds, batchTiktokUrl, batchVideoUrl);
+        await processPipelineBatch(allChildJobIds, batchTiktokUrl, batchVideoUrl);
       } catch (err) {
         console.error(`processPipelineBatch error for master batch ${batch.id}:`, err);
       }
@@ -282,7 +349,7 @@ export async function POST(request: NextRequest) {
       ...batch,
       isBatch: true,
       isMaster: true,
-      childJobIds,
+      childJobIds: allChildJobIds,
     });
   } catch (err) {
     console.error('Create master batch error:', err);
