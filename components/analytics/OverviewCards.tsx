@@ -89,7 +89,7 @@ export default function OverviewCards({
                   </span>
                 ) : (
                   <span className="text-lg font-bold leading-none tracking-tight">
-                    <NumberFlow value={value} format={{ notation: 'compact', maximumFractionDigits: 1 }} />
+                    <NumberFlow value={value} format={{ useGrouping: true, maximumFractionDigits: 0 }} />
                   </span>
                 )
               ) : (

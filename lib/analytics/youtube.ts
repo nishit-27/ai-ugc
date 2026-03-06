@@ -57,31 +57,60 @@ type YouTubeVideo = {
   comments: number;
 };
 
+export type FetchOptions = {
+  knownIds?: Set<string>;
+  cutoffDate?: Date;
+  maxPages?: number;
+};
+
 /**
- * Fetch ALL videos from the uploads playlist.
- * Accepts uploadsPlaylistId directly (no duplicate channel fetch).
- * Handles 404/missing playlist gracefully.
+ * Fetch videos from the uploads playlist with optional incremental sync.
+ * In light mode: stops when hitting known videos past cutoff date.
  */
-export async function fetchYouTubeVideos(uploadsPlaylistId: string): Promise<YouTubeVideo[]> {
+export async function fetchYouTubeVideos(uploadsPlaylistId: string, options?: FetchOptions): Promise<YouTubeVideo[]> {
   if (!uploadsPlaylistId) return [];
 
-  // Get ALL playlist items (paginated) — wrapped in try/catch for 404
+  const { knownIds, cutoffDate, maxPages } = options || {};
+
+  // Get playlist items (paginated) — wrapped in try/catch for 404
   const videoIds: string[] = [];
   let pageToken = '';
+  let pageCount = 0;
 
   try {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const pageParam = pageToken ? `&pageToken=${pageToken}` : '';
-      const plData = await ytGet(`/playlistItems?part=contentDetails&playlistId=${uploadsPlaylistId}&maxResults=50${pageParam}`);
+      const plData = await ytGet(`/playlistItems?part=contentDetails,snippet&playlistId=${uploadsPlaylistId}&maxResults=50${pageParam}`);
       const items = plData?.items || [];
+      if (items.length === 0) break;
+      pageCount++;
+
+      let allKnown = knownIds ? true : false;
+      let oldestOnPage: Date | null = null;
+
       for (const item of items) {
         const vid = item?.contentDetails?.videoId;
         if (!vid) continue;
         videoIds.push(vid);
+
+        if (knownIds && !knownIds.has(vid)) allKnown = false;
+
+        const pubDate = item?.snippet?.publishedAt ? new Date(item.snippet.publishedAt) : null;
+        if (pubDate && (!oldestOnPage || pubDate < oldestOnPage)) {
+          oldestOnPage = pubDate;
+        }
       }
+
+      // Incremental: stop if entire page is known AND oldest is past cutoff
+      if (knownIds && allKnown && cutoffDate && oldestOnPage && oldestOnPage < cutoffDate) {
+        break;
+      }
+
+      if (maxPages && pageCount >= maxPages) break;
+
       pageToken = plData?.nextPageToken || '';
-      if (!pageToken || items.length === 0) break;
+      if (!pageToken) break;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

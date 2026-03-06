@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ensureDatabaseReady } from '@/lib/db';
 import { getAllAnalyticsAccounts, touchAllAccountsSyncTime } from '@/lib/db-analytics';
-import { syncAllAccounts } from '@/lib/analytics/sync';
+import { syncAllAccounts, type SyncMode } from '@/lib/analytics/sync';
 import { invalidatePivotCache } from '@/lib/pivot-cache';
 
 export const dynamic = 'force-dynamic';
 
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+// Allow long-running sync on serverless (Vercel Pro = 300s, Hobby = 60s)
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,8 +36,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log(`[analytics] Hard Sync for ${accounts.length} accounts`);
-    const results = await syncAllAccounts(accounts);
+    // mode=light for incremental sync, default full for manual Hard Sync
+    const mode = (request.nextUrl.searchParams.get('mode') as SyncMode) || 'full';
+
+    console.log(`[analytics] Hard Sync (${mode}) for ${accounts.length} accounts`);
+    const results = await syncAllAccounts(accounts, mode);
     const failed = results.filter((r: { success: boolean }) => !r.success);
     console.log(`[analytics] Hard Sync done: ${results.length - failed.length} ok, ${failed.length} failed`);
     if (failed.length > 0) {

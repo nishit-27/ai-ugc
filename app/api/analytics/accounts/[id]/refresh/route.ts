@@ -6,6 +6,8 @@ import { invalidatePivotCache } from '@/lib/pivot-cache';
 
 export const dynamic = 'force-dynamic';
 
+export const maxDuration = 300;
+
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await ensureDatabaseReady();

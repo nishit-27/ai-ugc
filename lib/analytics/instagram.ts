@@ -72,14 +72,22 @@ export type InstagramReel = {
   saves: number;
 };
 
+export type FetchOptions = {
+  knownIds?: Set<string>;
+  cutoffDate?: Date;
+  maxPages?: number;
+};
+
 /**
- * Fetch ALL reels — keeps paginating until the API says there are no more.
- * No arbitrary page limit. Uses duplicate cursor detection to prevent infinite loops.
+ * Fetch reels with optional incremental sync support.
+ * In light mode: stops when hitting a full page of known reels past cutoff.
  */
-export async function fetchInstagramReels(userId: string): Promise<InstagramReel[]> {
+export async function fetchInstagramReels(userId: string, options?: FetchOptions): Promise<InstagramReel[]> {
+  const { knownIds, cutoffDate, maxPages } = options || {};
   const reels: InstagramReel[] = [];
   let nextMaxId: string | undefined;
   const seenCursors = new Set<string>();
+  let pageCount = 0;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -90,23 +98,43 @@ export async function fetchInstagramReels(userId: string): Promise<InstagramReel
     const data = await rapidApiGet(path);
     const items = data?.items || data?.data?.items || [];
     if (items.length === 0) break;
+    pageCount++;
+
+    let allKnown = knownIds ? true : false;
+    let oldestOnPage: Date | null = null;
 
     for (const item of items) {
       const media = item?.media || item;
       const externalId = String(media?.pk || media?.id || media?.code || '');
+      const publishedAt = media?.taken_at ? new Date(Number(media.taken_at) * 1000).toISOString() : '';
+
       reels.push({
         externalId,
         caption: media?.caption?.text || '',
         url: media?.code ? `https://www.instagram.com/reel/${media.code}/` : '',
         thumbnailUrl: media?.image_versions2?.candidates?.[0]?.url || media?.thumbnail_url || '',
-        publishedAt: media?.taken_at ? new Date(Number(media.taken_at) * 1000).toISOString() : '',
+        publishedAt,
         views: Number(media?.play_count ?? media?.video_play_count ?? media?.ig_play_count ?? media?.view_count ?? 0),
         likes: Number(media?.like_count ?? 0),
         comments: Number(media?.comment_count ?? 0),
         shares: Number(media?.share_count ?? media?.reshare_count ?? media?.send_count ?? media?.shares ?? 0),
         saves: Number(media?.save_count ?? media?.saved_count ?? media?.saves ?? 0),
       });
+
+      if (knownIds && !knownIds.has(externalId)) allKnown = false;
+
+      const postDate = publishedAt ? new Date(publishedAt) : null;
+      if (postDate && (!oldestOnPage || postDate < oldestOnPage)) {
+        oldestOnPage = postDate;
+      }
     }
+
+    // Incremental: stop if entire page is known AND oldest item is past cutoff
+    if (knownIds && allKnown && cutoffDate && oldestOnPage && oldestOnPage < cutoffDate) {
+      break;
+    }
+
+    if (maxPages && pageCount >= maxPages) break;
 
     nextMaxId = data?.paging_info?.max_id || data?.next_max_id;
     if (!nextMaxId || !data?.paging_info?.more_available) break;

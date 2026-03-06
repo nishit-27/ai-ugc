@@ -7,24 +7,52 @@ import {
   upsertAccountSnapshot,
   upsertMediaSnapshot,
   getAccountMediaTotals,
+  getMediaExternalIds,
+  getLatestPostDate,
   linkMediaItemToJob,
 } from '../db-analytics';
+
+/**
+ * Sync modes:
+ * - 'light': Incremental — only fetch new posts + update metrics for last 60 days.
+ *            Skips stale accounts (no new posts in 7 days) — profile-only update.
+ *            Used by daily cron.
+ * - 'full':  Fetch all posts but still cap metric snapshots to 60 days.
+ *            Used by manual Hard Sync.
+ */
+export type SyncMode = 'light' | 'full';
+
+const METRIC_CAP_DAYS = 60;
+const STALE_ACCOUNT_DAYS = 7;
 
 type AccountRow = {
   id: string;
   platform: string;
   username: string;
   account_id?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  metadata?: any;
 };
 
-export async function syncAccount(account: AccountRow) {
+function getCutoffDate(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() - METRIC_CAP_DAYS);
+  return d;
+}
+
+function isPostWithinCap(publishedAt: string | null): boolean {
+  if (!publishedAt) return true; // no date = treat as recent
+  return new Date(publishedAt) >= getCutoffDate();
+}
+
+export async function syncAccount(account: AccountRow, mode: SyncMode = 'full') {
   const { id, platform, username } = account;
 
   try {
     switch (platform) {
-      case 'instagram': await syncInstagram(id, username, account.account_id); break;
-      case 'tiktok':    await syncTikTok(id, username, account.account_id); break;
-      case 'youtube':   await syncYouTube(id, username, account.account_id); break;
+      case 'instagram': await syncInstagram(id, username, account.account_id, mode); break;
+      case 'tiktok':    await syncTikTok(id, username, account.account_id, mode); break;
+      case 'youtube':   await syncYouTube(id, username, account.account_id, mode, account.metadata); break;
       default: throw new Error(`Unsupported platform: ${platform}`);
     }
     return { success: true };
@@ -35,13 +63,35 @@ export async function syncAccount(account: AccountRow) {
   }
 }
 
-async function syncInstagram(accountDbId: string, username: string, existingUserId?: string) {
-  // Single /profile call gets userId + profile stats (replaces /id + /profile2)
+/**
+ * In light mode, check if account is stale (no new posts in STALE_ACCOUNT_DAYS).
+ * Returns true if we should skip post fetching and only update profile.
+ */
+async function isAccountStale(accountDbId: string): Promise<boolean> {
+  const latestPost = await getLatestPostDate(accountDbId);
+  if (!latestPost) return false; // new account, never synced — fetch everything
+  const staleCutoff = new Date();
+  staleCutoff.setDate(staleCutoff.getDate() - STALE_ACCOUNT_DAYS);
+  return latestPost < staleCutoff;
+}
+
+async function syncInstagram(accountDbId: string, username: string, existingUserId?: string, mode: SyncMode = 'full') {
   const profile = await fetchInstagramProfileByUsername(username);
   const userId = existingUserId || profile.userId;
 
-  // Fetch ALL reels (paginate until done)
-  const reels = await fetchInstagramReels(userId);
+  const cutoffDate = getCutoffDate();
+  const stale = mode === 'light' && await isAccountStale(accountDbId);
+
+  let reels: Awaited<ReturnType<typeof fetchInstagramReels>> = [];
+
+  if (stale) {
+    console.log(`[analytics] Skipping post fetch for stale Instagram account @${username} (light mode)`);
+  } else {
+    const fetchOpts = mode === 'light'
+      ? { knownIds: await getMediaExternalIds(accountDbId), cutoffDate, maxPages: 3 }
+      : undefined;
+    reels = await fetchInstagramReels(userId, fetchOpts);
+  }
 
   for (const r of reels) {
     const interactions = r.likes + r.comments + r.shares;
@@ -66,13 +116,13 @@ async function syncInstagram(accountDbId: string, username: string, existingUser
     if (!mediaItem.template_job_id) {
       await linkMediaItemToJob(mediaItem.id, mediaItem.external_id, accountDbId);
     }
-    await upsertMediaSnapshot(mediaItem.id, {
-      views: r.views,
-      likes: r.likes,
-      comments: r.comments,
-      shares: r.shares,
-      engagementRate: mediaEngagement,
-    });
+    // Only write metric snapshots for posts within 60-day cap
+    if (isPostWithinCap(r.publishedAt)) {
+      await upsertMediaSnapshot(mediaItem.id, {
+        views: r.views, likes: r.likes, comments: r.comments,
+        shares: r.shares, engagementRate: mediaEngagement,
+      });
+    }
   }
 
   const totals = await getAccountMediaTotals(accountDbId);
@@ -102,12 +152,23 @@ async function syncInstagram(accountDbId: string, username: string, existingUser
   });
 }
 
-async function syncTikTok(accountDbId: string, username: string, existingSecUid?: string) {
+async function syncTikTok(accountDbId: string, username: string, existingSecUid?: string, mode: SyncMode = 'full') {
   const userInfo = await resolveTikTokUser(username);
   const secUid = existingSecUid || userInfo.secUid;
 
-  // Fetch ALL posts (paginate until done)
-  const posts = await fetchTikTokPosts(secUid);
+  const cutoffDate = getCutoffDate();
+  const stale = mode === 'light' && await isAccountStale(accountDbId);
+
+  let posts: Awaited<ReturnType<typeof fetchTikTokPosts>> = [];
+
+  if (stale) {
+    console.log(`[analytics] Skipping post fetch for stale TikTok account @${username} (light mode)`);
+  } else {
+    const fetchOpts = mode === 'light'
+      ? { knownIds: await getMediaExternalIds(accountDbId), cutoffDate, maxPages: 3 }
+      : undefined;
+    posts = await fetchTikTokPosts(secUid, fetchOpts);
+  }
 
   for (const p of posts) {
     const interactions = p.likes + p.comments + p.shares;
@@ -132,13 +193,13 @@ async function syncTikTok(accountDbId: string, username: string, existingSecUid?
     if (!mediaItem.template_job_id) {
       await linkMediaItemToJob(mediaItem.id, mediaItem.external_id, accountDbId);
     }
-    await upsertMediaSnapshot(mediaItem.id, {
-      views: p.views,
-      likes: p.likes,
-      comments: p.comments,
-      shares: p.shares,
-      engagementRate: mediaEngagement,
-    });
+    // Only write metric snapshots for posts within 60-day cap
+    if (isPostWithinCap(p.publishedAt)) {
+      await upsertMediaSnapshot(mediaItem.id, {
+        views: p.views, likes: p.likes, comments: p.comments,
+        shares: p.shares, engagementRate: mediaEngagement,
+      });
+    }
   }
 
   const totals = await getAccountMediaTotals(accountDbId);
@@ -168,11 +229,27 @@ async function syncTikTok(accountDbId: string, username: string, existingSecUid?
   });
 }
 
-async function syncYouTube(accountDbId: string, identifier: string, existingChannelId?: string) {
-  const channel = await resolveYouTubeChannel(existingChannelId || identifier);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function syncYouTube(accountDbId: string, identifier: string, existingChannelId?: string, mode: SyncMode = 'full', metadata?: any) {
+  // Use cached uploadsPlaylistId from metadata to skip playlist discovery
+  const cachedPlaylistId = metadata?.uploadsPlaylistId;
 
-  // Pass uploadsPlaylistId directly — no duplicate channel fetch
-  const videos = await fetchYouTubeVideos(channel.uploadsPlaylistId);
+  const channel = await resolveYouTubeChannel(existingChannelId || identifier);
+  const uploadsPlaylistId = cachedPlaylistId || channel.uploadsPlaylistId;
+
+  const cutoffDate = getCutoffDate();
+  const stale = mode === 'light' && await isAccountStale(accountDbId);
+
+  let videos: Awaited<ReturnType<typeof fetchYouTubeVideos>> = [];
+
+  if (stale) {
+    console.log(`[analytics] Skipping video fetch for stale YouTube channel ${identifier} (light mode)`);
+  } else {
+    const fetchOpts = mode === 'light'
+      ? { knownIds: await getMediaExternalIds(accountDbId), cutoffDate, maxPages: 2 }
+      : undefined;
+    videos = await fetchYouTubeVideos(uploadsPlaylistId, fetchOpts);
+  }
 
   for (const v of videos) {
     const interactions = v.likes + v.comments;
@@ -197,13 +274,13 @@ async function syncYouTube(accountDbId: string, identifier: string, existingChan
     if (!mediaItem.template_job_id) {
       await linkMediaItemToJob(mediaItem.id, mediaItem.external_id, accountDbId);
     }
-    await upsertMediaSnapshot(mediaItem.id, {
-      views: v.views,
-      likes: v.likes,
-      comments: v.comments,
-      shares: 0,
-      engagementRate: mediaEngagement,
-    });
+    // Only write metric snapshots for videos within 60-day cap
+    if (isPostWithinCap(v.publishedAt)) {
+      await upsertMediaSnapshot(mediaItem.id, {
+        views: v.views, likes: v.likes, comments: v.comments,
+        shares: 0, engagementRate: mediaEngagement,
+      });
+    }
   }
 
   const totals = await getAccountMediaTotals(accountDbId);
@@ -238,16 +315,16 @@ const BATCH_DELAY_MS = 1000;
 
 /**
  * Sync all accounts in parallel batches of 5.
- * Much faster than sequential — 1000 accounts in ~7 min vs ~33 min.
+ * @param mode 'light' = incremental daily sync, 'full' = manual hard sync
  */
-export async function syncAllAccounts(accounts: AccountRow[]) {
+export async function syncAllAccounts(accounts: AccountRow[], mode: SyncMode = 'full') {
   const results: { id: string; success: boolean; error?: string }[] = [];
 
   for (let i = 0; i < accounts.length; i += BATCH_SIZE) {
     const batch = accounts.slice(i, i + BATCH_SIZE);
 
     const batchResults = await Promise.allSettled(
-      batch.map((account) => syncAccount(account))
+      batch.map((account) => syncAccount(account, mode))
     );
 
     for (let j = 0; j < batch.length; j++) {

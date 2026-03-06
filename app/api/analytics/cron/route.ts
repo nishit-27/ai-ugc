@@ -7,21 +7,23 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Daily analytics sync — called at 6 AM IST (00:30 UTC) via cron.
- * Syncs ALL accounts, ALL videos (old + new), full data.
- *
- * Can also be triggered manually via GET /api/analytics/cron?secret=CRON_SECRET
+ * Uses 'light' mode by default: incremental fetch, skips stale accounts,
+ * caps metric snapshots to 60 days. Pass ?mode=full for a complete sync.
  *
  * Cron config (external service or Vercel):
  *   Schedule: "30 0 * * *" (00:30 UTC = 6:00 AM IST)
  *   URL: /api/analytics/cron?secret=CRON_SECRET
  */
 export async function GET(request: NextRequest) {
-  // Verify cron secret to prevent unauthorized triggers
-  const secret = request.nextUrl.searchParams.get('secret');
+  // Verify cron secret — supports Vercel's Authorization header and manual ?secret= param
   const cronSecret = process.env.CRON_SECRET;
-
-  if (cronSecret && secret !== cronSecret) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    const querySecret = request.nextUrl.searchParams.get('secret');
+    const authorized = authHeader === `Bearer ${cronSecret}` || querySecret === cronSecret;
+    if (!authorized) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
   }
 
   try {
@@ -32,10 +34,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: 'No accounts to sync', results: [] });
     }
 
-    console.log(`[analytics-cron] Starting daily sync for ${accounts.length} accounts at ${new Date().toISOString()}`);
+    // 'light' for daily (incremental), 'full' via ?mode=full for weekly
+    const mode = (request.nextUrl.searchParams.get('mode') === 'full') ? 'full' as const : 'light' as const;
+
+    console.log(`[analytics-cron] Starting ${mode} sync for ${accounts.length} accounts at ${new Date().toISOString()}`);
     const startTime = Date.now();
 
-    const results = await syncAllAccounts(accounts);
+    const results = await syncAllAccounts(accounts, mode);
 
     const failed = results.filter((r: { success: boolean }) => !r.success);
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);

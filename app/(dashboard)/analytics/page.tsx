@@ -5,6 +5,7 @@ import { RefreshCw, Plus, BarChart3, Link2, Filter, ArrowDownUp, Clock, Search, 
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useSession } from 'next-auth/react';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { useToast } from '@/hooks/useToast';
 import OverviewCards from '@/components/analytics/OverviewCards';
@@ -23,7 +24,7 @@ import MediaTable from '@/components/analytics/MediaTable';
 import ViewsDistribution from '@/components/analytics/ViewsDistribution';
 import VariableTracking from '@/components/analytics/VariableTracking';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationPrevious, PaginationNext, PaginationEllipsis } from '@/components/ui/pagination';
-import type { AnalyticsSnapshot } from '@/types';
+import type { AnalyticsSnapshot, AnalyticsOverview } from '@/types';
 
 const ACCT_PER_PAGE = 12;
 
@@ -51,23 +52,39 @@ function getPageNumbers(current: number, total: number): (number | '...')[] {
   return pages;
 }
 
-const DATE_RANGES = [
-  { label: 'Today', days: 1 },
-  { label: 'Week', days: 7 },
-  { label: 'Month', days: 30 },
-  { label: '3 Months', days: 90 },
-  { label: 'All', days: 0 },
+const DATE_PRESETS = [
+  { label: 'Today', key: 'today', days: 0 },
+  { label: '7d', key: '7d', days: 7 },
+  { label: '30d', key: '30d', days: 30 },
+  { label: '3m', key: '3m', days: 90 },
+  { label: '1y', key: '1y', days: 365 },
+  { label: 'All', key: 'all', days: 0 },
+  { label: 'Custom', key: 'custom', days: -1 },
 ];
 
-function filterHistory(history: AnalyticsSnapshot[], days: number): AnalyticsSnapshot[] {
-  if (days === 0 || history.length === 0) return history;
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - days);
-  return history.filter(s => new Date(s.date) >= cutoff);
+/** Get today's date string in IST (YYYY-MM-DD) — matches the server's timezone */
+function todayIST(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
+
+/** Get a date string N days ago in IST */
+function daysAgoIST(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+
+const HARD_SYNC_EMAILS = (process.env.NEXT_PUBLIC_HARD_SYNC_EMAILS ?? '')
+  .split(',')
+  .map(e => e.trim().toLowerCase())
+  .filter(Boolean);
 
 function AnalyticsContent() {
   const { showToast } = useToast();
+  const session = useSession();
+  const userEmail = session.data?.user?.email?.toLowerCase() ?? '';
+  const canHardSync = HARD_SYNC_EMAILS.length === 0 || HARD_SYNC_EMAILS.includes(userEmail);
   const {
     overview,
     accounts,
@@ -85,7 +102,9 @@ function AnalyticsContent() {
   const [platformFilter, setPlatformFilter] = useState('all');
   const [accountFilter, setAccountFilter] = useState('all');
   const [sortBy, setSortBy] = useState('views-desc');
-  const [dateRange, setDateRange] = useState(30);
+  const [datePreset, setDatePreset] = useState('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [acctPlatform, setAcctPlatform] = useState('all');
   const [acctSort, setAcctSort] = useState('followers-desc');
   const [activeTab, setActiveTab] = useState('overview');
@@ -183,10 +202,184 @@ function AnalyticsContent() {
     return sorted;
   }, [mediaItems, platformFilter, accountFilter, sortBy, contentSearch]);
 
-  const filteredHistory = useMemo(
-    () => filterHistory(overview?.history || [], dateRange),
-    [overview?.history, dateRange],
-  );
+  // Fetch daily-metrics from server when a date filter is applied (exact DB totals)
+  const [filteredMetrics, setFilteredMetrics] = useState<{ date: string; posts: number; views: number; likes: number; comments: number; shares: number }[] | null>(null);
+  const [filteredMetricsLoading, setFilteredMetricsLoading] = useState(false);
+
+  // Date boundaries as YYYY-MM-DD strings in IST (matching server timezone)
+  const dateBounds = useMemo(() => {
+    let fromStr: string | null = null;
+    let toStr: string | null = null;
+    let serverDays = 0; // how many days to ask the server for
+
+    if (datePreset === 'custom') {
+      fromStr = customFrom || null;
+      toStr = customTo || null;
+      serverDays = 0; // fetch all, filter client-side
+    } else if (datePreset === 'today') {
+      fromStr = todayIST();
+      toStr = todayIST();
+      serverDays = 2; // today + 1 day for previous-period comparison
+    } else if (datePreset !== 'all') {
+      const preset = DATE_PRESETS.find(p => p.key === datePreset);
+      if (preset && preset.days > 0) {
+        // "7d" means the last 7 days: from (today-6) to today inclusive = 7 days
+        fromStr = daysAgoIST(preset.days - 1);
+        toStr = todayIST();
+        serverDays = preset.days * 2; // 2x for comparison
+      }
+    }
+    // "all" → both null, serverDays = 0
+
+    const isAllTime = !fromStr && !toStr;
+    return { fromStr, toStr, isAllTime, serverDays };
+  }, [datePreset, customFrom, customTo]);
+
+  // Always fetch daily-metrics from server (same source for ALL presets)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setFilteredMetricsLoading(true);
+      try {
+        const param = dateBounds.serverDays > 0 ? `?days=${dateBounds.serverDays}` : '';
+        const res = await fetch(`/api/analytics/daily-metrics${param}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (!cancelled) setFilteredMetrics(data.metrics || []);
+      } catch (e) {
+        console.error('Failed to fetch filtered metrics:', e);
+      } finally {
+        if (!cancelled) setFilteredMetricsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateBounds.serverDays, datePreset, customFrom, customTo]);
+
+  // Build overview from daily-metrics (single source of truth for all presets)
+  const { dateFilteredOverview, dateFilteredItems, dateFilteredHistory } = useMemo(() => {
+    // While daily-metrics is loading, show original overview as placeholder
+    if (!filteredMetrics) {
+      return { dateFilteredOverview: overview, dateFilteredItems: mediaItems, dateFilteredHistory: overview?.history || [] };
+    }
+
+    const { fromStr, toStr, isAllTime } = dateBounds;
+
+    // ── Split metrics into CURRENT period and PREVIOUS period ──
+    // m.date and fromStr/toStr are all YYYY-MM-DD strings — string comparison works correctly
+    const currentMetrics = isAllTime ? filteredMetrics : filteredMetrics.filter(m => {
+      if (fromStr && m.date < fromStr) return false;
+      if (toStr && m.date > toStr) return false;
+      return true;
+    });
+
+    // Previous period = same-length window immediately before fromStr (not for "All")
+    let prevFromStr: string | null = null;
+    if (fromStr && toStr) {
+      const fromD = new Date(fromStr + 'T00:00:00+05:30');
+      const toD = new Date(toStr + 'T00:00:00+05:30');
+      const periodMs = toD.getTime() - fromD.getTime();
+      if (periodMs > 0) {
+        const prev = new Date(fromD.getTime() - periodMs);
+        prevFromStr = prev.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      }
+    }
+    const previousMetrics = prevFromStr ? filteredMetrics.filter(m => {
+      if (m.date < prevFromStr!) return false;
+      if (fromStr && m.date >= fromStr) return false;
+      return true;
+    }) : [];
+
+    // ── Current period totals (from server daily-metrics — exact) ──
+    const totalViews = currentMetrics.reduce((s, m) => s + m.views, 0);
+    const totalLikes = currentMetrics.reduce((s, m) => s + m.likes, 0);
+    const totalComments = currentMetrics.reduce((s, m) => s + m.comments, 0);
+    const totalShares = currentMetrics.reduce((s, m) => s + m.shares, 0);
+    const totalPosts = currentMetrics.reduce((s, m) => s + m.posts, 0);
+    const totalInteractions = totalLikes + totalComments + totalShares;
+    const avgEngagementRate = totalViews > 0 ? (totalInteractions / totalViews) * 100 : 0;
+
+    // ── Delta history ──
+    let synthHistory: AnalyticsSnapshot[];
+    if (isAllTime) {
+      // "All" — use account snapshots for meaningful historical deltas
+      synthHistory = overview?.history || [];
+    } else if (previousMetrics.length > 0) {
+      // Presets — period-over-period comparison
+      const prevViews = previousMetrics.reduce((s, m) => s + m.views, 0);
+      const prevLikes = previousMetrics.reduce((s, m) => s + m.likes, 0);
+      const prevComments = previousMetrics.reduce((s, m) => s + m.comments, 0);
+      const prevShares = previousMetrics.reduce((s, m) => s + m.shares, 0);
+      const prevInteractions = prevLikes + prevComments + prevShares;
+      const prevEngagement = prevViews > 0 ? (prevInteractions / prevViews) * 100 : 0;
+      synthHistory = [
+        { date: 'prev', followers: overview?.totalFollowers || 0, totalViews: prevViews, totalLikes: prevLikes, totalComments: prevComments, totalShares: prevShares, engagementRate: prevEngagement },
+        { date: 'curr', followers: overview?.totalFollowers || 0, totalViews: totalViews, totalLikes: totalLikes, totalComments: totalComments, totalShares: totalShares, engagementRate: avgEngagementRate },
+      ];
+    } else {
+      synthHistory = [];
+    }
+
+    // ── Client-side filtering for best video / latest post / platform breakdown ──
+    const filteredItems = isAllTime ? mediaItems : mediaItems.filter(item => {
+      if (!item.publishedAt) return false;
+      // Convert publishedAt to IST date string for comparison
+      const itemDate = new Date(item.publishedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      if (fromStr && itemDate < fromStr) return false;
+      if (toStr && itemDate > toStr) return false;
+      return true;
+    });
+
+    const platformMap: Record<string, { platform: string; followers: number; views: number; likes: number; comments: number; shares: number; engagementRate: number; accountCount: number }> = {};
+    for (const item of filteredItems) {
+      if (!platformMap[item.platform]) {
+        platformMap[item.platform] = { platform: item.platform, followers: 0, views: 0, likes: 0, comments: 0, shares: 0, engagementRate: 0, accountCount: 0 };
+      }
+      const p = platformMap[item.platform];
+      p.views += item.views;
+      p.likes += item.likes;
+      p.comments += item.comments;
+      p.shares += item.shares || 0;
+    }
+    for (const p of Object.values(platformMap)) {
+      const int = p.likes + p.comments + p.shares;
+      p.engagementRate = p.views > 0 ? (int / p.views) * 100 : 0;
+    }
+    for (const a of accounts) {
+      if (platformMap[a.platform]) {
+        platformMap[a.platform].followers += a.followers;
+        platformMap[a.platform].accountCount += 1;
+      }
+    }
+
+    const latestPost = filteredItems.reduce<typeof filteredItems[0] | null>((latest, item) => {
+      if (!item.publishedAt) return latest;
+      if (!latest?.publishedAt) return item;
+      return new Date(item.publishedAt) > new Date(latest.publishedAt) ? item : latest;
+    }, null);
+
+    const filteredOv: AnalyticsOverview = {
+      totalFollowers: overview?.totalFollowers || 0,
+      totalViews,
+      totalInteractions,
+      avgEngagementRate,
+      accountCount: overview?.accountCount || 0,
+      platformBreakdown: Object.values(platformMap),
+      postingActivity: overview?.postingActivity || [],
+      totalVideos: totalPosts,
+      latestPost: latestPost ? {
+        title: latestPost.title || null,
+        caption: latestPost.caption?.slice(0, 60) || null,
+        url: latestPost.url || null,
+        publishedAt: latestPost.publishedAt!,
+        platform: latestPost.platform,
+        accountUsername: latestPost.accountUsername || '',
+      } : null,
+      lastSyncedAt: overview?.lastSyncedAt || null,
+      history: synthHistory,
+    };
+
+    return { dateFilteredOverview: filteredOv, dateFilteredItems: filteredItems, dateFilteredHistory: synthHistory };
+  }, [overview, mediaItems, accounts, dateBounds, filteredMetrics]);
 
   const filteredAccounts = useMemo(() => {
     let list = accounts;
@@ -264,7 +457,13 @@ function AnalyticsContent() {
             <Link2 className={`mr-1.5 h-3.5 w-3.5 ${autoSyncing ? 'animate-spin' : ''}`} />
             {autoSyncing ? 'Importing...' : 'Sync from Connections'}
           </Button>
-          <Button variant="ghost" size="sm" onClick={handleHardSync} disabled={syncing || autoSyncing}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleHardSync}
+            disabled={!canHardSync || syncing || autoSyncing}
+            title={!canHardSync ? 'You do not have permission to hard sync' : undefined}
+          >
             <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Syncing...' : 'Hard Sync'}
           </Button>
@@ -285,6 +484,48 @@ function AnalyticsContent() {
             <TabsTrigger value="variables">Variable Tracking</TabsTrigger>
           </TabsList>
           <div className="flex items-center gap-2">
+            {/* Date range filter — only visible on Overview tab */}
+            {activeTab === 'overview' && (
+              <>
+                <div className="flex rounded-lg border border-[var(--border)] p-0.5">
+                  {DATE_PRESETS.map(r => (
+                    <button
+                      key={r.key}
+                      onClick={() => setDatePreset(r.key)}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        datePreset === r.key
+                          ? 'bg-[var(--primary)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+                {datePreset === 'custom' && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={customFrom}
+                      onChange={e => setCustomFrom(e.target.value)}
+                      className="h-7 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-[11px] text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
+                    />
+                    <span className="text-[11px] text-[var(--text-muted)]">to</span>
+                    <input
+                      type="date"
+                      value={customTo}
+                      onChange={e => setCustomTo(e.target.value)}
+                      className="h-7 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-[11px] text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
+                    />
+                  </div>
+                )}
+                {datePreset !== 'all' && (
+                  <span className="text-[11px] text-[var(--text-muted)]">
+                    {filteredMetricsLoading ? 'Loading...' : `${dateFilteredOverview?.totalVideos ?? 0} video${(dateFilteredOverview?.totalVideos ?? 0) !== 1 ? 's' : ''}`}
+                  </span>
+                )}
+              </>
+            )}
             {/* Account filters — only visible on Accounts tab */}
             {activeTab === 'accounts' && accounts.length > 0 && (
               <>
@@ -332,22 +573,6 @@ function AnalyticsContent() {
                 </div>
               </>
             )}
-            {/* Date range filter */}
-            {/* <div className="flex rounded-lg border border-[var(--border)] p-0.5">
-              {DATE_RANGES.map(r => (
-                <button
-                  key={r.days}
-                  onClick={() => setDateRange(r.days)}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                    dateRange === r.days
-                      ? 'bg-[var(--primary)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--foreground)]'
-                  }`}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div> */}
           </div>
         </div>
 
@@ -355,8 +580,8 @@ function AnalyticsContent() {
         <TabsContent value="overview" forceMount className="mt-5 space-y-6 data-[state=inactive]:hidden">
           {/* All 8 stats in a single row */}
           <div className="grid grid-cols-4 gap-3 xl:grid-cols-8">
-            <OverviewCards overview={overview} history={filteredHistory} />
-            <ContentHighlights overview={overview} items={mediaItems} />
+            <OverviewCards overview={dateFilteredOverview} history={dateFilteredHistory} />
+            <ContentHighlights overview={dateFilteredOverview} items={dateFilteredItems} />
           </div>
 
           {/* Charts row: Day-over-Day + Cumulative with metric dropdowns */}

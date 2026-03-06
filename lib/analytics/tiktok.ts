@@ -71,14 +71,26 @@ type TikTokPost = {
   shares: number;
 };
 
+export type FetchOptions = {
+  /** Known external IDs already in DB — used for incremental sync */
+  knownIds?: Set<string>;
+  /** Stop fetching posts older than this date */
+  cutoffDate?: Date;
+  /** Hard limit on number of pages to fetch */
+  maxPages?: number;
+};
+
 /**
- * Fetch ALL posts — keeps paginating until hasMore=false.
- * No arbitrary page limit. Uses duplicate cursor detection to prevent infinite loops.
+ * Fetch posts with optional incremental sync support.
+ * In light mode (knownIds provided): stops when hitting a full page of known posts past cutoff.
+ * In full mode (no options): fetches everything (original behavior).
  */
-export async function fetchTikTokPosts(secUid: string): Promise<TikTokPost[]> {
+export async function fetchTikTokPosts(secUid: string, options?: FetchOptions): Promise<TikTokPost[]> {
+  const { knownIds, cutoffDate, maxPages } = options || {};
   const posts: TikTokPost[] = [];
   let cursor = '0';
   const seenCursors = new Set<string>();
+  let pageCount = 0;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -88,23 +100,44 @@ export async function fetchTikTokPosts(secUid: string): Promise<TikTokPost[]> {
     const data = raw?.data ?? raw;
     const items = data?.itemList || data?.items || [];
     if (items.length === 0) break;
+    pageCount++;
+
+    let allKnown = knownIds ? true : false;
+    let oldestOnPage: Date | null = null;
 
     for (const item of items) {
       const statsV2 = item?.statsV2 || {};
       const stats = item?.stats || {};
       const externalId = String(item?.id || '');
+      const publishedAt = item?.createTime ? new Date(Number(item.createTime) * 1000).toISOString() : '';
+
       posts.push({
         externalId,
         caption: item?.desc || '',
         url: item?.id ? `https://www.tiktok.com/@${item?.author?.uniqueId || ''}/video/${item.id}` : '',
         thumbnailUrl: item?.video?.cover || item?.video?.originCover || '',
-        publishedAt: item?.createTime ? new Date(Number(item.createTime) * 1000).toISOString() : '',
+        publishedAt,
         views: Number(statsV2?.playCount ?? stats?.playCount ?? 0),
         likes: Number(statsV2?.diggCount ?? stats?.diggCount ?? 0),
         comments: Number(statsV2?.commentCount ?? stats?.commentCount ?? 0),
         shares: Number(statsV2?.shareCount ?? stats?.shareCount ?? 0),
       });
+
+      if (knownIds && !knownIds.has(externalId)) allKnown = false;
+
+      const postDate = publishedAt ? new Date(publishedAt) : null;
+      if (postDate && (!oldestOnPage || postDate < oldestOnPage)) {
+        oldestOnPage = postDate;
+      }
     }
+
+    // Incremental: stop if entire page is known AND oldest item is past cutoff
+    if (knownIds && allKnown && cutoffDate && oldestOnPage && oldestOnPage < cutoffDate) {
+      break;
+    }
+
+    // Hard page limit
+    if (maxPages && pageCount >= maxPages) break;
 
     const hasMore = data?.hasMore ?? data?.has_more;
     cursor = String(data?.cursor ?? '0');

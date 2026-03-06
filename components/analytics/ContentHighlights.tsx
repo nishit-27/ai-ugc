@@ -91,7 +91,7 @@ export default function ContentHighlights({
                     format={
                       h.isFixed
                         ? { minimumFractionDigits: 1, maximumFractionDigits: 1 }
-                        : { notation: 'compact', maximumFractionDigits: 1 }
+                        : { useGrouping: true, maximumFractionDigits: 0 }
                     }
                   />
                   <span className="text-[11px] font-medium text-[var(--text-muted)]">{h.suffix}</span>
