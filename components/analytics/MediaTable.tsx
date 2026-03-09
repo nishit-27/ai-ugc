@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useMemo, ReactNode } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect, ReactNode } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationPrevious, PaginationNext, PaginationEllipsis } from '@/components/ui/pagination';
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
+import { ChevronDown, Search, Check } from 'lucide-react';
 import type { AnalyticsMediaItem, AnalyticsAccount } from '@/types';
 
 const PAGE_SIZE = 20;
@@ -33,6 +34,101 @@ const PLATFORM_META: Record<string, { icon: ReactNode; color: string }> = {
   instagram: { icon: <FaInstagram className="h-3 w-3" />, color: '#E1306C' },
   youtube:   { icon: <FaYoutube className="h-3 w-3" />,   color: '#FF0000' },
 };
+
+function SearchableAccountSelect({
+  value,
+  accounts,
+  onChange,
+}: {
+  value: string;
+  accounts: AnalyticsAccount[];
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      setSearch('');
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return accounts;
+    const q = search.trim().toLowerCase();
+    return accounts.filter(a =>
+      a.username.toLowerCase().includes(q) ||
+      (a.displayName || '').toLowerCase().includes(q)
+    );
+  }, [accounts, search]);
+
+  const selectedLabel = value === 'all'
+    ? 'All Accounts'
+    : accounts.find(a => a.id === value)?.username
+      ? `@${accounts.find(a => a.id === value)!.username}`
+      : 'All Accounts';
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex h-8 w-[150px] items-center justify-between rounded-md border border-[var(--border)] bg-transparent px-3 text-xs shadow-xs transition-colors hover:bg-[var(--muted)]"
+      >
+        <span className="truncate">{selectedLabel}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+      </button>
+      {open && (
+        <div className="absolute top-9 left-0 z-50 w-[200px] rounded-md border border-[var(--border)] bg-[var(--popover)] shadow-md">
+          <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-2 py-1.5">
+            <Search className="h-3 w-3 shrink-0 text-[var(--text-muted)]" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search accounts..."
+              className="h-5 w-full bg-transparent text-xs text-[var(--foreground)] placeholder:text-[var(--text-muted)] outline-none"
+            />
+          </div>
+          <div className="max-h-[200px] overflow-y-auto p-1">
+            <button
+              onClick={() => { onChange('all'); setOpen(false); }}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-[var(--accent)]"
+            >
+              {value === 'all' && <Check className="h-3 w-3 shrink-0" />}
+              <span className={value === 'all' ? '' : 'pl-5'}>All Accounts</span>
+            </button>
+            {filtered.map(a => (
+              <button
+                key={a.id}
+                onClick={() => { onChange(a.id); setOpen(false); }}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-[var(--accent)]"
+              >
+                {value === a.id && <Check className="h-3 w-3 shrink-0" />}
+                <span className={value === a.id ? 'truncate' : 'truncate pl-5'}>@{a.username}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-2 py-3 text-center text-[11px] text-[var(--text-muted)]">No accounts found</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function MediaTable({
   items,
@@ -66,10 +162,10 @@ export default function MediaTable({
   const pagedItems = useMemo(() => items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [items, page]);
 
   // Reset to first page when filters change
-  const handleFilterChange = (setter: (v: string) => void) => (v: string) => {
+  const handleChange = useCallback((setter: (v: string) => void, v: string) => {
     setPage(0);
     setter(v);
-  };
+  }, []);
 
   return (
     <Card className="border-[var(--border)]">
@@ -95,7 +191,7 @@ export default function MediaTable({
             </div>
           </div>
           <div className="flex gap-2">
-            <Select value={platformFilter} onValueChange={handleFilterChange(onPlatformChange)}>
+            <Select value={platformFilter} onValueChange={v => handleChange(onPlatformChange, v)}>
               <SelectTrigger className="h-8 w-[130px] text-xs">
                 <SelectValue placeholder="Platform" />
               </SelectTrigger>
@@ -106,22 +202,17 @@ export default function MediaTable({
                 <SelectItem value="youtube">YouTube</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={accountFilter} onValueChange={handleFilterChange(onAccountChange)}>
-              <SelectTrigger className="h-8 w-[150px] text-xs">
-                <SelectValue placeholder="Account" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Accounts</SelectItem>
-                {accounts.map(a => (
-                  <SelectItem key={a.id} value={a.id}>@{a.username}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableAccountSelect
+              value={accountFilter}
+              accounts={accounts}
+              onChange={v => handleChange(onAccountChange, v)}
+            />
             <Select
+              key={`sort1-field-${sortBy}`}
               value={sortBy.split('-')[0]}
               onValueChange={(field) => {
                 const dir = sortBy.split('-')[1] || 'desc';
-                handleFilterChange(onSortChange)(`${field}-${dir}`);
+                handleChange(onSortChange, `${field}-${dir}`);
               }}
             >
               <SelectTrigger className="h-8 w-[120px] text-xs">
@@ -135,10 +226,11 @@ export default function MediaTable({
               </SelectContent>
             </Select>
             <Select
+              key={`sort1-dir-${sortBy}`}
               value={sortBy.split('-')[1] || 'desc'}
               onValueChange={(dir) => {
                 const field = sortBy.split('-')[0];
-                handleFilterChange(onSortChange)(`${field}-${dir}`);
+                handleChange(onSortChange, `${field}-${dir}`);
               }}
             >
               <SelectTrigger className="h-8 w-[100px] text-xs">
@@ -151,10 +243,11 @@ export default function MediaTable({
             </Select>
             <span className="text-[11px] text-[var(--text-muted)]">then</span>
             <Select
+              key={`sort2-field-${sortBy2}`}
               value={sortBy2.split('-')[0]}
               onValueChange={(field) => {
                 const dir = sortBy2.split('-')[1] || 'desc';
-                handleFilterChange(onSort2Change)(`${field}-${dir}`);
+                handleChange(onSort2Change, `${field}-${dir}`);
               }}
             >
               <SelectTrigger className="h-8 w-[120px] text-xs">
@@ -170,10 +263,11 @@ export default function MediaTable({
             </Select>
             {sortBy2.split('-')[0] !== 'none' && (
               <Select
+                key={`sort2-dir-${sortBy2}`}
                 value={sortBy2.split('-')[1] || 'desc'}
                 onValueChange={(dir) => {
                   const field = sortBy2.split('-')[0];
-                  handleFilterChange(onSort2Change)(`${field}-${dir}`);
+                  handleChange(onSort2Change, `${field}-${dir}`);
                 }}
               >
                 <SelectTrigger className="h-8 w-[100px] text-xs">

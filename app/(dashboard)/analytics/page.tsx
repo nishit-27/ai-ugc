@@ -188,33 +188,38 @@ function AnalyticsContent() {
         (i.externalId || '').toLowerCase().includes(q)
       );
     }
-    if (contentDate) {
-      items = items.filter(i => {
-        if (!i.publishedAt) return false;
-        const d = new Date(i.publishedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-        return d === contentDate;
-      });
-    }
-    const sorted = [...items];
-    const getDayTimestamp = (publishedAt: string | null): number => {
-      if (!publishedAt) return 0;
-      const dateStr = new Date(publishedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-      return new Date(dateStr + 'T00:00:00+05:30').getTime();
-    };
-    const getSortValue = (item: typeof items[0], field: string, dayLevel: boolean): number => {
-      switch (field) {
-        case 'views': return item.views;
-        case 'likes': return item.likes;
-        case 'comments': return item.comments;
-        case 'date': return dayLevel ? getDayTimestamp(item.publishedAt ?? null) : (item.publishedAt ? new Date(item.publishedAt).getTime() : 0);
-        default: return 0;
+    const dateCache = new Map<string, { dayStr: string; dayTs: number; ts: number }>();
+    for (const item of items) {
+      if (item.publishedAt && !dateCache.has(item.id)) {
+        const ts = new Date(item.publishedAt).getTime();
+        const dayStr = new Date(item.publishedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        const dayTs = new Date(dayStr + 'T00:00:00+05:30').getTime();
+        dateCache.set(item.id, { dayStr, dayTs, ts });
       }
-    };
+    }
+    const getDateInfo = (item: typeof items[0]) => dateCache.get(item.id) || { dayStr: '', dayTs: 0, ts: 0 };
+
+    if (contentDate) {
+      items = items.filter(i => getDateInfo(i).dayStr === contentDate);
+    }
+
+    const sorted = [...items];
     const [sortField, sortDir] = sortBy.split('-') as [string, string];
     const [sortField2, sortDir2] = sortBy2.split('-') as [string, string];
     const hasSecondary = sortField2 !== 'none';
     const mul = sortDir === 'desc' ? 1 : -1;
     const mul2 = sortDir2 === 'desc' ? 1 : -1;
+
+    const getSortValue = (item: typeof items[0], field: string, dayLevel: boolean): number => {
+      switch (field) {
+        case 'views': return item.views;
+        case 'likes': return item.likes;
+        case 'comments': return item.comments;
+        case 'date': { const d = getDateInfo(item); return dayLevel ? d.dayTs : d.ts; }
+        default: return 0;
+      }
+    };
+
     sorted.sort((a, b) => {
       const primary = (getSortValue(b, sortField, hasSecondary) - getSortValue(a, sortField, hasSecondary)) * mul;
       if (primary !== 0 || !hasSecondary) return primary;
