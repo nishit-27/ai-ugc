@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 
-const publicPaths = ["/login", "/access-denied", "/api/auth", "/api/fal-webhook", "/api/recover-stuck-jobs"];
+const publicPaths = ["/login", "/access-denied", "/api/auth", "/api/fal-webhook", "/api/recover-stuck-jobs", "/api/analytics/cron"];
 
 /**
  * Internal API paths that are called server-to-server (no session cookie).

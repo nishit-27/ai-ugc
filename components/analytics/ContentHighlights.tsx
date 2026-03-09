@@ -1,8 +1,13 @@
 'use client';
 
-import NumberFlow from '@number-flow/react';
 import { Trophy, Flame, BarChart3, CalendarClock, ExternalLink } from 'lucide-react';
 import type { AnalyticsOverview, AnalyticsMediaItem } from '@/types';
+
+function formatCompact(n: number): string {
+  if (n >= 1_000_000) return (Math.trunc((n / 1_000_000) * 100) / 100).toFixed(2) + 'M';
+  if (n >= 1_000) return (Math.trunc((n / 1_000) * 100) / 100).toFixed(2) + 'K';
+  return n.toLocaleString();
+}
 
 export default function ContentHighlights({
   overview,
@@ -86,14 +91,9 @@ export default function ContentHighlights({
             <div className="flex items-baseline gap-1.5">
               {h.value !== null ? (
                 <span className="text-lg font-bold leading-none tracking-tight">
-                  <NumberFlow
-                    value={h.isFixed ? Number((h.value).toFixed(1)) : h.value}
-                    format={
-                      h.isFixed
-                        ? { minimumFractionDigits: 1, maximumFractionDigits: 1 }
-                        : { useGrouping: true, maximumFractionDigits: 0 }
-                    }
-                  />
+                  {h.isFixed
+                    ? (Math.trunc(h.value * 100) / 100).toFixed(2)
+                    : formatCompact(h.value)}
                   <span className="text-[11px] font-medium text-[var(--text-muted)]">{h.suffix}</span>
                 </span>
               ) : (

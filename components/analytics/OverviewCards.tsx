@@ -12,8 +12,8 @@ function getDelta(current: number, history: AnalyticsSnapshot[], key: keyof Anal
 }
 
 function formatCompact(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 10_000) return (n / 1_000).toFixed(1) + 'K';
+  if (n >= 1_000_000) return (Math.trunc((n / 1_000_000) * 100) / 100).toFixed(2) + 'M';
+  if (n >= 1_000) return (Math.trunc((n / 1_000) * 100) / 100).toFixed(2) + 'K';
   return n.toLocaleString();
 }
 
@@ -89,7 +89,7 @@ export default function OverviewCards({
                   </span>
                 ) : (
                   <span className="text-lg font-bold leading-none tracking-tight">
-                    <NumberFlow value={value} format={{ useGrouping: true, maximumFractionDigits: 0 }} />
+                    {formatCompact(value)}
                   </span>
                 )
               ) : (

@@ -35,8 +35,8 @@ const PLATFORM_META: Record<string, { label: string; icon: React.ReactNode; colo
 };
 
 function formatNumber(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 10_000) return (n / 1_000).toFixed(1) + 'K';
+  if (n >= 1_000_000) return (Math.trunc((n / 1_000_000) * 100) / 100).toFixed(2) + 'M';
+  if (n >= 1_000) return (Math.trunc((n / 1_000) * 100) / 100).toFixed(2) + 'K';
   return n.toLocaleString();
 }
 
@@ -102,6 +102,7 @@ function AnalyticsContent() {
   const [platformFilter, setPlatformFilter] = useState('all');
   const [accountFilter, setAccountFilter] = useState('all');
   const [sortBy, setSortBy] = useState('views-desc');
+  const [sortBy2, setSortBy2] = useState('none-desc');
   const [datePreset, setDatePreset] = useState('all');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -112,6 +113,7 @@ function AnalyticsContent() {
   const [acctView, setAcctView] = useState<'grid' | 'list'>('list');
   const [acctPage, setAcctPage] = useState(1);
   const [contentSearch, setContentSearch] = useState('');
+  const [contentDate, setContentDate] = useState('');
   const [autoSyncing, setAutoSyncing] = useState(false);
   const autoSyncAttempted = useRef(false);
   const syncingRef = useRef(false);
@@ -186,21 +188,40 @@ function AnalyticsContent() {
         (i.externalId || '').toLowerCase().includes(q)
       );
     }
-    const sorted = [...items];
-    const [sortField, sortDir] = sortBy.split('-') as [string, string];
-    const mul = sortDir === 'desc' ? 1 : -1;
-    switch (sortField) {
-      case 'views': sorted.sort((a, b) => (b.views - a.views) * mul); break;
-      case 'likes': sorted.sort((a, b) => (b.likes - a.likes) * mul); break;
-      case 'comments': sorted.sort((a, b) => (b.comments - a.comments) * mul); break;
-      case 'date': sorted.sort((a, b) => {
-        const da = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
-        const db = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
-        return (db - da) * mul;
-      }); break;
+    if (contentDate) {
+      items = items.filter(i => {
+        if (!i.publishedAt) return false;
+        const d = new Date(i.publishedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        return d === contentDate;
+      });
     }
+    const sorted = [...items];
+    const getDayTimestamp = (publishedAt: string | null): number => {
+      if (!publishedAt) return 0;
+      const dateStr = new Date(publishedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      return new Date(dateStr + 'T00:00:00+05:30').getTime();
+    };
+    const getSortValue = (item: typeof items[0], field: string, dayLevel: boolean): number => {
+      switch (field) {
+        case 'views': return item.views;
+        case 'likes': return item.likes;
+        case 'comments': return item.comments;
+        case 'date': return dayLevel ? getDayTimestamp(item.publishedAt ?? null) : (item.publishedAt ? new Date(item.publishedAt).getTime() : 0);
+        default: return 0;
+      }
+    };
+    const [sortField, sortDir] = sortBy.split('-') as [string, string];
+    const [sortField2, sortDir2] = sortBy2.split('-') as [string, string];
+    const hasSecondary = sortField2 !== 'none';
+    const mul = sortDir === 'desc' ? 1 : -1;
+    const mul2 = sortDir2 === 'desc' ? 1 : -1;
+    sorted.sort((a, b) => {
+      const primary = (getSortValue(b, sortField, hasSecondary) - getSortValue(a, sortField, hasSecondary)) * mul;
+      if (primary !== 0 || !hasSecondary) return primary;
+      return (getSortValue(b, sortField2, false) - getSortValue(a, sortField2, false)) * mul2;
+    });
     return sorted;
-  }, [mediaItems, platformFilter, accountFilter, sortBy, contentSearch]);
+  }, [mediaItems, platformFilter, accountFilter, sortBy, sortBy2, contentSearch, contentDate]);
 
   // Fetch daily-metrics from server when a date filter is applied (exact DB totals)
   const [filteredMetrics, setFilteredMetrics] = useState<{ date: string; posts: number; views: number; likes: number; comments: number; shares: number }[] | null>(null);
@@ -813,9 +834,13 @@ function AnalyticsContent() {
             platformFilter={platformFilter}
             accountFilter={accountFilter}
             sortBy={sortBy}
+            sortBy2={sortBy2}
+            dateFilter={contentDate}
             onPlatformChange={setPlatformFilter}
             onAccountChange={setAccountFilter}
             onSortChange={setSortBy}
+            onSort2Change={setSortBy2}
+            onDateChange={setContentDate}
           />
           <ViewsDistribution items={filteredMedia} />
         </TabsContent>

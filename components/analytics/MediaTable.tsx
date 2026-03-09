@@ -23,8 +23,8 @@ function getPageNumbers(current: number, total: number): (number | '...')[] {
 }
 
 function formatNumber(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 10_000) return (n / 1_000).toFixed(1) + 'K';
+  if (n >= 1_000_000) return (Math.trunc((n / 1_000_000) * 100) / 100).toFixed(2) + 'M';
+  if (n >= 1_000) return (Math.trunc((n / 1_000) * 100) / 100).toFixed(2) + 'K';
   return n.toLocaleString();
 }
 
@@ -40,18 +40,26 @@ export default function MediaTable({
   platformFilter,
   accountFilter,
   sortBy,
+  sortBy2,
+  dateFilter,
   onPlatformChange,
   onAccountChange,
   onSortChange,
+  onSort2Change,
+  onDateChange,
 }: {
   items: AnalyticsMediaItem[];
   accounts: AnalyticsAccount[];
   platformFilter: string;
   accountFilter: string;
   sortBy: string;
+  sortBy2: string;
+  dateFilter: string;
   onPlatformChange: (v: string) => void;
   onAccountChange: (v: string) => void;
   onSortChange: (v: string) => void;
+  onSort2Change: (v: string) => void;
+  onDateChange: (v: string) => void;
 }) {
   const [page, setPage] = useState(0);
   const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
@@ -67,7 +75,25 @@ export default function MediaTable({
     <Card className="border-[var(--border)]">
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle className="text-sm">All Content</CardTitle>
+          <div className="flex items-center gap-3">
+            <CardTitle className="text-sm">All Content</CardTitle>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={dateFilter}
+                onChange={e => { setPage(0); onDateChange(e.target.value); }}
+                className="h-8 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
+              />
+              {dateFilter && (
+                <button
+                  onClick={() => { setPage(0); onDateChange(''); }}
+                  className="ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
           <div className="flex gap-2">
             <Select value={platformFilter} onValueChange={handleFilterChange(onPlatformChange)}>
               <SelectTrigger className="h-8 w-[130px] text-xs">
@@ -123,6 +149,42 @@ export default function MediaTable({
                 <SelectItem value="asc">Asc ↓</SelectItem>
               </SelectContent>
             </Select>
+            <span className="text-[11px] text-[var(--text-muted)]">then</span>
+            <Select
+              value={sortBy2.split('-')[0]}
+              onValueChange={(field) => {
+                const dir = sortBy2.split('-')[1] || 'desc';
+                handleFilterChange(onSort2Change)(`${field}-${dir}`);
+              }}
+            >
+              <SelectTrigger className="h-8 w-[120px] text-xs">
+                <SelectValue placeholder="Then by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                <SelectItem value="views">Views</SelectItem>
+                <SelectItem value="likes">Likes</SelectItem>
+                <SelectItem value="comments">Comments</SelectItem>
+                <SelectItem value="date">Date</SelectItem>
+              </SelectContent>
+            </Select>
+            {sortBy2.split('-')[0] !== 'none' && (
+              <Select
+                value={sortBy2.split('-')[1] || 'desc'}
+                onValueChange={(dir) => {
+                  const field = sortBy2.split('-')[0];
+                  handleFilterChange(onSort2Change)(`${field}-${dir}`);
+                }}
+              >
+                <SelectTrigger className="h-8 w-[100px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="desc">Desc ↑</SelectItem>
+                  <SelectItem value="asc">Asc ↓</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
       </CardHeader>
