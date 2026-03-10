@@ -224,12 +224,19 @@ body {
   body {
     @apply text-foreground;
     background-color: var(--background);
+  }
+  /* Fixed gradient background via pseudo-element — GPU-composited, no scroll repaint */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background-image:
       radial-gradient(circle 600px at 0% 200px, #fce7f3, transparent),
       radial-gradient(circle 600px at 100% 200px, #fce7f3, transparent);
-    background-attachment: fixed;
   }
-  .dark body {
+  .dark body::before {
     background-image:
       radial-gradient(circle at 50% 100%, rgba(196, 80, 122, 0.45) 0%, transparent 55%),
       radial-gradient(circle at 50% 100%, rgba(232, 114, 154, 0.25) 0%, transparent 65%),

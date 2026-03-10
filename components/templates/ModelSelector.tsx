@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Search, CheckSquare, Square, Check, Minus, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Search, CheckSquare, Square, Check, Minus, Loader2, AlertTriangle } from 'lucide-react';
 import type { Model } from '@/types';
 
 const UNGROUPED_KEY = '__ungrouped__';
@@ -53,6 +53,8 @@ function groupModels(models: Model[]): ModelGroup[] {
     }));
 }
 
+type InactiveInfo = { platform: string; username?: string };
+
 export default function ModelSelector({
   models,
   isLoading,
@@ -67,6 +69,25 @@ export default function ModelSelector({
   accountCounts?: Record<string, number>;
 }) {
   const [search, setSearch] = useState('');
+
+  // Fetch inactive accounts per model
+  const [inactiveByModel, setInactiveByModel] = useState<Record<string, InactiveInfo[]>>({});
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/models/inactive-accounts', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const map: Record<string, InactiveInfo[]> = {};
+        for (const acc of data.inactiveAccounts || []) {
+          if (!map[acc.modelId]) map[acc.modelId] = [];
+          map[acc.modelId].push({ platform: acc.platform, username: acc.username });
+        }
+        setInactiveByModel(map);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const groupedModels = useMemo(() => groupModels(models), [models]);
 
@@ -237,31 +258,48 @@ export default function ModelSelector({
                 {group.models.map((model) => {
                   const isSelected = selectedIds.includes(model.id);
                   const accountCount = accountCounts?.[model.id] || 0;
+                  const inactive = inactiveByModel[model.id];
+                  const hasInactive = inactive && inactive.length > 0;
                   return (
                     <button
                       key={model.id}
                       onClick={() => toggleModel(model.id)}
                       className={`flex items-center gap-2 rounded-lg border p-2 text-left transition-all ${
                         isSelected
-                          ? 'border-[var(--primary)] bg-[var(--primary)]/5'
-                          : 'border-[var(--border)] hover:border-[var(--primary)]/50'
+                          ? hasInactive
+                            ? 'border-red-400 bg-red-50 dark:border-red-700 dark:bg-red-950/30'
+                            : 'border-[var(--primary)] bg-[var(--primary)]/5'
+                          : hasInactive
+                            ? 'border-red-300 hover:border-red-400 dark:border-red-800 dark:hover:border-red-600'
+                            : 'border-[var(--border)] hover:border-[var(--primary)]/50'
                       }`}
                     >
-                      {model.avatarUrl ? (
-                        <img src={model.avatarUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
-                      ) : (
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--background)] text-xs font-bold text-[var(--text-muted)]">
-                          {model.name.charAt(0).toUpperCase()}
-                        </div>
-                      )}
+                      <div className="relative shrink-0">
+                        {model.avatarUrl ? (
+                          <img src={model.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+                        ) : (
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--background)] text-xs font-bold text-[var(--text-muted)]">
+                            {model.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        {hasInactive && (
+                          <div className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500">
+                            <AlertTriangle className="h-2 w-2 text-white" />
+                          </div>
+                        )}
+                      </div>
 
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-xs font-medium">{model.name}</div>
-                        {accountCount > 0 && (
+                        {hasInactive ? (
+                          <div className="text-[10px] font-medium text-red-600 dark:text-red-400">
+                            {inactive.length} expired ({inactive.map((a) => a.platform).join(', ')})
+                          </div>
+                        ) : accountCount > 0 ? (
                           <div className="text-[10px] text-[var(--text-muted)]">
                             {accountCount} account{accountCount !== 1 ? 's' : ''}
                           </div>
-                        )}
+                        ) : null}
                       </div>
 
                       {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />}

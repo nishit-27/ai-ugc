@@ -66,7 +66,8 @@ export function hasPublishedPlatformWithoutUrl(post: PostLike): boolean {
 
 export function statusMatchesFilter(status: UiPostStatus, filter: string): boolean {
   if (filter === 'all') return true;
-  if (filter === 'failed') return status === 'failed' || status === 'partial';
+  if (filter === 'failed') return status === 'failed';
+  if (filter === 'partial') return status === 'partial';
   return status === filter;
 }
 

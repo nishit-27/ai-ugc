@@ -1,6 +1,8 @@
 'use client';
 
+import { useMemo } from 'react';
 import RefreshButton from '@/components/ui/RefreshButton';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import type { DateFilterValue } from '@/types/media-filters';
 import { DATE_FILTER_OPTIONS } from '@/types/media-filters';
 import type { ModelFilterOption } from '@/hooks/useModelFilterOptions';
@@ -22,20 +24,23 @@ export default function ModelDateToolbar({
   onRefresh: () => Promise<void> | void;
   className?: string;
 }) {
+  const selectOptions = useMemo(
+    () => [
+      { value: 'all', label: 'All models' },
+      ...modelOptions.map((m) => ({ value: m.id, label: m.name })),
+    ],
+    [modelOptions],
+  );
+
   return (
     <div className={`flex flex-wrap items-center justify-end gap-2 ${className}`}>
-      <label className="sr-only" htmlFor="media-model-filter">Filter by model</label>
-      <select
-        id="media-model-filter"
+      <SearchableSelect
         value={modelId}
-        onChange={(e) => onModelChange(e.target.value)}
-        className="h-10 min-w-[9.5rem] rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
-      >
-        <option value="all">All models</option>
-        {modelOptions.map((model) => (
-          <option key={model.id} value={model.id}>{model.name}</option>
-        ))}
-      </select>
+        onChange={onModelChange}
+        options={selectOptions}
+        placeholder="All models"
+        className="min-w-[11rem]"
+      />
 
       <label className="sr-only" htmlFor="media-date-filter">Filter by date</label>
       <select

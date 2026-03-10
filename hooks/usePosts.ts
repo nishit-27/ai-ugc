@@ -36,6 +36,47 @@ type ApiVideoRow = {
 let _videoModelLookupCache = new Map<string, VideoModelInfo>();
 let _videoModelLookupTs = 0;
 
+// Account→Model map cache (primary enrichment source)
+let _accountModelMapCache: Record<string, { modelId: string; modelName: string }> = {};
+let _accountModelMapTs = 0;
+const ACCOUNT_MODEL_MAP_TTL_MS = 5 * 60_000;
+
+async function getAccountModelMap(force = false): Promise<Record<string, { modelId: string; modelName: string }>> {
+  const now = Date.now();
+  if (!force && Object.keys(_accountModelMapCache).length > 0 && now - _accountModelMapTs < ACCOUNT_MODEL_MAP_TTL_MS) {
+    return _accountModelMapCache;
+  }
+  try {
+    const res = await fetch('/api/accounts/model-map');
+    if (!res.ok) return _accountModelMapCache;
+    const data = await res.json();
+    _accountModelMapCache = data;
+    _accountModelMapTs = Date.now();
+    return data;
+  } catch {
+    return _accountModelMapCache;
+  }
+}
+
+function getAccountId(accountId: string | { _id: string } | undefined): string {
+  if (!accountId) return '';
+  return typeof accountId === 'object' ? accountId._id : accountId;
+}
+
+function enrichPostFromAccountMap(
+  post: Post,
+  accountMap: Record<string, { modelId: string; modelName: string }>
+): Post {
+  if (post.modelId && post.modelName) return post;
+  for (const plat of post.platforms || []) {
+    const acctId = getAccountId(plat.accountId);
+    if (acctId && accountMap[acctId]) {
+      return { ...post, modelId: accountMap[acctId].modelId, modelName: accountMap[acctId].modelName };
+    }
+  }
+  return post;
+}
+
 function getCachedPosts(): Post[] | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
@@ -126,17 +167,27 @@ function findPostModelInfo(post: Post, lookup: Map<string, VideoModelInfo>): Vid
 
 async function enrichPostsWithModelInfo(posts: Post[], forceLookupRefresh = false): Promise<Post[]> {
   if (posts.length === 0) return posts;
-  const lookup = await getVideoModelLookup(forceLookupRefresh);
-  if (lookup.size === 0) return posts;
+
+  // Primary: account→model mapping (reliable, DB-backed)
+  const accountMap = await getAccountModelMap(forceLookupRefresh);
+
+  // Secondary fallback: URL-based video lookup
+  const videoLookup = await getVideoModelLookup(forceLookupRefresh);
 
   return posts.map((post) => {
-    const match = findPostModelInfo(post, lookup);
-    if (!match) return post;
-    return {
-      ...post,
-      modelId: match.modelId,
-      modelName: match.modelName,
-    };
+    // Try account map first
+    const enriched = enrichPostFromAccountMap(post, accountMap);
+    if (enriched.modelId && enriched.modelName) return enriched;
+
+    // Fall back to URL matching
+    if (videoLookup.size > 0) {
+      const match = findPostModelInfo(post, videoLookup);
+      if (match) {
+        return { ...post, modelId: match.modelId, modelName: match.modelName };
+      }
+    }
+
+    return post;
   });
 }
 
@@ -284,11 +335,16 @@ export function usePosts(options: UsePostsOptions = {}) {
     }
   }, []);
 
-  // Adaptive polling
+  // Adaptive polling — single schedule function, no redundant fetches
+  const isPageVisibleRef = useRef(isPageVisible);
+  isPageVisibleRef.current = isPageVisible;
+
   const scheduleNext = useCallback(() => {
     if (!mountedRef.current) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+
     let delay = HIDDEN_POLL_INTERVAL;
-    if (isPageVisible) {
+    if (isPageVisibleRef.current) {
       const hasActive = postsRef.current.some((post) => {
         const status = post.derivedStatus || derivePostStatus(post);
         return isActiveStatus(status)
@@ -298,42 +354,40 @@ export function usePosts(options: UsePostsOptions = {}) {
       delay = hasActive ? ACTIVE_POLL_INTERVAL : IDLE_POLL_INTERVAL;
     }
 
-    if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(async () => {
       await loadPosts();
       scheduleNext();
     }, delay);
-  }, [isPageVisible, loadPosts]);
+  }, [loadPosts]);
 
-  useEffect(() => {
-    if ((getCachedPosts() || []).length === 0) setIsLoadingPage(true);
-    loadPosts().then(scheduleNext);
-  }, [loadPosts, scheduleNext]);
-
+  // Mount: initial load + start polling
   useEffect(() => {
     mountedRef.current = true;
     firstLoadStartedAtRef.current = Date.now();
+    if ((getCachedPosts() || []).length === 0) setIsLoadingPage(true);
+    loadPosts().then(() => scheduleNext());
     return () => {
       mountedRef.current = false;
       abortRef.current?.abort();
       if (timerRef.current) clearTimeout(timerRef.current);
       if (emptyBootstrapTimerRef.current) clearTimeout(emptyBootstrapTimerRef.current);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!mountedRef.current) return;
-    if (timerRef.current) clearTimeout(timerRef.current);
-    scheduleNext();
-  }, [isPageVisible, scheduleNext]);
-
+  // Visibility change: fetch once + reschedule
   useEffect(() => {
     const wasVisible = wasVisibleRef.current;
     wasVisibleRef.current = isPageVisible;
-    if (!wasVisible && isPageVisible) {
-      void loadPosts();
+    if (!wasVisible && isPageVisible && mountedRef.current) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      loadPosts().then(() => scheduleNext());
+    } else if (mountedRef.current) {
+      // Just reschedule with new delay (visible vs hidden)
+      scheduleNext();
     }
-  }, [isPageVisible, loadPosts]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPageVisible]);
 
   // Duplicate detection: per-account, check last 5 posts — if 2+ share the same caption, mark as duplicate
   // Returns both a quick-lookup Set and a detailed Map with sibling links per platform

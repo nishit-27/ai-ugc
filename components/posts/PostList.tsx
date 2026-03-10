@@ -23,6 +23,24 @@ const PLATFORM_ICON: Record<string, React.ReactNode> = {
   twitter: <FaXTwitter className="h-3.5 w-3.5" />,
 };
 
+const PLATFORM_ICON_SM: Record<string, (color: string) => React.ReactNode> = {
+  instagram: (c) => <FaInstagram className="h-3 w-3" style={{ color: c }} />,
+  tiktok: (c) => <FaTiktok className="h-3 w-3" style={{ color: c }} />,
+  youtube: (c) => <FaYoutube className="h-3 w-3" style={{ color: c }} />,
+  twitter: (c) => <FaXTwitter className="h-3 w-3" style={{ color: c }} />,
+};
+
+const STATUS_DOT: Record<string, string> = {
+  published: 'bg-emerald-400',
+  failed: 'bg-red-400',
+  partial: 'bg-orange-400',
+  pending: 'bg-amber-400',
+  processing: 'bg-amber-400',
+  publishing: 'bg-amber-400',
+  in_progress: 'bg-amber-400',
+  scheduled: 'bg-blue-400',
+};
+
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: 'border-pink-200 bg-pink-50 dark:border-pink-900/40 dark:bg-pink-950/20',
   tiktok: 'border-cyan-200 bg-cyan-50 dark:border-cyan-900/40 dark:bg-cyan-950/20',
@@ -225,8 +243,10 @@ export default function PostList({
                 ) : previewVideo ? (
                   <video
                     src={previewVideo}
-                    className="absolute inset-0 h-full w-full object-contain"
+                    className="absolute inset-0 h-full w-full object-cover"
                     muted
+                    autoPlay
+                    loop
                     playsInline
                     preload="metadata"
                   />
@@ -261,37 +281,70 @@ export default function PostList({
                     )}
                   </div>
 
-                  {/* Platform chips */}
+                  {/* Platform chips with per-platform status dots */}
                   {post.platforms && post.platforms.length > 0 && (
                     <div className="flex gap-1">
-                      {post.platforms.map((p, idx) => (
+                      {post.platforms.map((p, idx) => {
+                        const pStatus = p.status || 'pending';
+                        const dotColor = STATUS_DOT[pStatus] || 'bg-gray-400';
+                        return (
                           <span
                             key={`${p.platform}-${idx}-${typeof p.accountId === 'string' ? p.accountId : p.accountId?._id || 'unknown'}`}
-                            className="flex h-7 w-7 items-center justify-center rounded-lg shadow-sm bg-black/50 backdrop-blur-sm"
+                            className="relative flex h-7 w-7 items-center justify-center rounded-lg shadow-sm bg-black/50 backdrop-blur-sm"
                           >
                             {p.platform === 'tiktok' && <FaTiktok className="h-4 w-4" style={{ color: '#00f2ea' }} />}
                             {p.platform === 'instagram' && <FaInstagram className="h-4 w-4" style={{ color: '#E1306C' }} />}
                             {p.platform === 'youtube' && <FaYoutube className="h-4 w-4" style={{ color: '#FF0000' }} />}
                             {p.platform === 'twitter' && <FaXTwitter className="h-4 w-4 text-white" />}
+                            <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-black/50 ${dotColor}`} />
                           </span>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               </div>
 
               {/* Info bar */}
-              <div className="bg-[var(--surface)] px-2.5 py-2">
-                <p className="truncate text-xs font-medium">{post.content || '(No caption)'}</p>
-                {post.createdAt && (
-                  <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
-                    {getCreatedDateDisplay(post.createdAt)}
-                  </p>
-                )}
-                <p className="mt-0.5 flex items-center gap-1.5 truncate text-[10px] text-[var(--text-muted)]">
-                  By {postAuthor}
+              <div className="bg-[var(--surface)] px-3 py-2.5">
+                {/* Caption */}
+                <p className="truncate text-[11px] leading-snug text-[var(--text)]">{post.content || '(No caption)'}</p>
+
+                {/* Model name row */}
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <span className="truncate text-[11px] font-semibold text-[var(--text)]">{postAuthor}</span>
                   <GlBadge index={post.apiKeyIndex} />
-                </p>
+                </div>
+
+                {/* Date + platform breakdown */}
+                <div className="mt-1 flex items-center justify-between">
+                  {post.createdAt && (
+                    <span className="text-[10px] text-[var(--text-muted)]">{getCreatedDateDisplay(post.createdAt)}</span>
+                  )}
+                  {/* Per-platform mini status for partial */}
+                  {status === 'partial' && post.platforms && post.platforms.length > 0 && (
+                    <div className="flex gap-0.5">
+                      {post.platforms.map((p, idx) => {
+                        const pStatus = p.status || 'pending';
+                        const isOk = pStatus === 'published';
+                        const isFail = pStatus === 'failed';
+                        return (
+                          <span
+                            key={`${p.platform}-${idx}`}
+                            className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${
+                              isOk ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                              : isFail ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                              : 'bg-[var(--accent)] text-[var(--text-muted)]'
+                            }`}
+                          >
+                            {PLATFORM_ICON_SM[p.platform]?.(isOk ? '#10b981' : isFail ? '#ef4444' : '#9ca3af')}
+                            {isOk ? '✓' : isFail ? '✗' : '⋯'}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           );
@@ -411,9 +464,10 @@ export default function PostList({
                   {livePost.content && (
                     <p className="text-xs leading-relaxed text-[var(--text-muted)]">{livePost.content}</p>
                   )}
-                  <p className="text-[11px] text-[var(--text-muted)]">
-                    By {livePost.modelName || 'Unknown'}
-                  </p>
+                  <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+                    <span>By <span className="font-medium text-[var(--text)]">{livePost.modelName || 'Unknown'}</span></span>
+                    <GlBadge index={livePost.apiKeyIndex} />
+                  </div>
 
                   {/* Platform statuses */}
                   {livePost.platforms && livePost.platforms.length > 0 && (
