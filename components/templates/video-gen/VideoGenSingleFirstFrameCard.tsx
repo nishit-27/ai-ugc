@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronUp, Expand, RefreshCw, Sparkles, Upload, User, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Expand, RefreshCw, Sparkles, Upload, User, X, AlertCircle } from 'lucide-react';
 import VideoGenLibraryChooser from './VideoGenLibraryChooser';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
 import type { GeneratedImage, VideoGenConfig as VGC } from '@/types';
@@ -169,32 +169,6 @@ export default function VideoGenSingleFirstFrameCard({
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Model</label>
-                  <select
-                    value={config.firstFrameProvider || 'gemini'}
-                    onChange={(e) => onChange({ ...config, firstFrameProvider: e.target.value as 'gemini' | 'fal' | 'gpt-image' })}
-                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
-                  >
-                    <option value="gemini">Gemini</option>
-                    <option value="fal">FAL (Nano Banana)</option>
-                    <option value="gpt-image">GPT Image 1.5</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Resolution</label>
-                  <select
-                    value={config.firstFrameResolution || '1K'}
-                    onChange={(e) => onSetResolution(e.target.value as '1K' | '2K' | '4K')}
-                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
-                  >
-                    <option value="1K">1K</option>
-                    <option value="2K">2K</option>
-                    <option value="4K">4K</option>
-                  </select>
-                </div>
-              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Face</p>
@@ -425,53 +399,49 @@ export default function VideoGenSingleFirstFrameCard({
               {config.extractedFrameUrl && config.imageUrl === config.extractedFrameUrl && (
                 <p className="text-[10px] font-medium text-green-600">Selected scene is already set as first frame (no generation needed).</p>
               )}
-              {generateError && <p className="text-xs text-red-500">{generateError}</p>}
+              {generateError && (
+                <div className="flex items-center gap-2 rounded-lg bg-red-500/10 px-3 py-2">
+                  <AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                  <p className="text-xs text-red-500">{generateError}</p>
+                </div>
+              )}
               {isGeneratingFirstFrame && (
-                <div className="grid grid-cols-2 gap-3">
-                  {[0, 1].map((i) => (
-                    <div key={i} className="relative aspect-[3/4] overflow-hidden rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--primary)]/10">
-                      <LoadingShimmer tone="primary" backgroundClassName="bg-gradient-to-br from-[var(--accent)] to-[var(--primary)]/10" />
-                    </div>
-                  ))}
+                <div className="relative aspect-[3/4] max-w-[200px] mx-auto overflow-hidden rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--primary)]/10">
+                  <LoadingShimmer tone="primary" backgroundClassName="bg-gradient-to-br from-[var(--accent)] to-[var(--primary)]/10" />
                 </div>
               )}
               {firstFrameOptions.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-[10px] font-semibold text-[var(--text-muted)]">Pick a result</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    {firstFrameOptions.map((opt, i) => {
-                      if (dismissedOptions.has(opt.gcsUrl)) return null;
-                      const isSelected = config.imageUrl === opt.gcsUrl;
-                      return (
-                        <button
-                          key={i}
-                          onClick={() => onSelectFirstFrame(opt)}
-                          className={`group relative w-full aspect-[3/4] overflow-hidden rounded-2xl border-2 transition-all duration-150 ${
-                            isSelected ? 'border-[var(--primary)]' : 'border-transparent hover:opacity-90'
-                          }`}
+                  <p className="text-[10px] font-semibold text-[var(--text-muted)]">Result</p>
+                  {firstFrameOptions.map((opt, i) => {
+                    if (dismissedOptions.has(opt.gcsUrl)) return null;
+                    const isSelected = config.imageUrl === opt.gcsUrl;
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => onSelectFirstFrame(opt)}
+                        className={`group relative w-full max-w-[200px] mx-auto block aspect-[3/4] overflow-hidden rounded-2xl border-2 transition-all duration-150 ${
+                          isSelected ? 'border-[var(--primary)]' : 'border-transparent hover:opacity-90'
+                        }`}
+                      >
+                        <img src={opt.url} alt="Generated first frame" className="h-full w-full object-cover" />
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewUrl(opt.url);
+                          }}
+                          className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
                         >
-                          <img src={opt.url} alt={`Option ${String.fromCharCode(65 + i)}`} className="h-full w-full object-cover" />
-                          <div
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPreviewUrl(opt.url);
-                            }}
-                            className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
-                          >
-                            <Expand className="h-2.5 w-2.5" />
+                          <Expand className="h-2.5 w-2.5" />
+                        </div>
+                        {isSelected && (
+                          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-[var(--primary)]/90 to-transparent py-1 text-center">
+                            <span className="text-[10px] font-semibold text-[var(--primary-foreground)]">Selected</span>
                           </div>
-                          <div className="absolute top-2 left-2 flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-[9px] font-bold text-white backdrop-blur-sm">
-                            {String.fromCharCode(65 + i)}
-                          </div>
-                          {isSelected && (
-                            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-[var(--primary)]/90 to-transparent py-1 text-center">
-                              <span className="text-[10px] font-semibold text-[var(--primary-foreground)]">Selected</span>
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
               <VideoGenLibraryChooser

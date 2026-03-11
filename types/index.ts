@@ -412,6 +412,22 @@ export type TemplatePreset = {
   updatedAt: string;
 };
 
+// ── Generation request (cost tracking) ──
+
+export type GenerationRequest = {
+  id: string;
+  type: 'image' | 'video';
+  provider: string;
+  model: string;
+  status: 'processing' | 'success' | 'failed';
+  cost?: number;
+  durationSeconds?: number;
+  error?: string;
+  metadata?: Record<string, unknown>;
+  createdBy?: string;
+  createdAt: string;
+};
+
 // ── Analytics types ──
 
 export type AnalyticsAccount = {

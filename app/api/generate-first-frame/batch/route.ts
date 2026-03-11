@@ -23,7 +23,7 @@ type ModelResult = {
 
 export async function POST(req: Request) {
   try {
-    const { models, frameImageUrl, resolution, provider = 'gemini' } = (await req.json()) as BatchRequest;
+    const { models, frameImageUrl, resolution, provider = 'fal' } = (await req.json()) as BatchRequest;
 
     if (!models || !Array.isArray(models) || models.length === 0) {
       return NextResponse.json({ error: 'models array is required' }, { status: 400 });

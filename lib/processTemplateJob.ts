@@ -3,6 +3,8 @@ import fs from 'fs';
 import os from 'os';
 import { fal } from '@fal-ai/client';
 import { getTemplateJob, updateTemplateJob, getModelImage, updatePipelineBatchProgress } from '@/lib/db';
+import { createGenerationRequest } from '@/lib/db-generation-requests';
+import { getEndpointCost } from '@/lib/fal-pricing';
 import { uploadVideoFromPath, downloadToBuffer as gcsDownloadToBuffer } from '@/lib/storage';
 import { downloadFile, getVideoDuration, trimVideo, trimVideoRange } from '@/lib/serverUtils';
 import { addTextOverlay, mixAudio, concatVideos, stripAudio } from '@/lib/ffmpegOps';
@@ -215,6 +217,27 @@ export async function processStep(
         if (!videoData?.url) throw new Error('No video URL from motion-control');
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
         await downloadFile(videoData.url, outputPath);
+
+        // Track video generation cost
+        try {
+          const videoDuration = getVideoDuration(outputPath);
+          const videoCost = await getEndpointCost(falEndpoint, videoDuration);
+          // Look up who created the job so we can attribute the cost
+          const jobRecord = await getTemplateJob(jobId);
+          await createGenerationRequest({
+            type: 'video',
+            provider: 'fal',
+            model: falEndpoint,
+            status: 'success',
+            cost: videoCost,
+            durationSeconds: videoDuration,
+            metadata: { jobId, stepIndex },
+            createdBy: jobRecord?.createdBy || null,
+          });
+        } catch (costErr) {
+          console.error('[CostTracking] Failed to track video cost:', costErr);
+        }
+
         if (cfg.generateAudio === false) {
           const silentPath = path.join(tempDir, `tpl-step-${stepIndex}-silent-${jobId}-${Date.now()}.mp4`);
           stripAudio(outputPath, silentPath);
