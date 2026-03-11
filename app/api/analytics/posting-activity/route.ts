@@ -9,7 +9,8 @@ export async function GET(request: Request) {
     await ensureDatabaseReady();
     const { searchParams } = new URL(request.url);
     const days = Number(searchParams.get('days') || '0');
-    const data = await getPostingActivity(days);
+    const unique = searchParams.get('unique') === '1';
+    const data = await getPostingActivity(days, unique);
     console.log('[analytics] posting-activity response:', JSON.stringify({ days, entries: data.postingActivity?.length, totalVideos: data.totalVideos, sample: data.postingActivity?.slice(0, 3) }));
     return NextResponse.json(data);
   } catch (error) {

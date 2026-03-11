@@ -38,6 +38,7 @@ function formatDateLabel(dateStr: string, totalDays: number): string {
 
 export default function PostingActivity({ refreshKey }: { refreshKey?: string }) {
   const [filter, setFilter] = useState(30);
+  const [unique, setUnique] = useState(false);
   const [rawData, setRawData] = useState<PostingActivityEntry[]>([]);
   const [totalVideos, setTotalVideos] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -47,10 +48,13 @@ export default function PostingActivity({ refreshKey }: { refreshKey?: string })
     setTodayStr(toLocalDateStr(new Date()));
   }, []);
 
-  const fetchData = useCallback(async (days: number) => {
+  const fetchData = useCallback(async (days: number, uniqueMode: boolean) => {
     try {
-      const param = days > 0 ? `?days=${days}` : '';
-      const json = await cachedFetch<{ postingActivity?: PostingActivityEntry[]; totalVideos?: number }>(`/api/analytics/posting-activity${param}`);
+      const params = new URLSearchParams();
+      if (days > 0) params.set('days', String(days));
+      if (uniqueMode) params.set('unique', '1');
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const json = await cachedFetch<{ postingActivity?: PostingActivityEntry[]; totalVideos?: number }>(`/api/analytics/posting-activity${qs}`);
       setRawData(json.postingActivity || []);
       setTotalVideos(json.totalVideos || 0);
     } catch (e) {
@@ -62,8 +66,8 @@ export default function PostingActivity({ refreshKey }: { refreshKey?: string })
 
   useEffect(() => {
     setLoading(true);
-    fetchData(filter);
-  }, [filter, fetchData, refreshKey]);
+    fetchData(filter, unique);
+  }, [filter, unique, fetchData, refreshKey]);
 
   // Fill in missing dates so the chart has no gaps
   const chartData = useMemo(() => {
@@ -147,10 +151,21 @@ export default function PostingActivity({ refreshKey }: { refreshKey?: string })
           </p>
           <p className="mt-1 text-2xl font-bold tracking-tight">
             {loading ? '...' : totalVideos}{' '}
-            <span className="text-sm font-medium text-[var(--text-muted)]">videos</span>
+            <span className="text-sm font-medium text-[var(--text-muted)]">{unique ? 'unique videos' : 'total posts'}</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setUnique(u => !u)}
+            className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              unique
+                ? 'bg-[var(--primary)] text-white'
+                : 'bg-[var(--muted)] text-[var(--text-muted)] hover:text-[var(--foreground)]'
+            }`}
+          >
+            <span className={`inline-block h-2 w-2 rounded-full transition-colors ${unique ? 'bg-white' : 'bg-[var(--text-muted)] opacity-40'}`} />
+            Unique
+          </button>
           {bestDay && bestDay.posts > 0 && (
             <span className="rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
               Peak: <span className="font-semibold text-[var(--foreground)]">{bestDay.posts}</span> on{' '}
