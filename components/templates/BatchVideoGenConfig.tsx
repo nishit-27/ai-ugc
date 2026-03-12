@@ -51,6 +51,7 @@ export default function BatchVideoGenConfig({
     () => new Map(cached?.firstFrameResults ?? []),
   );
   const [generatingIndices, setGeneratingIndices] = useState<Set<number>>(new Set());
+  const [errorsByIndex, setErrorsByIndex] = useState<Map<number, string>>(new Map());
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
   const [generateAllProgress, setGenerateAllProgress] = useState({ done: 0, total: 0 });
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -96,6 +97,7 @@ export default function BatchVideoGenConfig({
   const handleImageSourceChange = (src: ImageSource) => {
     setImageSource(src);
     setFirstFrameResults(new Map());
+    setErrorsByIndex(new Map());
     setGeneratingIndices(new Set());
     setOpenLibraryIndex(null);
     setLibraryLoadingIndex(null);
@@ -216,9 +218,19 @@ export default function BatchVideoGenConfig({
   const generateFirstFrameForIndex = async (index: number, images: BatchImageEntry[]): Promise<FirstFrameOption[] | null> => {
     const entry = images[index];
     const modelImageUrl = resolveEntryImageUrl(entry);
-    if (!modelImageUrl || !config.extractedFrameUrl) return null;
+    if (!modelImageUrl) {
+      const errMsg = 'No image URL found for this entry. Please re-select or re-upload the image.';
+      setErrorsByIndex((prev) => new Map(prev).set(index, errMsg));
+      return null;
+    }
+    if (!config.extractedFrameUrl) {
+      const errMsg = 'No scene frame selected. Please pick a scene frame first.';
+      setErrorsByIndex((prev) => new Map(prev).set(index, errMsg));
+      return null;
+    }
 
     setGeneratingIndices((prev) => new Set(prev).add(index));
+    setErrorsByIndex((prev) => { const next = new Map(prev); next.delete(index); return next; });
 
     try {
       const res = await fetch('/api/generate-first-frame', {
@@ -249,7 +261,9 @@ export default function BatchVideoGenConfig({
       onChange({ ...config, images: newImages });
       return options;
     } catch (error) {
-      console.error(`Generate first frame for index ${index} failed:`, error);
+      const errMsg = error instanceof Error ? error.message : 'Generation failed';
+      console.error(`Generate first frame for index ${index} failed:`, errMsg);
+      setErrorsByIndex((prev) => new Map(prev).set(index, errMsg));
       return null;
     } finally {
       setGeneratingIndices((prev) => {
@@ -346,6 +360,7 @@ export default function BatchVideoGenConfig({
       });
 
       setFirstFrameResults(new Map());
+      setErrorsByIndex(new Map());
       setExtractedFrames([]);
       onChange({
         ...config,
@@ -380,6 +395,7 @@ export default function BatchVideoGenConfig({
       extractedFrames={extractedFrames}
       firstFrameResults={firstFrameResults}
       generatingIndices={generatingIndices}
+      errorsByIndex={errorsByIndex}
       isGeneratingAll={isGeneratingAll}
       generateAllProgress={generateAllProgress}
       openLibraryIndex={openLibraryIndex}

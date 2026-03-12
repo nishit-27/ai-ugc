@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { fal } from '@fal-ai/client';
-import { GoogleGenAI } from '@google/genai';
 import sharp from 'sharp';
 import { config } from '@/lib/config';
 import { uploadImage, downloadToBuffer } from '@/lib/storage.js';
@@ -10,37 +9,22 @@ import { auth } from '@/lib/auth';
 
 export const maxDuration = 300;
 
+const FAL_MODEL = 'fal-ai/nano-banana-pro/edit';
+
 const FACE_SWAP_PROMPT =
-  'I have two reference photos. The first is a portrait of a specific person. The second is a scene with a background and body pose. ' +
-  'Generate a new photorealistic image in a 1:1 square aspect ratio showing the person from the portrait photo placed naturally into the scene from the second photo. ' +
-  'The person in the output must look exactly like the portrait — same appearance, hair, and features. ' +
-  'Use the pose, camera angle, lighting, and environment from the scene photo. ' +
-  'Remove any text, captions, watermarks, or logos that appear in the scene image. ' +
-  'The result should look like a natural photograph with consistent lighting and realistic skin texture.';
+  'Replace the person in the second image with the person from the first image. ' +
+  'Keep the exact same pose, background, camera angle, and lighting from the second image. ' +
+  'The person must retain their exact facial features and appearance from the first image. ' +
+  'Output a 1:1 square aspect ratio. ' +
+  'Remove any text, watermarks, or logos. Output a clean photorealistic photograph.';
 
 const FACE_SWAP_PROMPT_PRESERVE_TEXT =
-  'I have two reference photos. The first is a portrait of a specific person. The second is a scene with a background and body pose. ' +
-  'Generate a new photorealistic image in a 1:1 square aspect ratio showing the person from the portrait photo placed naturally into the scene from the second photo. ' +
-  'The person in the output must look exactly like the portrait — same appearance, hair, and features. ' +
-  'Use the pose, camera angle, lighting, and environment from the scene photo. ' +
+  'Replace the person in the second image with the person from the first image. ' +
+  'Keep the exact same pose, background, camera angle, and lighting from the second image. ' +
+  'The person must retain their exact facial features and appearance from the first image. ' +
+  'Output a 1:1 square aspect ratio. ' +
   'Preserve and accurately reproduce any text, captions, or typography that appears in the scene image. The text should remain legible and in the same position. ' +
-  'The result should look like a natural photograph with consistent lighting and realistic skin texture.';
-
-function detectImageType(buf: Buffer): { contentType: string; ext: string } {
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
-    return { contentType: 'image/png', ext: 'png' };
-  }
-  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {
-    return { contentType: 'image/jpeg', ext: 'jpg' };
-  }
-  if (
-    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
-  ) {
-    return { contentType: 'image/webp', ext: 'webp' };
-  }
-  return { contentType: 'image/jpeg', ext: 'jpg' };
-}
+  'Output a clean photorealistic photograph.';
 
 async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
   for (let i = 0; i < retries; i++) {
@@ -71,14 +55,6 @@ async function padToSquare(buf: Buffer): Promise<Buffer> {
   return sharp(buf)
     .extend({ top: padTop, bottom: padBottom, left: padLeft, right: padRight, background: { r: 255, g: 255, b: 255 } })
     .toBuffer();
-}
-
-async function prepareImageForGemini(buf: Buffer): Promise<{ b64: string; mime: string }> {
-  const resized = await sharp(buf)
-    .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 90 })
-    .toBuffer();
-  return { b64: resized.toString('base64'), mime: 'image/jpeg' };
 }
 
 function stripSignedParams(url: string) {
@@ -112,70 +88,27 @@ async function downloadImage(url: string): Promise<Buffer> {
 }
 
 async function generateFaceSwap(
-  provider: string,
   prompt: string,
-  modelBuf: Buffer,
-  sceneBuf: Buffer,
   resolution: string,
-  falImageUrls?: string[],
+  falImageUrls: string[],
 ): Promise<Buffer | null> {
   try {
-    if (provider === 'gemini') {
-      const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY! });
-      const [modelImg, sceneImg] = await Promise.all([
-        prepareImageForGemini(modelBuf),
-        prepareImageForGemini(sceneBuf),
-      ]);
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-image-preview',
-        contents: [
-          { text: prompt },
-          { inlineData: { mimeType: modelImg.mime, data: modelImg.b64 } },
-          { inlineData: { mimeType: sceneImg.mime, data: sceneImg.b64 } },
-        ],
-        config: {
-          responseModalities: ['TEXT', 'IMAGE'],
-          personGeneration: 'ALLOW_ALL',
-        } as Parameters<typeof ai.models.generateContent>[0]['config'],
-      });
-      const parts = response.candidates?.[0]?.content?.parts;
-      if (parts) {
-        for (const part of parts) {
-          if (part.inlineData?.data) return Buffer.from(part.inlineData.data, 'base64');
-        }
-      }
-      throw new Error('Gemini returned no image');
-    } else if (provider === 'gpt-image') {
-      const result = await fal.subscribe('fal-ai/gpt-image-1.5/edit', {
-        input: {
-          image_urls: falImageUrls!,
-          prompt,
-          image_size: '1024x1024' as const,
-          quality: 'high' as const,
-          input_fidelity: 'high' as const,
-          num_images: 1,
-          output_format: 'png' as const,
-        },
-        logs: true,
-      });
-      const url = result.data?.images?.[0]?.url;
-      if (!url) throw new Error('No image URL returned');
-      return Buffer.from(await fetchWithRetry(url));
-    } else {
-      const result = await fal.subscribe('fal-ai/nano-banana-pro/edit', {
-        input: {
-          image_urls: falImageUrls!,
-          prompt,
-          limit_generations: true,
-          resolution: resolution || '1K',
-          safety_tolerance: 6,
-        } as Parameters<typeof fal.subscribe<'fal-ai/nano-banana-pro/edit'>>[1]['input'],
-        logs: true,
-      });
-      const url = result.data?.images?.[0]?.url;
-      if (!url) throw new Error('No image URL returned');
-      return Buffer.from(await fetchWithRetry(url));
-    }
+    const result = await fal.subscribe(FAL_MODEL, {
+      input: {
+        image_urls: falImageUrls,
+        prompt,
+        num_images: 1,
+        output_format: 'jpeg',
+        limit_generations: true,
+        resolution: resolution || '1K',
+        safety_tolerance: 6,
+        thinking_level: 'high',
+      } as Parameters<typeof fal.subscribe<typeof FAL_MODEL>>[1]['input'],
+      logs: true,
+    });
+    const url = result.data?.images?.[0]?.url;
+    if (!url) throw new Error('No image URL returned');
+    return Buffer.from(await fetchWithRetry(url));
   } catch (err) {
     console.error(`[CarouselGen] Face swap failed:`, (err as Error).message);
     return null;
@@ -201,7 +134,6 @@ export async function POST(req: Request) {
       modelImageUrl,
       sceneImageUrl,
       count = 1,
-      provider = 'gpt-image',
       resolution = '1K',
       modelId,
       preserveText = false,
@@ -215,7 +147,7 @@ export async function POST(req: Request) {
     }
 
     const numVariants = Math.min(Math.max(1, count), 2);
-    console.log(`[CarouselGen] Provider: ${provider}, variants: ${numVariants}`);
+    console.log(`[CarouselGen] Model: ${FAL_MODEL}, variants: ${numVariants}`);
 
     // Download both images
     const [modelBuf, rawSceneBuf] = await Promise.all([
@@ -226,28 +158,27 @@ export async function POST(req: Request) {
     const sceneBuf = await padToSquare(rawSceneBuf);
     console.log(`[CarouselGen] Downloaded — model: ${modelBuf.length}B, scene: ${sceneBuf.length}B (padded to 1:1)`);
 
-    // Upload to FAL CDN if using FAL-based provider
-    let falImageUrls: string[] | undefined;
-    if (provider === 'fal' || provider === 'gpt-image') {
-      if (!config.FAL_KEY) {
-        return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
-      }
-      fal.config({ credentials: config.FAL_KEY });
-      const modelType = detectImageType(modelBuf).contentType;
-      const sceneType = detectImageType(sceneBuf).contentType;
-      const [falModelUrl, falSceneUrl] = await Promise.all([
-        fal.storage.upload(new Blob([new Uint8Array(modelBuf)], { type: modelType })),
-        fal.storage.upload(new Blob([new Uint8Array(sceneBuf)], { type: sceneType })),
-      ]);
-      falImageUrls = [falModelUrl, falSceneUrl];
-    } else if (provider === 'gemini' && !config.GEMINI_API_KEY) {
-      return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 500 });
+    if (!config.FAL_KEY) {
+      return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
     }
+    fal.config({ credentials: config.FAL_KEY });
+
+    // Convert to JPEG and ensure minimum size
+    const [modelJpeg, sceneJpeg] = await Promise.all([
+      sharp(modelBuf).resize(1024, 1024, { fit: 'inside', withoutEnlargement: false }).jpeg({ quality: 95 }).toBuffer(),
+      sharp(sceneBuf).resize(1024, 1024, { fit: 'inside', withoutEnlargement: false }).jpeg({ quality: 95 }).toBuffer(),
+    ]);
+
+    const [falModelUrl, falSceneUrl] = await Promise.all([
+      fal.storage.upload(new Blob([new Uint8Array(modelJpeg)], { type: 'image/jpeg' })),
+      fal.storage.upload(new Blob([new Uint8Array(sceneJpeg)], { type: 'image/jpeg' })),
+    ]);
+    const falImageUrls = [falModelUrl, falSceneUrl];
 
     // Generate variants
     const prompt = preserveText ? FACE_SWAP_PROMPT_PRESERVE_TEXT : FACE_SWAP_PROMPT;
     const promises = Array.from({ length: numVariants }, () =>
-      generateFaceSwap(provider, prompt, modelBuf, sceneBuf, resolution, falImageUrls),
+      generateFaceSwap(prompt, resolution, falImageUrls),
     );
     const results = await Promise.all(promises);
     const successfulBuffers = results.filter((b): b is Buffer => b !== null);

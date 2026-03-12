@@ -41,12 +41,13 @@ export async function generateAllMasterFirstFrames(params: {
   masterModels: MasterModel[];
   generateForModel: (modelId: string, primaryGcsUrl: string) => Promise<FirstFrameOption[] | null>;
   onModelResult?: (modelId: string, images: FirstFrameOption[]) => void;
+  onModelError?: (modelId: string, error: string) => void;
   onProgress: (done: number, total: number) => void;
   frameImageUrl?: string;
   resolution?: string;
   provider?: string;
 }) {
-  const { masterModels, generateForModel, onModelResult, onProgress, frameImageUrl, resolution, provider } = params;
+  const { masterModels, generateForModel, onModelResult, onModelError, onProgress, frameImageUrl, resolution, provider } = params;
   const total = masterModels.length;
   onProgress(0, total);
 
@@ -72,6 +73,8 @@ export async function generateAllMasterFirstFrames(params: {
         for (const result of results) {
           if (result.modelId && result.images.length > 0) {
             onModelResult(result.modelId, result.images);
+          } else if (result.modelId && result.error) {
+            onModelError?.(result.modelId, result.error);
           }
           done += 1;
           onProgress(Math.min(done, total), total);

@@ -1,4 +1,4 @@
-import { Expand, ImageIcon, Sparkles, Upload, User, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, Expand, ImageIcon, Sparkles, Upload, User, RefreshCw, X } from 'lucide-react';
 import type { GeneratedImage, ModelImage, VideoGenConfig as VGC } from '@/types';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
 import type { FirstFrameOption, MasterPerModelActivePanel } from './types';
@@ -18,6 +18,7 @@ type Props = {
   masterModelImages: Record<string, ModelImage[]>;
   masterModelImagesLoading: Set<string>;
   masterUploadingModelId: string | null;
+  masterErrorsByModelId?: Record<string, string>;
   setPreviewUrl: (url: string | null) => void;
   setMasterLibraryModelId: (modelId: string | null) => void;
   masterGenerateForModel: (modelId: string, primaryGcsUrl: string) => Promise<FirstFrameOption[] | null>;
@@ -75,6 +76,7 @@ export default function VideoGenMasterPerModelPanel({
   masterModelImages,
   masterModelImagesLoading,
   masterUploadingModelId,
+  masterErrorsByModelId,
   setPreviewUrl,
   setMasterLibraryModelId,
   masterGenerateForModel,
@@ -100,6 +102,7 @@ export default function VideoGenMasterPerModelPanel({
         const isLoadingModelImgs = masterModelImagesLoading.has(model.modelId);
         const isUploading = masterUploadingModelId === model.modelId;
         const hasResults = results.length > 0;
+        const modelError = masterErrorsByModelId?.[model.modelId];
 
         return (
           <div key={model.modelId} className="rounded-xl border border-[var(--border)] p-2.5 space-y-2">
@@ -159,6 +162,14 @@ export default function VideoGenMasterPerModelPanel({
                 </div>
               )}
             </div>
+
+            {/* Error display */}
+            {modelError && (
+              <div className="flex items-start gap-1.5 rounded-lg bg-red-500/10 px-2.5 py-2">
+                <AlertCircle className="h-3 w-3 text-red-500 shrink-0 mt-0.5" />
+                <p className="text-[10px] text-red-500 leading-tight">{modelError}</p>
+              </div>
+            )}
 
             {/* Generated results grid */}
             {results.length > 0 && (

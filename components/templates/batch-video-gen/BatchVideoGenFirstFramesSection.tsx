@@ -1,4 +1,4 @@
-import { Check, Expand, RefreshCw } from 'lucide-react';
+import { AlertCircle, Check, Expand, RefreshCw } from 'lucide-react';
 import type { BatchImageEntry, BatchVideoGenConfig as BVGC, GeneratedImage } from '@/types';
 import type { ExtractedFrame, FirstFrameOption } from './types';
 
@@ -13,6 +13,7 @@ type Props = {
   extractedFrames: ExtractedFrame[];
   firstFrameResults: Map<number, FirstFrameOption[]>;
   generatingIndices: Set<number>;
+  errorsByIndex: Map<number, string>;
   isGeneratingAll: boolean;
   generateAllProgress: Progress;
   openLibraryIndex: number | null;
@@ -39,6 +40,7 @@ export default function BatchVideoGenFirstFramesSection({
   extractedFrames,
   firstFrameResults,
   generatingIndices,
+  errorsByIndex,
   isGeneratingAll,
   generateAllProgress,
   openLibraryIndex,
@@ -248,6 +250,13 @@ export default function BatchVideoGenFirstFramesSection({
                       </div>
                       {!config.extractedFrameUrl && (
                         <p className="text-[10px] text-[var(--text-muted)]">Pick shared scene to enable Generate, or use Choose directly.</p>
+                      )}
+
+                      {errorsByIndex.has(idx) && (
+                        <div className="flex items-start gap-1.5 rounded-md bg-red-500/10 px-2 py-1.5">
+                          <AlertCircle className="h-3 w-3 text-red-500 shrink-0 mt-0.5" />
+                          <p className="text-[10px] text-red-500 leading-tight">{errorsByIndex.get(idx)}</p>
+                        </div>
                       )}
 
                       {options.length > 0 && (

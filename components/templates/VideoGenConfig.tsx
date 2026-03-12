@@ -83,6 +83,7 @@ export default function VideoGenConfig({
   const [masterModelImages, setMasterModelImages] = useState<Record<string, ModelImage[]>>({});
   const [masterModelImagesLoading, setMasterModelImagesLoading] = useState<Set<string>>(new Set());
   const [masterUploadingModelId, setMasterUploadingModelId] = useState<string | null>(null);
+  const [masterErrorsByModelId, setMasterErrorsByModelId] = useState<Record<string, string>>({});
 
   const clearFirstFrameOptions = () => { setFirstFrameOptionsRaw([]); setDismissedOptions(new Set()); };
   const setFirstFrameOptions = (options: FirstFrameOption[]) => { setFirstFrameOptionsRaw(options); setDismissedOptions(new Set()); };
@@ -285,6 +286,7 @@ export default function VideoGenConfig({
   const masterGenerateForModel = async (modelId: string, primaryGcsUrl: string): Promise<FirstFrameOption[] | null> => {
     if (!config.extractedFrameUrl) return null;
     setMasterGeneratingIds((prev) => new Set(prev).add(modelId));
+    setMasterErrorsByModelId((prev) => { const next = { ...prev }; delete next[modelId]; return next; });
     try {
       const options = await generateFirstFrameRequest({
         modelImageUrl: primaryGcsUrl,
@@ -296,7 +298,9 @@ export default function VideoGenConfig({
       setMasterPerModelResults((prev) => ({ ...prev, [modelId]: options }));
       return options;
     } catch (error) {
-      console.error(`Master first frame for ${modelId} failed:`, error);
+      const errMsg = error instanceof Error ? error.message : 'Generation failed';
+      console.error(`Master first frame for ${modelId} failed:`, errMsg);
+      setMasterErrorsByModelId((prev) => ({ ...prev, [modelId]: errMsg }));
       return null;
     } finally {
       setMasterGeneratingIds((prev) => { const next = new Set(prev); next.delete(modelId); return next; });
@@ -306,12 +310,17 @@ export default function VideoGenConfig({
   const handleMasterGenerateAll = async () => {
     if (!masterModels || !config.extractedFrameUrl) return;
     setIsMasterGeneratingAll(true);
+    setMasterErrorsByModelId({});
     setMasterGeneratingIds(new Set(masterModels.map((m) => m.modelId)));
     await generateAllMasterFirstFrames({
       masterModels,
       generateForModel: masterGenerateForModel,
       onModelResult: (modelId, images) => {
         setMasterPerModelResults((prev) => ({ ...prev, [modelId]: images }));
+        setMasterGeneratingIds((prev) => { const next = new Set(prev); next.delete(modelId); return next; });
+      },
+      onModelError: (modelId, error) => {
+        setMasterErrorsByModelId((prev) => ({ ...prev, [modelId]: error }));
         setMasterGeneratingIds((prev) => { const next = new Set(prev); next.delete(modelId); return next; });
       },
       onProgress: (done, total) => setMasterProgress({ done, total }),
@@ -500,6 +509,7 @@ export default function VideoGenConfig({
       masterModelImages={masterModelImages}
       masterModelImagesLoading={masterModelImagesLoading}
       masterUploadingModelId={masterUploadingModelId}
+      masterErrorsByModelId={masterErrorsByModelId}
       setPreviewUrl={setPreviewUrl}
       setMasterLibraryModelId={setMasterLibraryModelId}
       masterGenerateForModel={masterGenerateForModel}

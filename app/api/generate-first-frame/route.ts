@@ -11,32 +11,13 @@ import { auth } from '@/lib/auth';
 
 export const maxDuration = 300;
 
-const FAL_MODEL = 'fal-ai/nano-banana-2/edit';
+const FAL_MODEL = 'fal-ai/nano-banana-pro/edit';
 
 const PROMPT =
-  'Using the two reference images provided: generate a photorealistic composite image. ' +
-  'The first image is a portrait showing a person\'s appearance. The second image shows a scene with a specific pose and background. ' +
-  'Create a new image of the portrait person in the scene environment, matching the pose and camera angle from the scene photo. ' +
-  'The person must retain their exact appearance from the portrait. ' +
-  'Remove any text, captions, watermarks, or logos that appear in the scene image — the output should be a clean photograph. ' +
-  'Ensure natural lighting, realistic details, and photographic quality.';
-
-// Detect actual image content type from buffer magic bytes
-function detectImageType(buf: Buffer): { contentType: string; ext: string } {
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
-    return { contentType: 'image/png', ext: 'png' };
-  }
-  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {
-    return { contentType: 'image/jpeg', ext: 'jpg' };
-  }
-  if (
-    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
-  ) {
-    return { contentType: 'image/webp', ext: 'webp' };
-  }
-  return { contentType: 'image/jpeg', ext: 'jpg' };
-}
+  'Replace the person in the second image with the person from the first image. ' +
+  'Keep the exact same pose, background, camera angle, and lighting from the second image. ' +
+  'The person must retain their exact facial features and appearance from the first image. ' +
+  'Remove any text, watermarks, or logos. Output a clean photorealistic photograph.';
 
 // Fetch with retry for flaky connections
 async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
@@ -104,24 +85,58 @@ export async function POST(req: Request) {
       return Buffer.from(await r.arrayBuffer());
     };
 
-    const [modelBuf, frameBuf] = await Promise.all([
-      downloadImage('MODEL (face)', modelImageUrl),
-      downloadImage('SCENE (frame)', frameImageUrl),
-    ]);
+    let modelBuf: Buffer, frameBuf: Buffer;
+    try {
+      [modelBuf, frameBuf] = await Promise.all([
+        downloadImage('MODEL (face)', modelImageUrl),
+        downloadImage('SCENE (frame)', frameImageUrl),
+      ]);
+    } catch (dlErr) {
+      const msg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+      console.error('[FirstFrame] Image download failed:', msg);
+      return NextResponse.json(
+        { error: `Failed to download input images: ${msg}`, failed: true },
+        { status: 400 },
+      );
+    }
 
     console.log(`[FirstFrame] Downloaded — model: ${modelBuf.length} bytes, frame: ${frameBuf.length} bytes`);
 
-    const modelType = detectImageType(modelBuf);
-    const frameType = detectImageType(frameBuf);
+    // Validate downloaded images are not empty
+    if (modelBuf.length < 100) {
+      return NextResponse.json(
+        { error: 'Model image appears to be empty or corrupted (too small). Please re-upload the face image.', failed: true },
+        { status: 400 },
+      );
+    }
+    if (frameBuf.length < 100) {
+      return NextResponse.json(
+        { error: 'Scene frame image appears to be empty or corrupted (too small). Please re-select or re-upload the scene frame.', failed: true },
+        { status: 400 },
+      );
+    }
 
     if (!config.FAL_KEY) {
       return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
     }
     fal.config({ credentials: config.FAL_KEY });
 
+    // Convert to JPEG and ensure minimum size for model compatibility
+    const [modelJpeg, frameJpeg] = await Promise.all([
+      sharp(modelBuf)
+        .resize(1024, 1024, { fit: 'inside', withoutEnlargement: false })
+        .jpeg({ quality: 95 })
+        .toBuffer(),
+      sharp(frameBuf)
+        .resize(1024, 1024, { fit: 'inside', withoutEnlargement: false })
+        .jpeg({ quality: 95 })
+        .toBuffer(),
+    ]);
+    console.log(`[FirstFrame] Converted to JPEG — model: ${modelJpeg.length} bytes, frame: ${frameJpeg.length} bytes`);
+
     const [falModelUrl, falFrameUrl] = await Promise.all([
-      fal.storage.upload(new Blob([new Uint8Array(modelBuf)], { type: modelType.contentType })),
-      fal.storage.upload(new Blob([new Uint8Array(frameBuf)], { type: frameType.contentType })),
+      fal.storage.upload(new Blob([new Uint8Array(modelJpeg)], { type: 'image/jpeg' })),
+      fal.storage.upload(new Blob([new Uint8Array(frameJpeg)], { type: 'image/jpeg' })),
     ]);
     const falImageUrls = [falModelUrl, falFrameUrl];
 
@@ -149,9 +164,12 @@ export async function POST(req: Request) {
         input: {
           image_urls: falImageUrls,
           prompt: PROMPT,
+          num_images: 1,
+          output_format: 'jpeg',
           limit_generations: true,
           resolution: resolution || '1K',
           safety_tolerance: 6,
+          thinking_level: 'high',
         } as Parameters<typeof fal.subscribe<typeof FAL_MODEL>>[1]['input'],
         logs: true,
       });
@@ -159,7 +177,27 @@ export async function POST(req: Request) {
       if (!url) throw new Error('No image URL returned from FAL');
       resultBuf = Buffer.from(await fetchWithRetry(url));
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      let errorMsg = err instanceof Error ? err.message : String(err);
+      // Extract detailed error from FAL response body if available
+      if (err && typeof err === 'object' && 'body' in err) {
+        const body = (err as { body: unknown }).body;
+        // FAL errors can be a JSON array like [{"msg": "...", "type": "..."}]
+        if (Array.isArray(body) && body.length > 0) {
+          const first = body[0];
+          errorMsg = first?.msg || first?.message || first?.detail || JSON.stringify(first);
+        } else if (body && typeof body === 'object') {
+          const b = body as Record<string, unknown>;
+          const detail = b.detail || b.message || b.error;
+          if (detail) errorMsg = typeof detail === 'string' ? detail : JSON.stringify(detail);
+        }
+      }
+      // Also handle case where err.message itself is a JSON string
+      try {
+        const parsed = JSON.parse(errorMsg);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          errorMsg = parsed[0]?.msg || parsed[0]?.message || errorMsg;
+        }
+      } catch { /* not JSON, use as-is */ }
       console.error('[FirstFrame] Generation failed:', errorMsg);
       await updateGenerationRequest(genReq.id, { status: 'failed', error: errorMsg });
       return NextResponse.json({ error: errorMsg, failed: true }, { status: 500 });
