@@ -41,7 +41,12 @@ export default function LateDailyChart({ dailyMetrics }: { dailyMetrics: DailyMe
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
-      {/* Views bar chart */}
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <h3 className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1">Daily Posts by Platform</h3>
+          <div className="text-2xl font-bold text-[var(--text-primary)]">{dailyMetrics.reduce((s, d) => s + d.postCount, 0).toLocaleString()} <span className="text-sm font-normal text-[var(--text-muted)]">total posts</span></div>
+        </div>
+      </div>
       <ResponsiveContainer width="100%" height={250}>
         <BarChart data={data}>
           <XAxis

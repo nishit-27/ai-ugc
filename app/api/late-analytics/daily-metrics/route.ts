@@ -7,7 +7,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const params = new URLSearchParams();
-    for (const key of ['accountId', 'fromDate', 'toDate']) {
+    for (const key of ['accountId', 'platform', 'fromDate', 'toDate']) {
       const val = searchParams.get(key);
       if (val) params.set(key, val);
     }

@@ -1,8 +1,9 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useMemo, useCallback } from 'react';
 import { useLateAnalytics } from '@/hooks/useLateAnalytics';
 import Spinner from '@/components/ui/Spinner';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import LateAnalyticsFilters from '@/components/late-analytics/LateAnalyticsFilters';
 import LateMetricCards from '@/components/late-analytics/LateMetricCards';
 import LateFollowerChart from '@/components/late-analytics/LateFollowerChart';
@@ -12,8 +13,11 @@ import LateBestTimeHeatmap from '@/components/late-analytics/LateBestTimeHeatmap
 import LateTopPosts from '@/components/late-analytics/LateTopPosts';
 import LatePostingFrequency from '@/components/late-analytics/LatePostingFrequency';
 import LateContentDecay from '@/components/late-analytics/LateContentDecay';
-import LatePostGrid from '@/components/late-analytics/LatePostGrid';
-import LatePostingHeatmap from '@/components/late-analytics/LatePostingHeatmap';
+import LatePostingActivity from '@/components/late-analytics/LatePostingActivity';
+import LateAccountsTable from '@/components/late-analytics/LateAccountsTable';
+import LateContentTable from '@/components/late-analytics/LateContentTable';
+import LateAccountViewsChart from '@/components/late-analytics/LateAccountViewsChart';
+import LateMetricsChart from '@/components/late-analytics/LateMetricsChart';
 
 function LateAnalyticsContent() {
   const {
@@ -24,12 +28,67 @@ function LateAnalyticsContent() {
     postingFrequency,
     contentDecay,
     overview,
+    accounts,
     loading,
     filters,
     setFilters,
     lastSync,
     refresh,
   } = useLateAnalytics();
+
+  // Compute date range for child components
+  const dateRange = useMemo(() => {
+    if (filters.dateRange === 'custom') {
+      return {
+        fromDate: filters.customFrom || '2020-01-01',
+        toDate: filters.customTo || new Date().toISOString().split('T')[0],
+      };
+    }
+    const end = new Date();
+    const start = new Date();
+    if (filters.dateRange === '7d') start.setDate(end.getDate() - 7);
+    else if (filters.dateRange === '30d') start.setDate(end.getDate() - 30);
+    else if (filters.dateRange === '90d') start.setDate(end.getDate() - 90);
+    else if (filters.dateRange === '180d') start.setDate(end.getDate() - 180);
+    else if (filters.dateRange === '365d') start.setDate(end.getDate() - 365);
+    else start.setFullYear(2020, 0, 1);
+    return {
+      fromDate: start.toISOString().split('T')[0],
+      toDate: end.toISOString().split('T')[0],
+    };
+  }, [filters.dateRange, filters.customFrom, filters.customTo]);
+
+  const handleDownload = useCallback(() => {
+    if (posts.length === 0) return;
+    const headers = ['Post ID', 'Content', 'Published', 'Platform', 'Account', 'Views', 'Likes', 'Comments', 'Shares', 'Impressions', 'Reach', 'Engagement %'];
+    const rows = posts.map(post => {
+      const p = post.platforms?.[0];
+      const a = post.analytics || {} as any;
+      const er = a.views > 0 ? ((a.likes + a.comments + (a.shares || 0)) / a.views * 100).toFixed(2) : '0';
+      return [
+        post.postId,
+        `"${(post.content || '').replace(/"/g, '""').slice(0, 200)}"`,
+        post.publishedAt || '',
+        p?.platform || '',
+        p?.accountUsername || '',
+        a.views || 0,
+        a.likes || 0,
+        a.comments || 0,
+        a.shares || 0,
+        a.impressions || 0,
+        a.reach || 0,
+        er,
+      ].join(',');
+    });
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `analytics-${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [posts]);
 
   if (loading) {
     return (
@@ -39,8 +98,7 @@ function LateAnalyticsContent() {
     );
   }
 
-  // Compute aggregate metrics from daily-metrics (accurate cross-key aggregation)
-  // Falls back to posts if daily-metrics is empty
+  // Compute aggregate metrics from daily-metrics
   const totals = dailyMetrics.length > 0
     ? dailyMetrics.reduce(
         (acc, day) => {
@@ -77,7 +135,7 @@ function LateAnalyticsContent() {
 
   const totalFollowers = followerStats.reduce((sum, s) => sum + (s.followerCount || 0), 0);
 
-  // Build platform breakdown from posts using per-platform analytics
+  // Build platform breakdown from posts
   const platformTotals: Record<string, { posts: number; likes: number; comments: number; shares: number; views: number; impressions: number; reach: number }> = {};
   for (const post of posts) {
     const platforms = Array.isArray(post.platforms) ? post.platforms : [];
@@ -99,31 +157,49 @@ function LateAnalyticsContent() {
 
   return (
     <div className="space-y-6">
-      <LateAnalyticsFilters filters={filters} setFilters={setFilters} lastSync={lastSync} onRefresh={refresh} />
-
-      <LatePostingHeatmap posts={posts} />
-
-      <div className="grid grid-cols-1 gap-6">
-        <LateFollowerChart followerStats={followerStats} totalFollowers={totalFollowers} />
-      </div>
+      <LateAnalyticsFilters filters={filters} setFilters={setFilters} lastSync={lastSync} onRefresh={refresh} onDownload={handleDownload} accounts={accounts} />
 
       <LateMetricCards totals={totals} totalFollowers={totalFollowers} />
 
-      <LateDailyChart dailyMetrics={dailyMetrics} />
+      <Tabs defaultValue="overview">
+        <TabsList variant="line" className="w-full justify-start border-b border-[var(--border)] pb-0">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="engagement">Engagement</TabsTrigger>
+          <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="content">Content</TabsTrigger>
+        </TabsList>
 
-      <LatePlatformBreakdown platforms={platformTotals} totalFollowers={totalFollowers} followerStats={followerStats} />
+        <TabsContent value="overview" className="space-y-6 pt-6">
+          <LateMetricsChart dailyMetrics={dailyMetrics} />
+          <LatePostingActivity dailyMetrics={dailyMetrics} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <LateFollowerChart followerStats={followerStats} totalFollowers={totalFollowers} />
+            <LateAccountViewsChart accounts={accounts} posts={posts} dateRange={dateRange} />
+          </div>
+          <LateDailyChart dailyMetrics={dailyMetrics} />
+          <LatePlatformBreakdown platforms={platformTotals} totalFollowers={totalFollowers} followerStats={followerStats} />
+        </TabsContent>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <LateBestTimeHeatmap bestTimes={bestTimes} />
-        <LateTopPosts posts={posts} />
-      </div>
+        <TabsContent value="engagement" className="space-y-6 pt-6">
+          <LateMetricsChart dailyMetrics={dailyMetrics} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <LateBestTimeHeatmap bestTimes={bestTimes} />
+            <LateTopPosts posts={posts} />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <LatePostingFrequency data={postingFrequency} />
+            <LateContentDecay data={contentDecay} />
+          </div>
+        </TabsContent>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <LatePostingFrequency data={postingFrequency} />
-        <LateContentDecay data={contentDecay} />
-      </div>
+        <TabsContent value="accounts" className="pt-6">
+          <LateAccountsTable followerStats={followerStats} posts={posts} />
+        </TabsContent>
 
-      <LatePostGrid posts={posts} />
+        <TabsContent value="content" className="pt-6">
+          <LateContentTable posts={posts} accounts={accounts} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -131,7 +207,6 @@ function LateAnalyticsContent() {
 export default function LateAnalyticsPage() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
-      <h1 className="text-2xl font-bold mb-6">Analytics</h1>
       <Suspense fallback={<div className="flex items-center justify-center py-32"><Spinner className="h-8 w-8" /></div>}>
         <LateAnalyticsContent />
       </Suspense>
