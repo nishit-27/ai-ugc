@@ -14,7 +14,7 @@ export async function GET() {
     await initDatabase();
     const tracks = await getAllTrendingTracks();
     const latestFetchedAt = await getTrendingTracksCacheAge();
-    const stale = !latestFetchedAt || (Date.now() - new Date(latestFetchedAt).getTime()) > CACHE_MAX_AGE_MS;
+    const stale = !latestFetchedAt || (Date.now() - new Date(latestFetchedAt as string).getTime()) > CACHE_MAX_AGE_MS;
 
     return NextResponse.json({ tracks, stale });
   } catch (err) {

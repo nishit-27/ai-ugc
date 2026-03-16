@@ -25,8 +25,8 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       ...batch,
       model: model ? { id: model.id, name: model.name, avatarUrl: model.avatarUrl } : null,
       jobs,
-      progress: batch.totalJobs > 0
-        ? Math.round(((batch.completedJobs + batch.failedJobs) / batch.totalJobs) * 100)
+      progress: (batch.totalJobs || 0) > 0
+        ? Math.round((((batch.completedJobs || 0) + (batch.failedJobs || 0)) / (batch.totalJobs || 1)) * 100)
         : 0,
     });
   } catch (err) {

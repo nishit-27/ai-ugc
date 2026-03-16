@@ -20,14 +20,14 @@ type OutputVideo = {
   path: string;
   url: string;
   size: number | null;
-  created: string | null;
+  created: string | Date | null;
   jobId: string | null;
   createdBy?: string | null;
   modelId?: string | null;
   modelName?: string | null;
 };
 
-function toMillis(value?: string | null): number {
+function toMillis(value?: string | Date | null): number {
   if (!value) return 0;
   const t = +new Date(value);
   return Number.isFinite(t) ? t : 0;

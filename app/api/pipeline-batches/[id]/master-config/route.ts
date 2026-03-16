@@ -29,7 +29,7 @@ export async function PATCH(
       timezone?: string;
     };
 
-    const updated: MasterConfig = { ...batch.masterConfig };
+    const updated: MasterConfig = { ...(batch.masterConfig as MasterConfig) };
 
     if (caption !== undefined) updated.caption = caption;
     if (publishMode !== undefined) updated.publishMode = publishMode;

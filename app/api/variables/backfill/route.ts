@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { initDatabase, getAllCustomVariables, createCustomVariable, setJobVariableValues, sql } from '@/lib/db';
+import { initDatabase, getAllCustomVariables, createCustomVariable, setJobVariableValues, getTemplateJobsWithPipelineStep } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,10 +23,7 @@ export async function POST() {
     }
 
     // Step 2: Find template_jobs that have an attach-video step in their pipeline
-    const matchingJobs = await sql`
-      SELECT id FROM template_jobs
-      WHERE pipeline @> '[{"type": "attach-video"}]'::jsonb
-    `;
+    const matchingJobs = await getTemplateJobsWithPipelineStep('attach-video');
 
     // Step 3: Upsert job_variable_values for each matching job
     let jobsUpdated = 0;

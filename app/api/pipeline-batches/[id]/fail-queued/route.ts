@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ensureDatabaseReady, updatePipelineBatchProgress } from '@/lib/db';
-import { sql } from '@/lib/db-client';
+import { ensureDatabaseReady, updatePipelineBatchProgress, failQueuedJobsInBatch } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,18 +22,7 @@ export async function POST(
 
   await ensureDatabaseReady();
 
-  // Fail all queued jobs in this batch
-  const result = await sql`
-    UPDATE template_jobs
-    SET status = 'failed',
-        step = 'Failed',
-        error = 'Marked as failed — job was stuck in queue and never started processing.'
-    WHERE pipeline_batch_id = ${batchId}
-      AND status = 'queued'
-    RETURNING id
-  `;
-
-  const failedCount = result.length;
+  const failedCount = await failQueuedJobsInBatch(batchId);
 
   // Update batch progress to reflect the newly failed jobs
   if (failedCount > 0) {

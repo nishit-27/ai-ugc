@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
       }
       imageSelectionMode = 'model';
       // For single job creation, use the first/primary image
-      finalImageUrl = modelImages.find((img: { isPrimary?: boolean; gcsUrl: string }) => img.isPrimary)?.gcsUrl || modelImages[0].gcsUrl;
+      finalImageUrl = modelImages.find((img: { isPrimary?: boolean | null; gcsUrl: string }) => img.isPrimary)?.gcsUrl || modelImages[0].gcsUrl;
     } else if (imageIds && imageIds.length > 0) {
       // Option 2: Use specific images
       const images = await getImagesByIds(imageIds);

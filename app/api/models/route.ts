@@ -4,10 +4,11 @@ import { createModel, setModelGroups, ensureDatabaseReady, getAllModels, getMode
 interface Model {
   id: string;
   name: string;
-  description?: string;
-  groupName?: string;
+  description?: string | null;
+  groupName?: string | null;
   groupNames?: string[];
-  avatarUrl?: string;
+  avatarUrl?: string | null;
+  createdAt?: Date | null;
 }
 
 function normalizeGroupName(groupName?: string | null): string | null {

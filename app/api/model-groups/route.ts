@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ensureDatabaseReady, getAllModelGroupMemberships, getSetting, setSetting, sql, removeAllMembershipsForGroup, renameGroupMemberships } from '@/lib/db';
+import { ensureDatabaseReady, getAllModelGroupMemberships, getSetting, setSetting, removeAllMembershipsForGroup, renameGroupMemberships, updateModelsGroupName, clearModelsGroupName } from '@/lib/db';
 
 const MODEL_GROUPS_SETTING_KEY = 'model_groups';
 
@@ -45,14 +45,14 @@ async function saveConfiguredGroupNames(groupNames: string[]) {
 
 async function getGroupSummary(): Promise<ModelGroupSummary[]> {
   const [memberships, configuredGroupNames] = await Promise.all([
-    getAllModelGroupMemberships() as Promise<{ model_id: string; group_name: string }[]>,
+    getAllModelGroupMemberships() as Promise<{ modelId: string; groupName: string }[]>,
     loadConfiguredGroupNames(),
   ]);
 
   // Count memberships per group
   const counts = new Map<string, number>();
   for (const row of memberships) {
-    const groupName = normalizeGroupName(row.group_name);
+    const groupName = normalizeGroupName(row.groupName);
     if (!groupName) continue;
     counts.set(groupName, (counts.get(groupName) || 0) + 1);
   }
@@ -124,11 +124,7 @@ export async function PATCH(request: NextRequest) {
     // Rename in junction table
     await renameGroupMemberships(fromName, toName);
     // Also update legacy column
-    await sql`
-      UPDATE models
-      SET group_name = ${toName}
-      WHERE lower(btrim(group_name)) = lower(${fromName})
-    `;
+    await updateModelsGroupName(fromName, toName);
 
     const nextConfigured = uniqueGroupNames(
       (configured.length > 0 ? configured : [fromName]).map((name) => (
@@ -158,11 +154,7 @@ export async function DELETE(request: NextRequest) {
     // Remove from junction table
     await removeAllMembershipsForGroup(groupName);
     // Also clear legacy column
-    await sql`
-      UPDATE models
-      SET group_name = NULL
-      WHERE lower(btrim(group_name)) = lower(${groupName})
-    `;
+    await clearModelsGroupName(groupName);
 
     const configured = await loadConfiguredGroupNames();
     const nextConfigured = configured.filter((name) => name.toLowerCase() !== groupName.toLowerCase());

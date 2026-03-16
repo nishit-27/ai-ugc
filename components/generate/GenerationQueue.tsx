@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Send, Download, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useJobs } from '@/hooks/useJobs';
-import { downloadVideo } from '@/lib/dateUtils';
+import { downloadVideo } from '@/lib/domUtils';
 import { useToast } from '@/hooks/useToast';
 import type { Job } from '@/types';
 import Spinner from '@/components/ui/Spinner';

@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { initDatabase, getGenerationRequestStats } from '@/lib/db';
-import { sql } from '@/lib/db-client';
+import { initDatabase, getGenerationRequestStats, getTemplateJobsWithRelations } from '@/lib/db';
 import { config } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
@@ -33,15 +32,7 @@ async function enrichJobData(byJob: Array<{ job_id: string; [k: string]: unknown
   if (jobIds.length === 0) return byJob;
 
   try {
-    const jobs = await sql`
-      SELECT tj.id, tj.name, tj.status AS job_status, tj.model_id, tj.pipeline_batch_id,
-        tj.created_by, m.name AS model_name,
-        pb.name AS batch_name, pb.is_master
-      FROM template_jobs tj
-      LEFT JOIN models m ON m.id = tj.model_id
-      LEFT JOIN pipeline_batches pb ON pb.id = tj.pipeline_batch_id
-      WHERE tj.id = ANY(${jobIds}::uuid[])
-    `;
+    const jobs = await getTemplateJobsWithRelations(jobIds);
     const jobMap = new Map(jobs.map((j: Record<string, unknown>) => [j.id, j]));
     return byJob.map((entry) => {
       const job = jobMap.get(entry.job_id) as Record<string, unknown> | undefined;

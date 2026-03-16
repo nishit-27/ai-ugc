@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { Profile, Account } from '@/types';
 import { useToast } from '@/hooks/useToast';
-import { copyToClipboard } from '@/lib/dateUtils';
+import { copyToClipboard } from '@/lib/domUtils';
 import { ChevronDown, Pencil, Trash2, Copy, Check, UserRound, Search } from 'lucide-react';
 import { getProfileInitials, getProfileAvatarClassFromProfile } from './profileAvatar';
 import GlBadge from '@/components/ui/GlBadge';

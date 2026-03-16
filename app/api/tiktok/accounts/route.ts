@@ -17,17 +17,15 @@ export async function GET() {
   // Get accounts from our database
   try {
     const dbAccounts = await getAllTikTokAccounts();
-    dbAccounts.forEach((acc: { id: string; accountId: string; platform?: string; displayName?: string; username?: string; profilePicture?: string } | null) => {
-      if (acc) {
-        accounts.push({
-          id: acc.id,
-          _id: acc.accountId,
-          platform: acc.platform || 'tiktok',
-          displayName: acc.displayName,
-          username: acc.username,
-          profilePicture: acc.profilePicture,
-        });
-      }
+    dbAccounts.forEach((acc: { id: string; accountId: string; platform?: string | null; displayName?: string | null; username?: string | null; profilePicture?: string | null }) => {
+      accounts.push({
+        id: acc.id,
+        _id: acc.accountId,
+        platform: acc.platform || 'tiktok',
+        displayName: acc.displayName || undefined,
+        username: acc.username || undefined,
+        profilePicture: acc.profilePicture || undefined,
+      });
     });
   } catch (err) {
     console.log('Database accounts fetch failed:', (err as Error).message);

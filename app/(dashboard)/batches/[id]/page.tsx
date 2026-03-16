@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { Batch } from '@/types';
 import { useToast } from '@/hooks/useToast';
-import { downloadVideo } from '@/lib/dateUtils';
+import { downloadVideo } from '@/lib/domUtils';
 import { ChevronLeft, ChevronRight, RefreshCw, Trash2, Download, Send, Loader2, AlertCircle, CheckCircle2, XCircle, Clock, ArrowLeft, Layers } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import StatusBadge from '@/components/ui/StatusBadge';

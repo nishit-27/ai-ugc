@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import type { Profile, Account } from '@/types';
 import { useToast } from '@/hooks/useToast';
-import { copyToClipboard } from '@/lib/dateUtils';
+import { copyToClipboard } from '@/lib/domUtils';
 import { Link2, Link2Off, Copy, ExternalLink, UserRound } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaFacebook, FaXTwitter, FaLinkedin } from 'react-icons/fa6';
 import Spinner from '@/components/ui/Spinner';

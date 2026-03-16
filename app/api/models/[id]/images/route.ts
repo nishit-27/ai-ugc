@@ -9,10 +9,10 @@ type ModelImageRecord = {
   modelId: string;
   gcsUrl: string;
   filename: string;
-  originalName?: string;
-  fileSize?: number;
+  originalName?: string | null;
+  fileSize?: number | null;
   isPrimary?: boolean;
-  createdAt?: string;
+  createdAt?: string | Date | null;
   signedUrl?: string;
 };
 

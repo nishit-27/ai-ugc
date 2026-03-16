@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { fetchFromAllKeys, getAccountLabel } from '@/lib/lateAccountPool';
-import { sql } from '@/lib/db-client';
-import { ensureDatabaseReady } from '@/lib/db-schema';
+import { ensureDatabaseReady, getAllModelAccountMappingsWithModelNames } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -41,23 +40,11 @@ export async function GET() {
   }
   try {
     // Fetch health data, all accounts, and model-account mappings in parallel
+    await ensureDatabaseReady();
     const [healthResults, accountsResults, mappingsWithModels] = await Promise.all([
       fetchFromAllKeys<HealthResponse>('/accounts/health'),
       fetchFromAllKeys<AccountsResponse>('/accounts?limit=10000'),
-      (async () => {
-        await ensureDatabaseReady();
-        return sql`
-          SELECT
-            mam.model_id,
-            mam.late_account_id,
-            mam.platform,
-            mam.api_key_index,
-            m.name as model_name
-          FROM model_account_mappings mam
-          JOIN models m ON m.id = mam.model_id
-          ORDER BY m.name ASC
-        `;
-      })(),
+      getAllModelAccountMappingsWithModelNames(),
     ]);
 
     // Build a map of _id -> account info from the accounts endpoint
