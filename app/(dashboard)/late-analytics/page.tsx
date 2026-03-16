@@ -3,6 +3,7 @@
 import { Suspense, useMemo, useCallback } from 'react';
 import { useLateAnalytics } from '@/hooks/useLateAnalytics';
 import Spinner from '@/components/ui/Spinner';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import LateAnalyticsFilters from '@/components/late-analytics/LateAnalyticsFilters';
 import LateMetricCards from '@/components/late-analytics/LateMetricCards';
@@ -19,6 +20,127 @@ import LateContentTable from '@/components/late-analytics/LateContentTable';
 import LateAccountViewsChart from '@/components/late-analytics/LateAccountViewsChart';
 import LateMetricsChart from '@/components/late-analytics/LateMetricsChart';
 
+function LateMetricCardsSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+      {Array.from({ length: 8 }, (_, index) => (
+        <div
+          key={index}
+          className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-3"
+        >
+          <div className="mb-3 flex items-center gap-2">
+            <Skeleton className="h-3.5 w-3.5 rounded-full" />
+            <Skeleton className="h-3 w-16" />
+          </div>
+          <Skeleton className="h-7 w-20" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnalyticsPanelSkeleton({
+  titleWidth = 'w-36',
+  metaWidth = 'w-20',
+  chartHeight = 'h-64',
+  footerLines = 0,
+}: {
+  titleWidth?: string;
+  metaWidth?: string;
+  chartHeight?: string;
+  footerLines?: number;
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <Skeleton className={`h-4 ${titleWidth}`} />
+        <Skeleton className={`h-3 ${metaWidth}`} />
+      </div>
+      <Skeleton className={`w-full ${chartHeight}`} />
+      {footerLines > 0 && (
+        <div className="mt-4 space-y-2">
+          {Array.from({ length: footerLines }, (_, index) => (
+            <Skeleton key={index} className={`h-3 ${index % 2 === 0 ? 'w-full' : 'w-4/5'}`} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AnalyticsTableSkeleton({
+  rows = 6,
+  columns = 5,
+}: {
+  rows?: number;
+  columns?: number;
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <Skeleton className="h-9 w-56 rounded-lg" />
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {Array.from({ length: 3 }, (_, index) => (
+            <Skeleton key={index} className="h-9 w-28 rounded-lg" />
+          ))}
+        </div>
+      </div>
+      <div className="space-y-3">
+        <div className="grid gap-3 border-b border-[var(--border)] pb-3" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+          {Array.from({ length: columns }, (_, index) => (
+            <Skeleton key={index} className="h-3 w-20" />
+          ))}
+        </div>
+        {Array.from({ length: rows }, (_, rowIndex) => (
+          <div
+            key={rowIndex}
+            className="grid items-center gap-3"
+            style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+          >
+            {Array.from({ length: columns }, (_, columnIndex) => (
+              <Skeleton
+                key={columnIndex}
+                className={`h-4 ${columnIndex === 0 ? 'w-4/5' : columnIndex === columns - 1 ? 'ml-auto w-16' : 'w-2/3'}`}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OverviewTabSkeleton() {
+  return (
+    <div className="space-y-6 pt-6">
+      <AnalyticsPanelSkeleton titleWidth="w-40" metaWidth="w-24" chartHeight="h-[360px]" />
+      <AnalyticsPanelSkeleton titleWidth="w-32" metaWidth="w-20" chartHeight="h-[220px]" />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <AnalyticsPanelSkeleton titleWidth="w-36" metaWidth="w-16" chartHeight="h-[280px]" />
+        <AnalyticsPanelSkeleton titleWidth="w-32" metaWidth="w-24" chartHeight="h-[280px]" />
+      </div>
+      <AnalyticsPanelSkeleton titleWidth="w-36" metaWidth="w-16" chartHeight="h-[320px]" />
+      <AnalyticsPanelSkeleton titleWidth="w-44" metaWidth="w-20" chartHeight="h-[280px]" />
+    </div>
+  );
+}
+
+function EngagementTabSkeleton() {
+  return (
+    <div className="space-y-6 pt-6">
+      <AnalyticsPanelSkeleton titleWidth="w-40" metaWidth="w-24" chartHeight="h-[360px]" />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <AnalyticsPanelSkeleton titleWidth="w-32" metaWidth="w-20" chartHeight="h-[280px]" />
+        <AnalyticsPanelSkeleton titleWidth="w-40" metaWidth="w-16" chartHeight="h-[280px]" footerLines={2} />
+      </div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <AnalyticsPanelSkeleton titleWidth="w-44" metaWidth="w-16" chartHeight="h-[260px]" />
+        <AnalyticsPanelSkeleton titleWidth="w-36" metaWidth="w-20" chartHeight="h-[260px]" />
+      </div>
+    </div>
+  );
+}
+
 function LateAnalyticsContent() {
   const {
     posts,
@@ -30,6 +152,7 @@ function LateAnalyticsContent() {
     overview,
     accounts,
     loading,
+    refreshing,
     filters,
     setFilters,
     lastSync,
@@ -156,10 +279,24 @@ function LateAnalyticsContent() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" aria-busy={refreshing}>
       <LateAnalyticsFilters filters={filters} setFilters={setFilters} lastSync={lastSync} onRefresh={refresh} onDownload={handleDownload} accounts={accounts} />
 
-      <LateMetricCards totals={totals} totalFollowers={totalFollowers} />
+      {refreshing && (
+        <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-xs text-[var(--text-muted)]">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/60" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-500" />
+          </span>
+          <span>Loading fresh analytics for your filters...</span>
+        </div>
+      )}
+
+      {refreshing ? (
+        <LateMetricCardsSkeleton />
+      ) : (
+        <LateMetricCards totals={totals} totalFollowers={totalFollowers} />
+      )}
 
       <Tabs defaultValue="overview">
         <TabsList variant="line" className="w-full justify-start border-b border-[var(--border)] pb-0">
@@ -170,34 +307,54 @@ function LateAnalyticsContent() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 pt-6">
-          <LateMetricsChart dailyMetrics={dailyMetrics} />
-          <LatePostingActivity dailyMetrics={dailyMetrics} />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <LateFollowerChart followerStats={followerStats} totalFollowers={totalFollowers} />
-            <LateAccountViewsChart accounts={accounts} posts={posts} dateRange={dateRange} />
-          </div>
-          <LateDailyChart dailyMetrics={dailyMetrics} />
-          <LatePlatformBreakdown platforms={platformTotals} totalFollowers={totalFollowers} followerStats={followerStats} />
+          {refreshing ? (
+            <OverviewTabSkeleton />
+          ) : (
+            <>
+              <LateMetricsChart dailyMetrics={dailyMetrics} />
+              <LatePostingActivity dailyMetrics={dailyMetrics} />
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <LateFollowerChart followerStats={followerStats} totalFollowers={totalFollowers} />
+                <LateAccountViewsChart accounts={accounts} posts={posts} dateRange={dateRange} />
+              </div>
+              <LateDailyChart dailyMetrics={dailyMetrics} />
+              <LatePlatformBreakdown platforms={platformTotals} totalFollowers={totalFollowers} followerStats={followerStats} />
+            </>
+          )}
         </TabsContent>
 
         <TabsContent value="engagement" className="space-y-6 pt-6">
-          <LateMetricsChart dailyMetrics={dailyMetrics} />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <LateBestTimeHeatmap bestTimes={bestTimes} />
-            <LateTopPosts posts={posts} />
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <LatePostingFrequency data={postingFrequency} />
-            <LateContentDecay data={contentDecay} />
-          </div>
+          {refreshing ? (
+            <EngagementTabSkeleton />
+          ) : (
+            <>
+              <LateMetricsChart dailyMetrics={dailyMetrics} />
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <LateBestTimeHeatmap bestTimes={bestTimes} />
+                <LateTopPosts posts={posts} />
+              </div>
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <LatePostingFrequency data={postingFrequency} />
+                <LateContentDecay data={contentDecay} />
+              </div>
+            </>
+          )}
         </TabsContent>
 
         <TabsContent value="accounts" className="pt-6">
-          <LateAccountsTable followerStats={followerStats} posts={posts} />
+          {refreshing ? (
+            <AnalyticsTableSkeleton rows={7} columns={6} />
+          ) : (
+            <LateAccountsTable followerStats={followerStats} posts={posts} />
+          )}
         </TabsContent>
 
         <TabsContent value="content" className="pt-6">
-          <LateContentTable posts={posts} accounts={accounts} />
+          {refreshing ? (
+            <AnalyticsTableSkeleton rows={8} columns={7} />
+          ) : (
+            <LateContentTable posts={posts} accounts={accounts} />
+          )}
         </TabsContent>
       </Tabs>
     </div>

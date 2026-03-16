@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
+import { Search, ChevronDown, Check } from 'lucide-react';
 
 type Account = { id: string; platform: string; username: string; displayName?: string };
 type PostAnalytics = {
@@ -33,6 +34,87 @@ type Props = {
   posts: PostAnalytics[];
   dateRange?: { fromDate: string; toDate: string };
 };
+
+function SearchableModelSelect({ value, accounts, onChange }: { value: string; accounts: Account[]; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) { setSearch(''); setTimeout(() => inputRef.current?.focus(), 0); }
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return accounts;
+    const q = search.trim().toLowerCase();
+    return accounts.filter(a =>
+      a.username.toLowerCase().includes(q) ||
+      (a.displayName || '').toLowerCase().includes(q)
+    );
+  }, [accounts, search]);
+
+  const label = value
+    ? (accounts.find(a => a.username === value)?.displayName || value)
+    : 'Select model...';
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-sm text-[var(--text-primary)] outline-none cursor-pointer hover:border-[var(--primary)] transition-colors min-w-[180px]"
+      >
+        <span className="flex-1 text-left truncate">{label}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-[100] w-64 rounded-xl border border-[var(--border)] bg-white dark:bg-[#1a1a1a] shadow-xl backdrop-blur-none">
+          <div className="p-2 border-b border-[var(--border)]">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-muted)]" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search models..."
+                className="w-full pl-8 pr-2 py-1.5 text-sm rounded-md bg-[var(--muted)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus:ring-1 focus:ring-[var(--primary)]"
+              />
+            </div>
+          </div>
+          <div className="max-h-60 overflow-y-auto py-1">
+            {filtered.length === 0 && (
+              <div className="px-3 py-2 text-xs text-[var(--text-muted)]">No results</div>
+            )}
+            {filtered.map(a => (
+              <button
+                key={a.username}
+                type="button"
+                onClick={() => { onChange(a.username); setOpen(false); }}
+                className={`flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-[var(--muted)] transition-colors ${
+                  a.username === value ? 'text-[var(--primary)] font-medium' : 'text-[var(--text-primary)]'
+                }`}
+              >
+                {a.username === value && <Check className="h-3.5 w-3.5 shrink-0" />}
+                <span className={a.username === value ? '' : 'pl-5'}>{a.displayName || a.username}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function LateAccountViewsChart({ accounts, posts, dateRange }: Props) {
   const [selectedUsername, setSelectedUsername] = useState('');
@@ -160,12 +242,11 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
           )}
         </div>
         <div className="flex items-center gap-2">
-          <select className={selectClass} style={chevronStyle} value={selectedUsername} onChange={e => { setSelectedUsername(e.target.value); setPlatformFilter(''); }}>
-            <option value="">Select model...</option>
-            {uniqueAccounts.map(a => (
-              <option key={a.username} value={a.username}>{a.displayName || a.username}</option>
-            ))}
-          </select>
+          <SearchableModelSelect
+            value={selectedUsername}
+            accounts={uniqueAccounts}
+            onChange={v => { setSelectedUsername(v); setPlatformFilter(''); }}
+          />
           <select className={selectClass} style={chevronStyle} value={platformFilter} onChange={e => setPlatformFilter(e.target.value)}>
             <option value="">All Platforms</option>
             {availablePlatforms.map(p => (
@@ -202,18 +283,18 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
                 if (!active || !payload?.length) return null;
                 const d = payload[0].payload as DayEntry;
                 return (
-                  <div style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                      {new Date(label + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                  <div style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 14px', fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', color: '#1f2937', zIndex: 100 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 6, color: '#111827' }}>
+                      {new Date(label + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                     </div>
                     {d.posts > 0 ? (
-                      <>
-                        <div>{d.posts} post{d.posts > 1 ? 's' : ''} published</div>
-                        <div style={{ color: barColor }}>{formatNum(d.views)} views · {formatNum(d.likes)} likes</div>
-                        <div>{formatNum(d.comments)} comments · {formatNum(d.shares)} shares</div>
-                      </>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <div style={{ color: '#6b7280' }}>{d.posts} post{d.posts > 1 ? 's' : ''}</div>
+                        <div style={{ color: barColor, fontWeight: 600 }}>{formatNum(d.views)} views</div>
+                        <div>{formatNum(d.likes)} likes · {formatNum(d.comments)} comments</div>
+                      </div>
                     ) : (
-                      <div style={{ color: 'var(--text-muted)' }}>No posts published</div>
+                      <div style={{ color: '#9ca3af' }}>No posts</div>
                     )}
                   </div>
                 );

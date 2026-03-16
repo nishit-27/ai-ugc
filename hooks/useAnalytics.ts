@@ -31,12 +31,47 @@ export function useAnalytics() {
       const [overviewRes, accountsRes, mediaRes] = await Promise.all([
         fetch('/api/analytics/overview', { cache: 'no-store' }),
         fetch('/api/analytics/accounts', { cache: 'no-store' }),
-        fetch('/api/analytics/media?limit=5000', { cache: 'no-store' }),
+        fetch('/api/late-analytics?limit=100000&sortBy=publishedAt&sortDirection=desc', { cache: 'no-store' }),
       ]);
 
       const overviewData = overviewRes.ok ? await overviewRes.json() : null;
       const accountsData = accountsRes.ok ? await accountsRes.json() : { accounts: [] };
-      const mediaData = mediaRes.ok ? await mediaRes.json() : { items: [] };
+      const lateData = mediaRes.ok ? await mediaRes.json() : { posts: [] };
+
+      // Map GetLate posts → AnalyticsMediaItem[]
+      const latePosts = lateData.posts || [];
+      const mappedMedia: AnalyticsMediaItem[] = [];
+      for (const post of latePosts) {
+        const a = (post as Record<string, unknown>).analytics as Record<string, number> || {};
+        const platforms = ((post as Record<string, unknown>).platforms as Array<Record<string, string>>) || [];
+        const base = {
+          id: post._id || post.postId || '',
+          externalId: post._id || post.postId || '',
+          caption: post.content,
+          url: post.platformPostUrl,
+          thumbnailUrl: post.thumbnailUrl,
+          publishedAt: post.publishedAt,
+          views: Number(a.views || 0),
+          likes: Number(a.likes || 0),
+          comments: Number(a.comments || 0),
+          shares: Number(a.shares || 0),
+          saves: Number(a.saves || 0),
+          engagementRate: Number(a.engagementRate || 0),
+        };
+        if (platforms.length === 0) {
+          mappedMedia.push({ ...base, accountId: '', platform: '', accountUsername: '', accountDisplayName: '' });
+        } else {
+          for (const pl of platforms) {
+            mappedMedia.push({
+              ...base,
+              accountId: pl.accountId || '',
+              platform: pl.platform || '',
+              accountUsername: pl.accountUsername || '',
+              accountDisplayName: pl.accountUsername || '',
+            });
+          }
+        }
+      }
 
       // Only cache valid overview data (must have platformBreakdown, not an error object)
       if (overviewData && !overviewData.error) {
@@ -44,11 +79,11 @@ export function useAnalytics() {
         setOverview(overviewData);
       }
       _accountsCache = accountsData.accounts || [];
-      _mediaCache = mediaData.items || [];
+      _mediaCache = mappedMedia;
       _cacheTime = Date.now();
 
       setAccounts(accountsData.accounts || []);
-      setMediaItems(mediaData.items || []);
+      setMediaItems(mappedMedia);
       return _accountsCache;
     } catch (e) {
       console.error('Failed to load analytics:', e);
