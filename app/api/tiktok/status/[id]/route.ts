@@ -76,13 +76,13 @@ export async function GET(
     if (localPost) {
       const updates: Record<string, unknown> = {
         status: dbStatus,
-        lastCheckedAt: new Date().toISOString(),
+        lastCheckedAt: new Date(),
       };
 
       if (platformPostUrl) updates.platformPostUrl = platformPostUrl;
       if (platformPostId) updates.externalPostId = platformPostId;
       if (dbStatus === 'published') {
-        updates.publishedAt = tiktokPlatform?.publishedAt || latePost.publishedAt || new Date().toISOString();
+        updates.publishedAt = tiktokPlatform?.publishedAt || latePost.publishedAt || new Date();
       }
       if (dbStatus === 'failed' && platformError) {
         updates.error = typeof platformError === 'string' ? platformError : JSON.stringify(platformError);

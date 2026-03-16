@@ -448,11 +448,11 @@ export async function POST(request: NextRequest) {
           });
           if (dbStatus === 'published' && dbPost?.id) {
             await updatePost(dbPost.id, {
-              publishedAt: platformResult?.publishedAt || new Date().toISOString(),
+              publishedAt: platformResult?.publishedAt || new Date(),
               externalPostId: platformPostId,
               platformPostUrl,
               publishAttempts: 1,
-              lastCheckedAt: new Date().toISOString(),
+              lastCheckedAt: new Date(),
             });
           }
           dbResults.push({

@@ -66,7 +66,7 @@ async function handleRegularJob(
       status: 'completed',
       step: 'Done!',
       outputUrl: url,
-      completedAt: new Date().toISOString(),
+      completedAt: new Date(),
     });
 
     console.log(`[Webhook] Job ${job.id} completed via webhook`);
@@ -175,7 +175,7 @@ async function handleTemplateJob(
       step: 'Done!',
       outputUrl: finalUrl,
       stepResults,
-      completedAt: new Date().toISOString(),
+      completedAt: new Date(),
     });
 
     console.log(`[Webhook] Template job ${job.id} completed via webhook`);

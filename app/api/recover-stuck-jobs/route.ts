@@ -100,7 +100,7 @@ async function recoverJob(job: {
           status: 'completed',
           step: 'Done! (recovered)',
           outputUrl: url,
-          completedAt: new Date().toISOString(),
+          completedAt: new Date(),
         });
 
         if (job.batchId) await updateBatchProgress(job.batchId).catch(() => {});
@@ -254,7 +254,7 @@ async function recoverTemplateJob(job: {
           step: 'Done! (recovered)',
           outputUrl: finalUrl,
           stepResults,
-          completedAt: new Date().toISOString(),
+          completedAt: new Date(),
         });
         if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
         return { id: job.id, recovered: true, status: 'completed' };

@@ -559,7 +559,7 @@ export async function processTemplateJob(jobId: string): Promise<void> {
       step: 'Done!',
       outputUrl: finalUrl,
       stepResults,
-      completedAt: new Date().toISOString(),
+      completedAt: new Date(),
     });
     if (job.pipelineBatchId) {
       try {

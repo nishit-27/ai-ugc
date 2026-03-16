@@ -307,7 +307,7 @@ export async function POST(request: NextRequest) {
               outputUrls: imageUrls,
               isCarousel: true,
             }],
-            completedAt: new Date().toISOString(),
+            completedAt: new Date(),
           });
         } else {
           // No images for this model — mark as failed so it doesn't stay queued forever
@@ -315,7 +315,7 @@ export async function POST(request: NextRequest) {
             status: 'failed',
             step: 'Failed',
             error: 'No carousel images found for this model',
-            completedAt: new Date().toISOString(),
+            completedAt: new Date(),
           });
         }
       }

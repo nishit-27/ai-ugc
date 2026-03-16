@@ -254,7 +254,7 @@ export async function processJob(
         status: 'completed',
         step: 'Done!',
         outputUrl: url,
-        completedAt: new Date().toISOString(),
+        completedAt: new Date(),
       });
     } finally {
       try { fs.unlinkSync(tempOutputPath); } catch {}
@@ -403,7 +403,7 @@ export async function processJobWithImage(
         status: 'completed',
         step: 'Done!',
         outputUrl: url,
-        completedAt: new Date().toISOString(),
+        completedAt: new Date(),
       });
 
       const completedJob = await getJob(jobId);

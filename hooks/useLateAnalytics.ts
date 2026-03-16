@@ -140,7 +140,7 @@ export function useLateAnalytics() {
 
     setLoading(!postsLoaded.current);
     try {
-      const res = await fetch(`/api/late-analytics?sortBy=publishedAt&sortDirection=desc&fromDate=${fromDate}&toDate=${toDate}`, { cache: 'no-store' });
+      const res = await fetch(`/api/late-analytics?sortBy=date&order=desc&fromDate=${fromDate}&toDate=${toDate}`, { cache: 'no-store' });
       const data = res.ok ? await res.json() : { posts: [] };
       const rawPosts = data.posts || [];
       const mapped: PostAnalytics[] = rawPosts.map((p: any) => ({
@@ -337,6 +337,13 @@ export function useLateAnalytics() {
       );
     }
 
+    if (filters.profile) {
+      const wanted = filters.profile.trim().replace(/^@+/, '').toLowerCase();
+      result = result.filter(p =>
+        (p.platforms || []).some((pl) => (pl.accountUsername || '').trim().replace(/^@+/, '').toLowerCase() === wanted)
+      );
+    }
+
     // Sort
     const sorted = [...result];
     if (filters.sortBy === 'oldest') {
@@ -353,7 +360,7 @@ export function useLateAnalytics() {
     }
 
     return sorted;
-  }, [allPosts, filters.platform, filters.sortBy, getDateRange]);
+  }, [allPosts, filters.platform, filters.profile, filters.sortBy, getDateRange]);
 
   // Load posts once on mount
   useEffect(() => {

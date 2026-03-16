@@ -399,11 +399,11 @@ export async function POST(request: NextRequest) {
     if (dbStatus === 'published' && dbPost?.id) {
       try {
         await updatePost(dbPost.id, {
-          publishedAt: tiktokPlatform?.publishedAt || new Date().toISOString(),
+          publishedAt: tiktokPlatform?.publishedAt || new Date(),
           externalPostId: platformPostId,
           platformPostUrl: platformPostUrl,
           publishAttempts: 1,
-          lastCheckedAt: new Date().toISOString(),
+          lastCheckedAt: new Date(),
         });
       } catch (dbError) {
         dbWarning = `Local DB update failed after Late post creation: ${(dbError as Error).message}`;
