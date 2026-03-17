@@ -43,6 +43,7 @@ describe('normalizeLateAnalyticsPost', () => {
           platform: 'instagram',
           profileId: { _id: 'acct_1' },
           accountUsername: '@maya.scott',
+          platformPostId: 'ig_abc123',
           platformPostUrl: 'https://instagram.com/p/abc',
           publishedAt: '2026-03-10T10:00:00.000Z',
           analytics: {
@@ -64,6 +65,7 @@ describe('normalizeLateAnalyticsPost', () => {
         platform: 'instagram',
         accountId: 'acct_1',
         accountUsername: 'maya.scott',
+        platformPostId: 'ig_abc123',
       }),
     ]);
   });

@@ -36,6 +36,7 @@ type PostAnalytics = {
   status?: string;
   platformPostUrl?: string;
   thumbnailUrl?: string;
+  variableValues?: Record<string, string>;
   platforms: { platform: string; accountId: string; accountUsername: string; analytics?: Record<string, number> }[];
   analytics: {
     impressions: number;
@@ -150,6 +151,7 @@ export function useLateAnalytics() {
         status: p.status,
         platformPostUrl: p.platformPostUrl,
         thumbnailUrl: p.thumbnailUrl,
+        variableValues: p.variableValues || {},
         platforms: p.platforms || [],
         analytics: p.analytics || {},
       }));

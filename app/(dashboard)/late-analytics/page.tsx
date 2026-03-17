@@ -19,6 +19,10 @@ import LateAccountsTable from '@/components/late-analytics/LateAccountsTable';
 import LateContentTable from '@/components/late-analytics/LateContentTable';
 import LateAccountViewsChart from '@/components/late-analytics/LateAccountViewsChart';
 import LateMetricsChart from '@/components/late-analytics/LateMetricsChart';
+import {
+  RUNABLE_INTEGRATION_VARIABLE_NAME,
+  getRunableIntegrationValueByName,
+} from '@/lib/runable-integration';
 
 function LateMetricCardsSkeleton() {
   return (
@@ -141,6 +145,123 @@ function EngagementTabSkeleton() {
   );
 }
 
+type RunnableAnalyticsPost = {
+  postId: string;
+  publishedAt: string;
+  variableValues?: Record<string, string>;
+  platforms: { platform: string; accountId: string; accountUsername: string; analytics?: Record<string, number> }[];
+  analytics: {
+    impressions: number;
+    reach: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    saves: number;
+    clicks: number;
+    views: number;
+  };
+};
+
+type MetricTotals = {
+  likes: number;
+  comments: number;
+  shares: number;
+  views: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  saves: number;
+  postCount: number;
+};
+
+function createEmptyTotals(): MetricTotals {
+  return { likes: 0, comments: 0, shares: 0, views: 0, impressions: 0, reach: 0, clicks: 0, saves: 0, postCount: 0 };
+}
+
+function buildTotalsFromPosts(posts: RunnableAnalyticsPost[]): MetricTotals {
+  return posts.reduce((acc, post) => {
+    const analytics = post.analytics || {} as Record<string, number>;
+    acc.likes += analytics.likes || 0;
+    acc.comments += analytics.comments || 0;
+    acc.shares += analytics.shares || 0;
+    acc.views += analytics.views || 0;
+    acc.impressions += analytics.impressions || 0;
+    acc.reach += analytics.reach || 0;
+    acc.clicks += analytics.clicks || 0;
+    acc.saves += analytics.saves || 0;
+    acc.postCount += 1;
+    return acc;
+  }, createEmptyTotals());
+}
+
+function buildDailyMetricsFromPosts(
+  posts: RunnableAnalyticsPost[],
+  dateRange: { fromDate: string; toDate: string }
+) {
+  const dayMap = new Map<string, {
+    date: string;
+    postCount: number;
+    metrics: {
+      impressions: number;
+      reach: number;
+      likes: number;
+      comments: number;
+      shares: number;
+      saves: number;
+      clicks: number;
+      views: number;
+    };
+    platforms: Record<string, number>;
+  }>();
+
+  const cursor = new Date(`${dateRange.fromDate}T00:00:00`);
+  const endDate = new Date(`${dateRange.toDate}T00:00:00`);
+  while (cursor <= endDate) {
+    const date = cursor.toISOString().split('T')[0];
+    dayMap.set(date, {
+      date,
+      postCount: 0,
+      metrics: {
+        impressions: 0,
+        reach: 0,
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        saves: 0,
+        clicks: 0,
+        views: 0,
+      },
+      platforms: {},
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  for (const post of posts) {
+    if (!post.publishedAt) continue;
+    const date = post.publishedAt.split('T')[0];
+    const day = dayMap.get(date);
+    if (!day) continue;
+
+    const analytics = post.analytics || {} as Record<string, number>;
+    day.postCount += 1;
+    day.metrics.impressions += analytics.impressions || 0;
+    day.metrics.reach += analytics.reach || 0;
+    day.metrics.likes += analytics.likes || 0;
+    day.metrics.comments += analytics.comments || 0;
+    day.metrics.shares += analytics.shares || 0;
+    day.metrics.saves += analytics.saves || 0;
+    day.metrics.clicks += analytics.clicks || 0;
+    day.metrics.views += analytics.views || 0;
+
+    for (const platform of post.platforms || []) {
+      if (!platform.platform) continue;
+      day.platforms[platform.platform] = (day.platforms[platform.platform] || 0) + 1;
+    }
+  }
+
+  return Array.from(dayMap.values());
+}
+
 function LateAnalyticsContent() {
   const {
     posts,
@@ -212,6 +333,41 @@ function LateAnalyticsContent() {
     link.click();
     URL.revokeObjectURL(url);
   }, [posts]);
+
+  const runnablePosts = useMemo(
+    () => posts.filter((post) => getRunableIntegrationValueByName(post.variableValues)),
+    [posts]
+  );
+
+  const runnableAccountIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const post of runnablePosts) {
+      for (const platform of post.platforms || []) {
+        if (platform.accountId) ids.add(platform.accountId);
+      }
+    }
+    return ids;
+  }, [runnablePosts]);
+
+  const runnableAccounts = useMemo(
+    () => accounts.filter((account) => runnableAccountIds.has(account.id)),
+    [accounts, runnableAccountIds]
+  );
+
+  const runnableFollowerStats = useMemo(
+    () => followerStats.filter((account) => runnableAccountIds.has(account.accountId)),
+    [followerStats, runnableAccountIds]
+  );
+
+  const runnableTotals = useMemo(
+    () => buildTotalsFromPosts(runnablePosts),
+    [runnablePosts]
+  );
+
+  const runnableDailyMetrics = useMemo(
+    () => buildDailyMetricsFromPosts(runnablePosts, dateRange),
+    [dateRange, runnablePosts]
+  );
 
   if (loading) {
     return (
@@ -304,6 +460,7 @@ function LateAnalyticsContent() {
           <TabsTrigger value="engagement">Engagement</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="content">Content</TabsTrigger>
+          <TabsTrigger value="runnable">Runnable</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 pt-6">
@@ -354,6 +511,37 @@ function LateAnalyticsContent() {
             <AnalyticsTableSkeleton rows={8} columns={7} />
           ) : (
             <LateContentTable posts={posts} accounts={accounts} />
+          )}
+        </TabsContent>
+
+        <TabsContent value="runnable" className="space-y-6 pt-6">
+          {refreshing ? (
+            <>
+              <LateMetricCardsSkeleton />
+              <AnalyticsPanelSkeleton titleWidth="w-40" metaWidth="w-24" chartHeight="h-[360px]" />
+              <AnalyticsPanelSkeleton titleWidth="w-40" metaWidth="w-20" chartHeight="h-[280px]" />
+              <AnalyticsTableSkeleton rows={6} columns={6} />
+              <AnalyticsTableSkeleton rows={8} columns={7} />
+            </>
+          ) : (
+            <>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                Showing videos tagged <span className="font-semibold">{RUNABLE_INTEGRATION_VARIABLE_NAME} = True</span>.
+              </div>
+              {runnablePosts.length > 0 ? (
+                <>
+                  <LateMetricCards totals={runnableTotals} totalFollowers={totalFollowers} />
+                  <LateMetricsChart dailyMetrics={runnableDailyMetrics} />
+                  <LateAccountViewsChart accounts={runnableAccounts} posts={runnablePosts} dateRange={dateRange} />
+                  <LateAccountsTable followerStats={runnableFollowerStats} posts={runnablePosts} />
+                  <LateContentTable posts={runnablePosts} accounts={runnableAccounts} />
+                </>
+              ) : (
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-6 py-14 text-center text-sm text-[var(--text-muted)]">
+                  No videos are tagged with <span className="font-semibold text-[var(--text-primary)]">{RUNABLE_INTEGRATION_VARIABLE_NAME}</span> yet.
+                </div>
+              )}
+            </>
           )}
         </TabsContent>
       </Tabs>

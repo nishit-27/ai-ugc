@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { Search, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
+import { getRunableIntegrationValueByName } from '@/lib/runable-integration';
 
 type PostAnalytics = {
   postId: string;
@@ -11,6 +12,7 @@ type PostAnalytics = {
   status?: string;
   platformPostUrl?: string;
   thumbnailUrl?: string;
+  variableValues?: Record<string, string>;
   platforms: { platform: string; accountId: string; accountUsername: string; analytics?: Record<string, number> }[];
   analytics: {
     impressions: number; reach: number; likes: number; comments: number; shares: number; saves: number; clicks: number; views: number; engagementRate: number;
@@ -166,6 +168,7 @@ export default function LateContentTable({ posts, accounts }: Props) {
               const color = PLATFORM_COLORS[platform] || '#888';
               const a = post.analytics || {} as any;
               const er = a.views > 0 ? ((a.likes + a.comments + (a.shares || 0)) / a.views * 100) : 0;
+              const hasRunableIntegration = getRunableIntegrationValueByName(post.variableValues);
 
               return (
                 <tr
@@ -182,7 +185,16 @@ export default function LateContentTable({ posts, accounts }: Props) {
                           <span className="text-[10px] text-[var(--text-muted)]">video</span>
                         )}
                       </div>
-                      <span className="text-sm text-[var(--text-primary)] truncate">{post.content?.slice(0, 40) || 'Untitled'}...</span>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm text-[var(--text-primary)]">{post.content?.slice(0, 40) || 'Untitled'}...</div>
+                        {hasRunableIntegration && (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                              Runnable
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="py-3 px-4">

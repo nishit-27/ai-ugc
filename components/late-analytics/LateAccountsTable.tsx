@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { Search, ExternalLink, RefreshCw, LayoutGrid, List } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
+import { getRunableIntegrationValueByName } from '@/lib/runable-integration';
 
 type FollowerStat = {
   accountId: string;
@@ -17,6 +18,7 @@ type FollowerStat = {
 
 type PostAnalytics = {
   postId: string;
+  variableValues?: Record<string, string>;
   platforms: { platform: string; accountId: string; accountUsername: string; analytics?: Record<string, number> }[];
   analytics: { views: number; likes: number; comments: number; shares: number; impressions: number; engagementRate: number };
 };
@@ -50,11 +52,12 @@ export default function LateAccountsTable({ followerStats, posts, onSelectAccoun
 
   // Compute per-account metrics from posts
   const accountMetrics = useMemo(() => {
-    const map = new Map<string, { views: number; likes: number; comments: number; shares: number; videoCount: number }>();
+    const map = new Map<string, { views: number; likes: number; comments: number; shares: number; videoCount: number; runableVideoCount: number }>();
     for (const post of posts) {
+      const hasRunableIntegration = getRunableIntegrationValueByName(post.variableValues);
       for (const p of (post.platforms || [])) {
         if (!p.accountId) continue;
-        if (!map.has(p.accountId)) map.set(p.accountId, { views: 0, likes: 0, comments: 0, shares: 0, videoCount: 0 });
+        if (!map.has(p.accountId)) map.set(p.accountId, { views: 0, likes: 0, comments: 0, shares: 0, videoCount: 0, runableVideoCount: 0 });
         const m = map.get(p.accountId)!;
         const a = p.analytics || post.analytics || {};
         m.views += (a as any).views || 0;
@@ -62,6 +65,7 @@ export default function LateAccountsTable({ followerStats, posts, onSelectAccoun
         m.comments += (a as any).comments || 0;
         m.shares += (a as any).shares || 0;
         m.videoCount += 1;
+        if (hasRunableIntegration) m.runableVideoCount += 1;
       }
     }
     return map;
@@ -70,10 +74,16 @@ export default function LateAccountsTable({ followerStats, posts, onSelectAccoun
   // Merge followerStats with computed metrics
   const accounts = useMemo(() => {
     return followerStats.map(fs => {
-      const metrics = accountMetrics.get(fs.accountId) || { views: 0, likes: 0, comments: 0, shares: 0, videoCount: 0 };
+      const metrics = accountMetrics.get(fs.accountId) || { views: 0, likes: 0, comments: 0, shares: 0, videoCount: 0, runableVideoCount: 0 };
       const totalInteractions = metrics.likes + metrics.comments + metrics.shares;
       const engagementRate = metrics.views > 0 ? (totalInteractions / metrics.views) * 100 : 0;
-      return { ...fs, views: metrics.views, videoCount: metrics.videoCount, engagementRate };
+      return {
+        ...fs,
+        views: metrics.views,
+        videoCount: metrics.videoCount,
+        runableVideoCount: metrics.runableVideoCount,
+        engagementRate,
+      };
     });
   }, [followerStats, accountMetrics]);
 
@@ -178,6 +188,13 @@ export default function LateAccountsTable({ followerStats, posts, onSelectAccoun
                         <div>
                           <div className="font-medium text-[var(--text-primary)]">{account.displayName || account.username}</div>
                           <div className="text-xs text-[var(--text-muted)]">@{account.username}</div>
+                          {account.runableVideoCount > 0 && (
+                            <div className="mt-1">
+                              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                                Runnable {account.runableVideoCount}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -232,6 +249,13 @@ export default function LateAccountsTable({ followerStats, posts, onSelectAccoun
                     <div>
                       <div className="font-medium text-sm text-[var(--text-primary)]">{account.displayName || account.username}</div>
                       <div className="text-xs text-[var(--text-muted)]">@{account.username}</div>
+                      {account.runableVideoCount > 0 && (
+                        <div className="mt-1">
+                          <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                            Runnable {account.runableVideoCount}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium" style={{ backgroundColor: `${meta?.color || '#888'}15`, color: meta?.color || '#888' }}>

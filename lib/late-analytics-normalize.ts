@@ -17,6 +17,9 @@ type RawPlatformAnalytics = {
   accountUsername?: string;
   username?: string;
   displayName?: string;
+  platformPostId?: string;
+  externalPostId?: string;
+  postId?: string;
   platformPostUrl?: string;
   publishedAt?: string;
   analytics?: RawMetricMap;
@@ -82,6 +85,7 @@ export type NormalizedLateAnalyticsPost = {
     platform: string;
     accountId: string;
     accountUsername: string;
+    platformPostId?: string;
     platformPostUrl?: string;
     publishedAt?: string;
     analytics: {
@@ -233,6 +237,7 @@ export function normalizeLateAnalyticsPost(raw: RawLateAnalyticsPost): Normalize
     platform: firstDefinedString(platform.platform),
     accountId: firstDefinedString(toId(platform.accountId), toId(platform.profileId)),
     accountUsername: normalizeUsername(platform.accountUsername || platform.username || platform.displayName),
+    platformPostId: firstDefinedString(platform.platformPostId, platform.externalPostId, platform.postId) || undefined,
     platformPostUrl: firstDefinedString(platform.platformPostUrl),
     publishedAt: firstDefinedString(platform.publishedAt),
     analytics: normalizeMetrics(platformToMetricMap(platform)),

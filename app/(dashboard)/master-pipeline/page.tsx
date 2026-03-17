@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { usePresets } from '@/hooks/usePresets';
 import { useVideoUpload } from '@/hooks/useVideoUpload';
 import { useToast } from '@/hooks/useToast';
+import { useVariables } from '@/hooks/useVariables';
 import PipelineBuilder from '@/components/templates/PipelineBuilder';
 import NodeConfigPanel from '@/components/templates/NodeConfigPanel';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
@@ -12,6 +13,11 @@ import MasterCanvasPanel from '@/components/templates/MasterCanvasPanel';
 import MasterPipelineHeader from '@/components/templates/master-pipeline/MasterPipelineHeader';
 import MasterPipelinePresetModals from '@/components/templates/master-pipeline/MasterPipelinePresetModals';
 import Modal from '@/components/ui/Modal';
+import {
+  RUNABLE_INTEGRATION_VARIABLE_NAME,
+  getRunableIntegrationValue,
+  getRunableIntegrationVariable,
+} from '@/lib/runable-integration';
 import type { MiniAppStep, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, Model } from '@/types';
 
 const MASTER_DRAFT_KEY = 'ai-ugc-master-pipeline-draft';
@@ -41,6 +47,7 @@ export default function MasterPipelinePage() {
   const { presets, isLoading: presetsLoading, isSaving: presetSaving, savePreset, deletePreset } = usePresets();
   const { uploadVideo, isUploading, progress } = useVideoUpload();
   const { showToast } = useToast();
+  const { variables, loading: variablesLoading } = useVariables();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const draft = useRef(loadDraft());
@@ -71,6 +78,16 @@ export default function MasterPipelinePage() {
   const [masterTimezone, setMasterTimezone] = useState('Asia/Kolkata');
   const [accountCounts, setAccountCounts] = useState<Record<string, number>>({});
   const [modelPrimaryImages, setModelPrimaryImages] = useState<Record<string, { signedUrl: string; gcsUrl: string }>>({});
+  const runableIntegrationVariable = getRunableIntegrationVariable(variables);
+  const hasRunableIntegration = getRunableIntegrationValue(variableValues, runableIntegrationVariable?.id);
+  const runableIntegrationStatusLabel = variablesLoading ? 'Checking...' : hasRunableIntegration ? 'Yes' : 'No';
+  const runableIntegrationHint = variablesLoading
+    ? 'Loading your current variable settings.'
+    : runableIntegrationVariable
+      ? hasRunableIntegration
+        ? `${RUNABLE_INTEGRATION_VARIABLE_NAME} is enabled for this master run.`
+        : `${RUNABLE_INTEGRATION_VARIABLE_NAME} is off for this master run. Turn it on if these videos should be tracked as runnable content.`
+      : `${RUNABLE_INTEGRATION_VARIABLE_NAME} variable was not found. Add it in Variables if you want runnable tracking.`;
 
   // Load models + primary images + account counts on mount
   useEffect(() => {
@@ -583,7 +600,14 @@ export default function MasterPipelinePage() {
       {/* Run Confirmation Modal */}
       <Modal open={showRunConfirm} onClose={() => setShowRunConfirm(false)} title="Run Master Pipeline" maxWidth="max-w-sm">
         <div className="p-4 space-y-4">
-          <p className="text-sm text-[var(--text)]">Are you sure you want to proceed?</p>
+          <p className="text-sm font-medium text-[var(--text)]">Are you sure you have added runnable indicators?</p>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--accent)]/40 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Current toggle</div>
+            <div className="mt-1 text-sm text-[var(--text)]">
+              {RUNABLE_INTEGRATION_VARIABLE_NAME}: <span className="font-semibold">{runableIntegrationStatusLabel}</span>
+            </div>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">{runableIntegrationHint}</p>
+          </div>
           <p className="text-xs text-[var(--text-muted)]">
             Make sure you have added <span className="font-semibold text-[var(--text)]">Text Overlay</span> and <span className="font-semibold text-[var(--text)]">First Frame</span> steps to your pipeline before running.
           </p>
@@ -592,13 +616,13 @@ export default function MasterPipelinePage() {
               onClick={() => setShowRunConfirm(false)}
               className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
             >
-              Cancel
+              No, Go Back
             </button>
             <button
               onClick={handleRunConfirmed}
               className="rounded-lg bg-master px-4 py-2 text-sm font-semibold text-white transition-all hover:opacity-90"
             >
-              Yes, Proceed
+              Yes, Continue
             </button>
           </div>
         </div>

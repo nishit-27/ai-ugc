@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
+import { ensureDatabaseReady, getMediaVariableValuesByExternalIds } from '@/lib/db';
 import { getApiKeys } from '@/lib/lateAccountPool';
 import { lateApiRequest } from '@/lib/lateApi';
 import {
   extractLateAnalyticsPosts,
+  type NormalizedLateAnalyticsPost,
   normalizeLateAnalyticsListParams,
   normalizeLateAnalyticsPost,
 } from '@/lib/late-analytics-normalize';
@@ -101,15 +103,47 @@ export async function GET(request: Request) {
       }
     }
 
+    const normalizedPosts = rawPosts.map((post) => normalizeLateAnalyticsPost(post));
+    const candidateExternalIds = new Set<string>();
+    for (const post of normalizedPosts) {
+      if (post._id) candidateExternalIds.add(post._id);
+      for (const platform of post.platforms) {
+        if (platform.platformPostId) candidateExternalIds.add(platform.platformPostId);
+      }
+    }
+
+    let variableValuesByExternalId: Record<string, Record<string, string>> = {};
+    if (candidateExternalIds.size > 0) {
+      try {
+        await ensureDatabaseReady();
+        variableValuesByExternalId = await getMediaVariableValuesByExternalIds([...candidateExternalIds]);
+      } catch (error) {
+        console.error('Failed to load variable values for late analytics posts:', error);
+      }
+    }
+
     // Deduplicate posts by _id (safety net)
     const seenIds = new Set<string>();
-    const allPosts: ReturnType<typeof extractLateAnalyticsPosts> = [];
-    for (const post of rawPosts) {
-      const normalized = normalizeLateAnalyticsPost(post);
+    const allPosts: Array<NormalizedLateAnalyticsPost & { variableValues: Record<string, string> }> = [];
+    for (const normalized of normalizedPosts) {
       const id = normalized._id;
       if (id && seenIds.has(id)) continue;
       if (id) seenIds.add(id);
-      allPosts.push(normalized);
+
+      const variableValues: Record<string, string> = {};
+      const matchingExternalIds = new Set<string>();
+      if (normalized._id) matchingExternalIds.add(normalized._id);
+      for (const platform of normalized.platforms) {
+        if (platform.platformPostId) matchingExternalIds.add(platform.platformPostId);
+      }
+      for (const externalId of matchingExternalIds) {
+        Object.assign(variableValues, variableValuesByExternalId[externalId] || {});
+      }
+
+      allPosts.push({
+        ...normalized,
+        variableValues,
+      });
     }
 
     return NextResponse.json({ posts: allPosts, overview, total: allPosts.length });

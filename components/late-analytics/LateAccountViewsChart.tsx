@@ -65,7 +65,7 @@ function SearchableModelSelect({ value, accounts, onChange }: { value: string; a
 
   const label = value
     ? (accounts.find(a => a.username === value)?.displayName || value)
-    : 'Select model...';
+    : 'Select account...';
 
   return (
     <div ref={ref} className="relative">
@@ -87,7 +87,7 @@ function SearchableModelSelect({ value, accounts, onChange }: { value: string; a
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search models..."
+                placeholder="Search accounts..."
                 className="w-full pl-8 pr-2 py-1.5 text-sm rounded-md bg-[var(--muted)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus:ring-1 focus:ring-[var(--primary)]"
               />
             </div>
@@ -158,7 +158,16 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
 
   // Auto-select first account
   useEffect(() => {
-    if (!selectedUsername && uniqueAccounts.length > 0) {
+    if (uniqueAccounts.length === 0) {
+      if (selectedUsername) setSelectedUsername('');
+      return;
+    }
+
+    const hasSelectedAccount = uniqueAccounts.some(
+      account => account.username.toLowerCase() === selectedUsername.toLowerCase()
+    );
+
+    if (!selectedUsername || !hasSelectedAccount) {
       setSelectedUsername(uniqueAccounts[0].username);
     }
   }, [uniqueAccounts, selectedUsername]);
@@ -309,7 +318,7 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
         </ResponsiveContainer>
       ) : (
         <div className="flex items-center justify-center h-[280px] text-sm text-[var(--text-muted)]">
-          {selectedUsername ? 'No posts for this account in the selected period' : 'Select a model to view metrics'}
+          {selectedUsername ? 'No posts for this account in the selected period' : 'Select an account to view metrics'}
         </div>
       )}
 
