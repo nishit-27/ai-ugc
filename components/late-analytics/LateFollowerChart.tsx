@@ -1,5 +1,6 @@
 'use client';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
+import LateChartTooltip from './LateChartTooltip';
 
 const PLATFORM_COLORS: Record<string, string> = {
   tiktok: '#00f2ea',
@@ -56,7 +57,17 @@ export default function LateFollowerChart({ followerStats, totalFollowers }: { f
         <BarChart data={platformData} layout="vertical" margin={{ left: 60 }}>
           <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={formatK} />
           <YAxis type="category" dataKey="platform" tick={{ fontSize: 11 }} tickFormatter={p => p.charAt(0).toUpperCase() + p.slice(1)} />
-          <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8 }} formatter={(v: number) => formatK(v)} />
+          <Tooltip
+            wrapperStyle={{ outline: 'none', zIndex: 20 }}
+            cursor={{ fill: 'rgba(113, 113, 122, 0.14)' }}
+            content={(
+              <LateChartTooltip
+                formatLabel={(value) => value.charAt(0).toUpperCase() + value.slice(1)}
+                formatName={() => 'Followers'}
+                formatValue={(value) => formatK(value)}
+              />
+            )}
+          />
           <Bar dataKey="followers" radius={[0, 4, 4, 0]}>
             {platformData.map((d, i) => (
               <Cell key={i} fill={PLATFORM_COLORS[d.platform] || '#888'} />

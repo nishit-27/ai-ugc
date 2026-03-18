@@ -23,6 +23,14 @@ import {
   RUNABLE_INTEGRATION_VARIABLE_NAME,
   getRunableIntegrationValueByName,
 } from '@/lib/runable-integration';
+import {
+  getDateKeyInTimeZone,
+  getTodayDateKey,
+  listDateKeysInRange,
+  shiftDateKey,
+} from '@/lib/dateUtils';
+
+const ANALYTICS_START_DATE = '2020-01-01';
 
 function LateMetricCardsSkeleton() {
   return (
@@ -214,10 +222,7 @@ function buildDailyMetricsFromPosts(
     platforms: Record<string, number>;
   }>();
 
-  const cursor = new Date(`${dateRange.fromDate}T00:00:00`);
-  const endDate = new Date(`${dateRange.toDate}T00:00:00`);
-  while (cursor <= endDate) {
-    const date = cursor.toISOString().split('T')[0];
+  for (const date of listDateKeysInRange(dateRange.fromDate, dateRange.toDate)) {
     dayMap.set(date, {
       date,
       postCount: 0,
@@ -233,12 +238,11 @@ function buildDailyMetricsFromPosts(
       },
       platforms: {},
     });
-    cursor.setDate(cursor.getDate() + 1);
   }
 
   for (const post of posts) {
     if (!post.publishedAt) continue;
-    const date = post.publishedAt.split('T')[0];
+    const date = getDateKeyInTimeZone(post.publishedAt);
     const day = dayMap.get(date);
     if (!day) continue;
 
@@ -270,7 +274,6 @@ function LateAnalyticsContent() {
     bestTimes,
     postingFrequency,
     contentDecay,
-    overview,
     accounts,
     loading,
     refreshing,
@@ -282,23 +285,30 @@ function LateAnalyticsContent() {
 
   // Compute date range for child components
   const dateRange = useMemo(() => {
+    const today = getTodayDateKey();
+
     if (filters.dateRange === 'custom') {
       return {
-        fromDate: filters.customFrom || '2020-01-01',
-        toDate: filters.customTo || new Date().toISOString().split('T')[0],
+        fromDate: filters.customFrom || ANALYTICS_START_DATE,
+        toDate: filters.customTo || today,
       };
     }
-    const end = new Date();
-    const start = new Date();
-    if (filters.dateRange === '7d') start.setDate(end.getDate() - 7);
-    else if (filters.dateRange === '30d') start.setDate(end.getDate() - 30);
-    else if (filters.dateRange === '90d') start.setDate(end.getDate() - 90);
-    else if (filters.dateRange === '180d') start.setDate(end.getDate() - 180);
-    else if (filters.dateRange === '365d') start.setDate(end.getDate() - 365);
-    else start.setFullYear(2020, 0, 1);
+
+    const presetDays = filters.dateRange === '7d'
+      ? 7
+      : filters.dateRange === '30d'
+        ? 30
+        : filters.dateRange === '90d'
+          ? 90
+          : filters.dateRange === '180d'
+            ? 180
+            : filters.dateRange === '365d'
+              ? 365
+              : 0;
+
     return {
-      fromDate: start.toISOString().split('T')[0],
-      toDate: end.toISOString().split('T')[0],
+      fromDate: presetDays > 0 ? shiftDateKey(today, -(presetDays - 1)) : ANALYTICS_START_DATE,
+      toDate: today,
     };
   }, [filters.dateRange, filters.customFrom, filters.customTo]);
 
@@ -307,7 +317,7 @@ function LateAnalyticsContent() {
     const headers = ['Post ID', 'Content', 'Published', 'Platform', 'Account', 'Views', 'Likes', 'Comments', 'Shares', 'Impressions', 'Reach', 'Engagement %'];
     const rows = posts.map(post => {
       const p = post.platforms?.[0];
-      const a = post.analytics || {} as any;
+      const a = post.analytics || {};
       const er = a.views > 0 ? ((a.likes + a.comments + (a.shares || 0)) / a.views * 100).toFixed(2) : '0';
       return [
         post.postId,
@@ -329,7 +339,7 @@ function LateAnalyticsContent() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `analytics-${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `analytics-${getTodayDateKey()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }, [posts]);
@@ -468,13 +478,13 @@ function LateAnalyticsContent() {
             <OverviewTabSkeleton />
           ) : (
             <>
-              <LateMetricsChart dailyMetrics={dailyMetrics} />
-              <LatePostingActivity dailyMetrics={dailyMetrics} />
+              <LateMetricsChart dailyMetrics={dailyMetrics} dateRange={dateRange} />
+              <LatePostingActivity dailyMetrics={dailyMetrics} dateRange={dateRange} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <LateFollowerChart followerStats={followerStats} totalFollowers={totalFollowers} />
                 <LateAccountViewsChart accounts={accounts} posts={posts} dateRange={dateRange} />
               </div>
-              <LateDailyChart dailyMetrics={dailyMetrics} />
+              <LateDailyChart dailyMetrics={dailyMetrics} dateRange={dateRange} />
               <LatePlatformBreakdown platforms={platformTotals} totalFollowers={totalFollowers} followerStats={followerStats} />
             </>
           )}
@@ -485,7 +495,7 @@ function LateAnalyticsContent() {
             <EngagementTabSkeleton />
           ) : (
             <>
-              <LateMetricsChart dailyMetrics={dailyMetrics} />
+              <LateMetricsChart dailyMetrics={dailyMetrics} dateRange={dateRange} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <LateBestTimeHeatmap bestTimes={bestTimes} />
                 <LateTopPosts posts={posts} />
@@ -531,7 +541,7 @@ function LateAnalyticsContent() {
               {runnablePosts.length > 0 ? (
                 <>
                   <LateMetricCards totals={runnableTotals} totalFollowers={totalFollowers} />
-                  <LateMetricsChart dailyMetrics={runnableDailyMetrics} />
+                  <LateMetricsChart dailyMetrics={runnableDailyMetrics} dateRange={dateRange} />
                   <LateAccountViewsChart accounts={runnableAccounts} posts={runnablePosts} dateRange={dateRange} />
                   <LateAccountsTable followerStats={runnableFollowerStats} posts={runnablePosts} />
                   <LateContentTable posts={runnablePosts} accounts={runnableAccounts} />

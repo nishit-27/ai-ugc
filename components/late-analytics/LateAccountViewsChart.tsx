@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
 import { Search, ChevronDown, Check } from 'lucide-react';
+import { getDateKeyInTimeZone, getTodayDateKey, listDateKeysInRange } from '@/lib/dateUtils';
 
 type Account = { id: string; platform: string; username: string; displayName?: string };
 type PostAnalytics = {
@@ -50,10 +51,6 @@ function SearchableModelSelect({ value, accounts, onChange }: { value: string; a
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  useEffect(() => {
-    if (open) { setSearch(''); setTimeout(() => inputRef.current?.focus(), 0); }
-  }, [open]);
-
   const filtered = useMemo(() => {
     if (!search.trim()) return accounts;
     const q = search.trim().toLowerCase();
@@ -71,7 +68,14 @@ function SearchableModelSelect({ value, accounts, onChange }: { value: string; a
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          const nextOpen = !open;
+          setOpen(nextOpen);
+          if (nextOpen) {
+            setSearch('');
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }
+        }}
         className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-sm text-[var(--text-primary)] outline-none cursor-pointer hover:border-[var(--primary)] transition-colors min-w-[180px]"
       >
         <span className="flex-1 text-left truncate">{label}</span>
@@ -132,10 +136,21 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
     return Array.from(map.values());
   }, [accounts]);
 
+  const effectiveSelectedUsername = useMemo(() => {
+    if (uniqueAccounts.length === 0) return '';
+    if (!selectedUsername) return uniqueAccounts[0].username;
+
+    const hasSelectedAccount = uniqueAccounts.some(
+      (account) => account.username.toLowerCase() === selectedUsername.toLowerCase()
+    );
+
+    return hasSelectedAccount ? selectedUsername : uniqueAccounts[0].username;
+  }, [selectedUsername, uniqueAccounts]);
+
   // Build a set of ALL accountIds for the selected username
   const selectedAccountIds = useMemo(() => {
-    if (!selectedUsername) return new Set<string>();
-    const uname = selectedUsername.toLowerCase();
+    if (!effectiveSelectedUsername) return new Set<string>();
+    const uname = effectiveSelectedUsername.toLowerCase();
     const ids = new Set<string>();
     for (const a of accounts) {
       if (a.username.toLowerCase() === uname && (!platformFilter || a.platform === platformFilter)) {
@@ -143,41 +158,25 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
       }
     }
     return ids;
-  }, [accounts, selectedUsername, platformFilter]);
+  }, [accounts, effectiveSelectedUsername, platformFilter]);
 
   // Platforms available for selected account
   const availablePlatforms = useMemo(() => {
-    if (!selectedUsername) return [];
-    const uname = selectedUsername.toLowerCase();
+    if (!effectiveSelectedUsername) return [];
+    const uname = effectiveSelectedUsername.toLowerCase();
     const platforms = new Set<string>();
     for (const a of accounts) {
       if (a.username.toLowerCase() === uname) platforms.add(a.platform);
     }
     return Array.from(platforms);
-  }, [accounts, selectedUsername]);
+  }, [accounts, effectiveSelectedUsername]);
 
-  // Auto-select first account
-  useEffect(() => {
-    if (uniqueAccounts.length === 0) {
-      if (selectedUsername) setSelectedUsername('');
-      return;
-    }
-
-    const hasSelectedAccount = uniqueAccounts.some(
-      account => account.username.toLowerCase() === selectedUsername.toLowerCase()
-    );
-
-    if (!selectedUsername || !hasSelectedAccount) {
-      setSelectedUsername(uniqueAccounts[0].username);
-    }
-  }, [uniqueAccounts, selectedUsername]);
-
-  const selectedAccount = uniqueAccounts.find(a => a.username.toLowerCase() === selectedUsername?.toLowerCase());
+  const selectedAccount = uniqueAccounts.find(a => a.username.toLowerCase() === effectiveSelectedUsername.toLowerCase());
 
   // Match posts and aggregate daily
   const { chartData, totalViews, totalLikes, totalPosts } = useMemo(() => {
-    if (!selectedUsername) return { chartData: [], totalViews: 0, totalLikes: 0, totalPosts: 0 };
-    const uname = selectedUsername.toLowerCase();
+    if (!effectiveSelectedUsername) return { chartData: [], totalViews: 0, totalLikes: 0, totalPosts: 0 };
+    const uname = effectiveSelectedUsername.toLowerCase();
 
     const dayMap = new Map<string, { views: number; likes: number; comments: number; shares: number; posts: number }>();
     const seenPostIds = new Set<string>();
@@ -188,45 +187,41 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
       let matched = false;
       for (const p of (post.platforms || [])) {
         const matchById = selectedAccountIds.has(p.accountId);
-        const matchByName = (p.accountUsername || (p as any).username || '').toLowerCase() === uname;
+        const matchByName = (p.accountUsername || '').toLowerCase() === uname;
         const platformOk = !platformFilter || p.platform === platformFilter;
         if ((matchById || matchByName) && platformOk) { matched = true; break; }
       }
       if (!matched) continue;
       seenPostIds.add(post.postId);
 
-      const dateStr = post.publishedAt ? post.publishedAt.split('T')[0] : null;
+      const dateStr = post.publishedAt ? getDateKeyInTimeZone(post.publishedAt) : null;
       if (!dateStr) continue;
 
       if (!dayMap.has(dateStr)) dayMap.set(dateStr, { views: 0, likes: 0, comments: 0, shares: 0, posts: 0 });
       const day = dayMap.get(dateStr)!;
-      const a = post.analytics || {};
-      day.views += (a as any).views || 0;
-      day.likes += (a as any).likes || 0;
-      day.comments += (a as any).comments || 0;
-      day.shares += (a as any).shares || 0;
+      const analytics = post.analytics;
+      day.views += analytics.views || 0;
+      day.likes += analytics.likes || 0;
+      day.comments += analytics.comments || 0;
+      day.shares += analytics.shares || 0;
       day.posts += 1;
     }
 
     // Fill all dates in range
     const from = dateRange?.fromDate || (dayMap.size > 0 ? Array.from(dayMap.keys()).sort()[0] : null);
-    const to = dateRange?.toDate || new Date().toISOString().split('T')[0];
+    const to = dateRange?.toDate || getTodayDateKey();
     if (!from) return { chartData: [], totalViews: 0, totalLikes: 0, totalPosts: 0 };
 
     const result: DayEntry[] = [];
-    const cursor = new Date(from + 'T00:00:00');
-    const endDate = new Date(to + 'T00:00:00');
-    while (cursor <= endDate) {
-      const dateStr = cursor.toISOString().split('T')[0];
+    for (const dateStr of listDateKeysInRange(from, to)) {
       const e = dayMap.get(dateStr);
       result.push({ date: dateStr, views: e?.views || 0, likes: e?.likes || 0, comments: e?.comments || 0, shares: e?.shares || 0, posts: e?.posts || 0 });
-      cursor.setDate(cursor.getDate() + 1);
     }
 
     let tv = 0, tl = 0, tp = 0;
     for (const d of result) { tv += d.views; tl += d.likes; tp += d.posts; }
     return { chartData: result, totalViews: tv, totalLikes: tl, totalPosts: tp };
-  }, [posts, selectedUsername, selectedAccountIds, platformFilter, dateRange]);
+  }, [posts, effectiveSelectedUsername, selectedAccountIds, platformFilter, dateRange]);
 
   const barColor = PLATFORM_COLORS[platformFilter || selectedAccount?.platform || ''] || '#3b82f6';
   const Icon = PLATFORM_ICONS[platformFilter || selectedAccount?.platform || ''];
@@ -252,7 +247,7 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
         </div>
         <div className="flex items-center gap-2">
           <SearchableModelSelect
-            value={selectedUsername}
+            value={effectiveSelectedUsername}
             accounts={uniqueAccounts}
             onChange={v => { setSelectedUsername(v); setPlatformFilter(''); }}
           />
@@ -262,7 +257,7 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
               <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
             ))}
           </select>
-          <select className={selectClass} style={chevronStyle} value={metric} onChange={e => setMetric(e.target.value as any)}>
+          <select className={selectClass} style={chevronStyle} value={metric} onChange={e => setMetric(e.target.value as 'views' | 'likes' | 'posts')}>
             <option value="views">Views</option>
             <option value="likes">Likes</option>
             <option value="posts">Posts Published</option>
@@ -284,10 +279,6 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
             <Tooltip
               contentStyle={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}
               labelFormatter={v => new Date(v + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-              formatter={(_: any, __: any, props: any) => {
-                const d = props.payload;
-                return [];
-              }}
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
                 const d = payload[0].payload as DayEntry;
@@ -318,7 +309,7 @@ export default function LateAccountViewsChart({ accounts, posts, dateRange }: Pr
         </ResponsiveContainer>
       ) : (
         <div className="flex items-center justify-center h-[280px] text-sm text-[var(--text-muted)]">
-          {selectedUsername ? 'No posts for this account in the selected period' : 'Select an account to view metrics'}
+          {effectiveSelectedUsername ? 'No posts for this account in the selected period' : 'Select an account to view metrics'}
         </div>
       )}
 

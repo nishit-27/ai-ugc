@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { getDateKeyInTimeZone, getTodayDateKey, shiftDateKey } from '@/lib/dateUtils';
 
 type DailyMetric = {
   date: string;
@@ -37,7 +38,14 @@ type PostAnalytics = {
   platformPostUrl?: string;
   thumbnailUrl?: string;
   variableValues?: Record<string, string>;
-  platforms: { platform: string; accountId: string; accountUsername: string; analytics?: Record<string, number> }[];
+  platforms: {
+    platform: string;
+    accountId: string;
+    accountUsername: string;
+    username?: string;
+    displayName?: string;
+    analytics?: Record<string, number>;
+  }[];
   analytics: {
     impressions: number;
     reach: number;
@@ -81,6 +89,69 @@ type Filters = {
   customTo?: string;
 };
 
+type RawPostAnalytics = {
+  _id?: string;
+  postId?: string;
+  content?: string;
+  publishedAt?: string;
+  status?: string;
+  platformPostUrl?: string;
+  thumbnailUrl?: string;
+  variableValues?: Record<string, string>;
+  platforms?: PostAnalytics['platforms'];
+  analytics?: Partial<PostAnalytics['analytics']>;
+};
+
+type RawFollowerStat = {
+  _id?: string;
+  accountId?: string;
+  platform?: string;
+  username?: string;
+  displayName?: string;
+  currentFollowers?: number;
+  followerCount?: number;
+  growth?: number;
+  followerGrowth?: number;
+  growthPercentage?: number;
+  growthRate?: number;
+  dataPoints?: number;
+};
+
+type RawBestTimeSlot = {
+  day_of_week?: number;
+  dayOfWeek?: number;
+  day?: number;
+  hour?: number;
+  time?: number;
+  avg_engagement?: number;
+  avgEngagement?: number;
+  engagement?: number;
+  post_count?: number;
+  postCount?: number;
+  posts?: number;
+};
+
+type RawPostingFrequency = {
+  platform?: string;
+  posts_per_week?: number;
+  postsPerWeek?: number;
+  avg_engagement_rate?: number;
+  averageEngagementRate?: number;
+  avg_engagement?: number;
+  averageEngagement?: number;
+  weeks_count?: number;
+  weeksCount?: number;
+};
+
+type RawContentDecayBucket = {
+  bucket_label?: string;
+  label?: string;
+  avg_pct_of_final?: number;
+  percentage?: number;
+  post_count?: number;
+  postCount?: number;
+};
+
 // Module-level cache so navigating away and back doesn't re-fetch
 let _allPostsCache: PostAnalytics[] = [];
 let _overviewCache: { totalPosts: number; publishedPosts: number; scheduledPosts: number; lastSync: string | null } | null = null;
@@ -88,6 +159,7 @@ let _accountsCache: { id: string; platform: string; username: string; displayNam
 let _cacheTime = 0;
 let _cachedDateKey = '';
 const CACHE_TTL = 5 * 60_000; // 5 minutes
+const ANALYTICS_START_DATE = '2020-01-01';
 
 export function useLateAnalytics() {
   const [allPosts, setAllPosts] = useState<PostAnalytics[]>(_allPostsCache);
@@ -105,23 +177,30 @@ export function useLateAnalytics() {
   const postsLoaded = useRef(_allPostsCache.length > 0);
 
   const getDateRange = useCallback(() => {
+    const today = getTodayDateKey();
+
     if (filters.dateRange === 'custom') {
       return {
-        fromDate: filters.customFrom || new Date(2020, 0, 1).toISOString().split('T')[0],
-        toDate: filters.customTo || new Date().toISOString().split('T')[0],
+        fromDate: filters.customFrom || ANALYTICS_START_DATE,
+        toDate: filters.customTo || today,
       };
     }
-    const end = new Date();
-    const start = new Date();
-    if (filters.dateRange === '7d') start.setDate(end.getDate() - 7);
-    else if (filters.dateRange === '30d') start.setDate(end.getDate() - 30);
-    else if (filters.dateRange === '90d') start.setDate(end.getDate() - 90);
-    else if (filters.dateRange === '180d') start.setDate(end.getDate() - 180);
-    else if (filters.dateRange === '365d') start.setDate(end.getDate() - 365);
-    else if (filters.dateRange === 'all') start.setFullYear(2020, 0, 1);
+
+    const presetDays = filters.dateRange === '7d'
+      ? 7
+      : filters.dateRange === '30d'
+        ? 30
+        : filters.dateRange === '90d'
+          ? 90
+          : filters.dateRange === '180d'
+            ? 180
+            : filters.dateRange === '365d'
+              ? 365
+              : 0;
+
     return {
-      fromDate: start.toISOString().split('T')[0],
-      toDate: end.toISOString().split('T')[0],
+      fromDate: presetDays > 0 ? shiftDateKey(today, -(presetDays - 1)) : ANALYTICS_START_DATE,
+      toDate: today,
     };
   }, [filters.dateRange, filters.customFrom, filters.customTo]);
 
@@ -142,19 +221,36 @@ export function useLateAnalytics() {
     setLoading(!postsLoaded.current);
     try {
       const res = await fetch(`/api/late-analytics?sortBy=date&order=desc&fromDate=${fromDate}&toDate=${toDate}`, { cache: 'no-store' });
-      const data = res.ok ? await res.json() : { posts: [] };
+      const data = res.ok
+        ? await res.json() as { posts?: RawPostAnalytics[]; overview?: { totalPosts: number; publishedPosts: number; scheduledPosts: number; lastSync: string | null } | null }
+        : { posts: [] as RawPostAnalytics[] };
       const rawPosts = data.posts || [];
-      const mapped: PostAnalytics[] = rawPosts.map((p: any) => ({
-        postId: p._id || p.postId,
-        content: p.content,
-        publishedAt: p.publishedAt,
-        status: p.status,
-        platformPostUrl: p.platformPostUrl,
-        thumbnailUrl: p.thumbnailUrl,
-        variableValues: p.variableValues || {},
-        platforms: p.platforms || [],
-        analytics: p.analytics || {},
-      }));
+      const mapped: PostAnalytics[] = rawPosts.flatMap((p) => {
+        const postId = p._id || p.postId;
+        if (!postId) return [];
+
+        return [{
+          postId,
+          content: p.content || '',
+          publishedAt: p.publishedAt || '',
+          status: p.status,
+          platformPostUrl: p.platformPostUrl,
+          thumbnailUrl: p.thumbnailUrl,
+          variableValues: p.variableValues || {},
+          platforms: p.platforms || [],
+          analytics: {
+            impressions: p.analytics?.impressions || 0,
+            reach: p.analytics?.reach || 0,
+            likes: p.analytics?.likes || 0,
+            comments: p.analytics?.comments || 0,
+            shares: p.analytics?.shares || 0,
+            saves: p.analytics?.saves || 0,
+            clicks: p.analytics?.clicks || 0,
+            views: p.analytics?.views || 0,
+            engagementRate: p.analytics?.engagementRate || 0,
+          },
+        }];
+      });
 
       _allPostsCache = mapped;
       _overviewCache = data.overview || null;
@@ -186,7 +282,6 @@ export function useLateAnalytics() {
     } finally {
       setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getDateRange]);
 
   // Light fetch: daily-metrics, follower-stats, best-time, etc. (depends on filters)
@@ -210,28 +305,33 @@ export function useLateAnalytics() {
       }
 
       if (followerRes.status === 'fulfilled' && !followerRes.value.error) {
-        const rawAccounts = followerRes.value.accounts || [];
-        setFollowerStats(rawAccounts.map((a: any) => ({
-          accountId: a._id || a.accountId,
-          platform: a.platform,
-          username: a.username,
-          displayName: a.displayName,
-          followerCount: a.currentFollowers ?? a.followerCount ?? 0,
-          followerGrowth: a.growth ?? a.followerGrowth ?? 0,
-          growthRate: a.growthPercentage ?? a.growthRate ?? 0,
-          dataPoints: a.dataPoints ?? 0,
-        })));
+        const rawAccounts = (followerRes.value.accounts || []) as RawFollowerStat[];
+        setFollowerStats(rawAccounts.flatMap((a) => {
+          const accountId = a._id || a.accountId;
+          if (!accountId) return [];
+
+          return [{
+            accountId,
+            platform: a.platform || '',
+            username: a.username || '',
+            displayName: a.displayName,
+            followerCount: a.currentFollowers ?? a.followerCount ?? 0,
+            followerGrowth: a.growth ?? a.followerGrowth ?? 0,
+            growthRate: a.growthPercentage ?? a.growthRate ?? 0,
+            dataPoints: a.dataPoints ?? 0,
+          }];
+        }));
       }
 
       if (bestTimeRes.status === 'fulfilled' && !bestTimeRes.value.error) {
-        const rawSlots = bestTimeRes.value.slots || [];
-        const mapped = rawSlots.map((s: any) => ({
+        const rawSlots = (bestTimeRes.value.slots || []) as RawBestTimeSlot[];
+        const mapped = rawSlots.map((s) => ({
           dayOfWeek: s.day_of_week ?? s.dayOfWeek ?? s.day ?? 0,
           hour: s.hour ?? s.time ?? 0,
           avgEngagement: s.avg_engagement ?? s.avgEngagement ?? s.engagement ?? 0,
           postCount: s.post_count ?? s.postCount ?? s.posts ?? 0,
         }));
-        const hasEngagement = mapped.some((s: any) => s.avgEngagement > 0);
+        const hasEngagement = mapped.some((s) => s.avgEngagement > 0);
         if (hasEngagement) {
           setBestTimes(mapped);
         } else {
@@ -245,8 +345,8 @@ export function useLateAnalytics() {
             const key = `${dow}-${hr}`;
             if (!slotMap.has(key)) slotMap.set(key, { dayOfWeek: dow, hour: hr, totalEng: 0, count: 0 });
             const slot = slotMap.get(key)!;
-            const a = p.analytics || {} as any;
-            slot.totalEng += (a.likes || 0) + (a.comments || 0) + (a.shares || 0);
+            const analytics = p.analytics;
+            slot.totalEng += (analytics.likes || 0) + (analytics.comments || 0) + (analytics.shares || 0);
             slot.count += 1;
           }
           setBestTimes(Array.from(slotMap.values()).map(s => ({
@@ -259,9 +359,9 @@ export function useLateAnalytics() {
       }
 
       if (freqRes.status === 'fulfilled' && !freqRes.value.error) {
-        const rawFreq = freqRes.value.frequency || [];
-        setPostingFrequency(rawFreq.map((f: any) => ({
-          platform: f.platform,
+        const rawFreq = (freqRes.value.frequency || []) as RawPostingFrequency[];
+        setPostingFrequency(rawFreq.map((f) => ({
+          platform: f.platform || '',
           postsPerWeek: f.posts_per_week ?? f.postsPerWeek ?? 0,
           averageEngagementRate: f.avg_engagement_rate ?? f.averageEngagementRate ?? 0,
           averageEngagement: f.avg_engagement ?? f.averageEngagement ?? 0,
@@ -270,10 +370,10 @@ export function useLateAnalytics() {
       }
 
       if (decayRes.status === 'fulfilled' && !decayRes.value.error) {
-        const rawBuckets = decayRes.value.decay || decayRes.value.buckets || [];
+        const rawBuckets = (decayRes.value.decay || decayRes.value.buckets || []) as RawContentDecayBucket[];
         const isBucketed = rawBuckets.length > 0 && (rawBuckets[0].bucket_label || rawBuckets[0].label);
         if (isBucketed) {
-          setContentDecay(rawBuckets.map((b: any) => ({
+          setContentDecay(rawBuckets.map((b) => ({
             label: b.bucket_label ?? b.label ?? '',
             percentage: Math.round(b.avg_pct_of_final ?? b.percentage ?? 0),
             postCount: b.post_count ?? b.postCount ?? 0,
@@ -295,7 +395,7 @@ export function useLateAnalytics() {
           for (const p of allPosts) {
             if (!p.publishedAt) continue;
             const ageHours = (now - new Date(p.publishedAt).getTime()) / 3600000;
-            const views = (p.analytics as any)?.views || 0;
+            const views = p.analytics.views || 0;
             grandTotalViews += views;
             for (let i = 0; i < bucketDefs.length; i++) {
               if (ageHours <= bucketDefs[i].maxHours) {
@@ -317,7 +417,6 @@ export function useLateAnalytics() {
     } finally {
       setRefreshing(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getDateRange, filters.platform, allPosts]);
 
   // Client-side filtered + sorted posts (instant, no API call)
@@ -328,7 +427,7 @@ export function useLateAnalytics() {
     const { fromDate, toDate } = getDateRange();
     result = result.filter(p => {
       if (!p.publishedAt) return false;
-      const d = p.publishedAt.split('T')[0];
+      const d = getDateKeyInTimeZone(p.publishedAt);
       return d >= fromDate && d <= toDate;
     });
 
@@ -352,8 +451,8 @@ export function useLateAnalytics() {
       sorted.sort((a, b) => (a.publishedAt || '').localeCompare(b.publishedAt || ''));
     } else if (filters.sortBy === 'engagement') {
       sorted.sort((a, b) => {
-        const ae = (a.analytics as any)?.engagementRate || 0;
-        const be = (b.analytics as any)?.engagementRate || 0;
+        const ae = a.analytics.engagementRate || 0;
+        const be = b.analytics.engagementRate || 0;
         return be - ae;
       });
     } else {

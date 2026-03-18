@@ -49,7 +49,7 @@ export async function lateApiRequest<T = unknown>(
 
   const effectiveApiKey = apiKey || config.LATE_API_KEYS[0];
   if (!effectiveApiKey) {
-    throw new LateApiError('LATE_API_KEYS is not configured', 0);
+    throw new LateApiError('ZERNIO_API_KEY / ZERNIO_API_KEYS is not configured', 0);
   }
 
   let lastError: Error | null = null;
@@ -92,7 +92,7 @@ export async function lateApiRequest<T = unknown>(
         }
 
         const apiError = new LateApiError(
-          `Late API ${response.status}: ${typeof errorBody === 'string' ? errorBody : JSON.stringify(errorBody)}`,
+          `Zernio API ${response.status}: ${typeof errorBody === 'string' ? errorBody : JSON.stringify(errorBody)}`,
           response.status,
           errorBody,
           retryAfter ? parseInt(retryAfter, 10) : null,
@@ -116,7 +116,7 @@ export async function lateApiRequest<T = unknown>(
       if (error instanceof LateApiError) throw error;
 
       if (error instanceof Error && error.name === 'AbortError') {
-        lastError = new LateApiError(`Late API request timed out after ${timeout}ms`, 0);
+        lastError = new LateApiError(`Zernio API request timed out after ${timeout}ms`, 0);
         if (attempt < retries) {
           continue;
         }
@@ -134,5 +134,5 @@ export async function lateApiRequest<T = unknown>(
     }
   }
 
-  throw lastError || new Error('Late API request failed after all retries');
+  throw lastError || new Error('Zernio API request failed after all retries');
 }

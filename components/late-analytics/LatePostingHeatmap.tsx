@@ -1,23 +1,24 @@
 'use client';
 
+import { getDateKeyInTimeZone, getTodayDateKey, shiftDateKey } from '@/lib/dateUtils';
+
 type Post = { publishedAt: string };
 
 export default function LatePostingHeatmap({ posts }: { posts: Post[] }) {
   const countByDate = new Map<string, number>();
   for (const p of posts) {
     if (!p.publishedAt) continue;
-    const date = new Date(p.publishedAt).toISOString().split('T')[0];
+    const date = getDateKeyInTimeZone(p.publishedAt);
     countByDate.set(date, (countByDate.get(date) || 0) + 1);
   }
 
   // Generate last 30 weeks (210 days) to fill a wide grid like GetLate
-  const today = new Date();
+  const today = getTodayDateKey();
   const totalDays = 7 * 30; // 30 weeks
   const cells: { date: string; count: number; dayOfWeek: number }[] = [];
   for (let i = totalDays - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const dateStr = d.toISOString().split('T')[0];
+    const dateStr = shiftDateKey(today, -i);
+    const d = new Date(`${dateStr}T00:00:00`);
     cells.push({ date: dateStr, count: countByDate.get(dateStr) || 0, dayOfWeek: d.getDay() });
   }
 

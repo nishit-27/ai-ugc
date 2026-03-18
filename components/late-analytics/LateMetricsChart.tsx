@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { listDateKeysInRange } from '@/lib/dateUtils';
+import LateChartTooltip from './LateChartTooltip';
 
 type DailyMetric = {
   date: string;
@@ -28,13 +30,23 @@ const METRICS = [
   { key: 'clicks', label: 'Clicks', icon: '\uD83D\uDDB1\uFE0F', color: '#64748b' },
 ] as const;
 
+type MetricKey = (typeof METRICS)[number]['key'];
+type MetricMap = Record<MetricKey, number>;
+type ChartDatum = MetricMap & { date: string };
+
 function formatNum(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
   return String(n);
 }
 
-export default function LateMetricsChart({ dailyMetrics }: { dailyMetrics: DailyMetric[] }) {
+export default function LateMetricsChart({
+  dailyMetrics,
+  dateRange,
+}: {
+  dailyMetrics: DailyMetric[];
+  dateRange?: { fromDate: string; toDate: string };
+}) {
   const [activeMetrics, setActiveMetrics] = useState<Set<string>>(new Set(['likes', 'comments', 'views', 'impressions']));
 
   const toggleMetric = (key: string) => {
@@ -52,8 +64,8 @@ export default function LateMetricsChart({ dailyMetrics }: { dailyMetrics: Daily
     for (const m of METRICS) t[m.key] = 0;
 
     for (const day of dailyMetrics) {
-      const dm = day.metrics || {} as Record<string, number>;
-      for (const m of METRICS) t[m.key] += (dm as any)[m.key] || 0;
+      const dm = day.metrics;
+      for (const m of METRICS) t[m.key] += dm[m.key] || 0;
     }
 
     // Compute delta: compare first half vs second half
@@ -65,9 +77,9 @@ export default function LateMetricsChart({ dailyMetrics }: { dailyMetrics: Daily
       for (const m of METRICS) { firstHalf[m.key] = 0; secondHalf[m.key] = 0; }
 
       for (let i = 0; i < dailyMetrics.length; i++) {
-        const dm = dailyMetrics[i].metrics || {} as Record<string, number>;
+        const dm = dailyMetrics[i].metrics;
         const target = i < mid ? firstHalf : secondHalf;
-        for (const m of METRICS) target[m.key] += (dm as any)[m.key] || 0;
+        for (const m of METRICS) target[m.key] += dm[m.key] || 0;
       }
 
       for (const m of METRICS) {
@@ -93,28 +105,25 @@ export default function LateMetricsChart({ dailyMetrics }: { dailyMetrics: Daily
     if (dailyMetrics.length === 0) return [];
 
     const sorted = [...dailyMetrics].sort((a, b) => a.date.localeCompare(b.date));
-    const dayMap = new Map<string, Record<string, number>>();
+    const dayMap = new Map<string, MetricMap>();
     for (const day of sorted) {
-      const dm = day.metrics || {} as Record<string, number>;
-      const entry: Record<string, number> = {};
-      for (const m of METRICS) entry[m.key] = (dm as any)[m.key] || 0;
+      const entry = {} as MetricMap;
+      for (const m of METRICS) entry[m.key] = day.metrics[m.key] || 0;
       dayMap.set(day.date, entry);
     }
 
     // Fill gaps
-    const result: (Record<string, number> & { date: string })[] = [];
-    const cursor = new Date(sorted[0].date + 'T00:00:00');
-    const end = new Date(sorted[sorted.length - 1].date + 'T00:00:00');
-    while (cursor <= end) {
-      const dateStr = cursor.toISOString().split('T')[0];
+    const fillFrom = dateRange?.fromDate || sorted[0].date;
+    const fillTo = dateRange?.toDate || sorted[sorted.length - 1].date;
+    const result: ChartDatum[] = [];
+    for (const dateStr of listDateKeysInRange(fillFrom, fillTo)) {
       const existing = dayMap.get(dateStr);
-      const entry: Record<string, any> = { date: dateStr };
+      const entry = { date: dateStr } as ChartDatum;
       for (const m of METRICS) entry[m.key] = existing?.[m.key] || 0;
-      result.push(entry as any);
-      cursor.setDate(cursor.getDate() + 1);
+      result.push(entry);
     }
     return result;
-  }, [dailyMetrics]);
+  }, [dailyMetrics, dateRange]);
 
   if (chartData.length === 0) {
     return (
@@ -193,9 +202,14 @@ export default function LateMetricsChart({ dailyMetrics }: { dailyMetrics: Daily
           />
           <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickFormatter={v => formatNum(v)} />
           <Tooltip
-            contentStyle={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}
-            labelFormatter={v => new Date(v + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-            formatter={(value: number, name: string) => [formatNum(value), name.charAt(0).toUpperCase() + name.slice(1)]}
+            wrapperStyle={{ outline: 'none', zIndex: 20 }}
+            cursor={{ fill: 'rgba(113, 113, 122, 0.14)' }}
+            content={(
+              <LateChartTooltip
+                formatLabel={(value) => new Date(value + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                formatValue={(value) => formatNum(value)}
+              />
+            )}
           />
           {activeArr.map((m, i) => (
             <Bar

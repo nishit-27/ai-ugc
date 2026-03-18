@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { getCreatedDateDisplay, getScheduledDateDisplay } from '../dateUtils';
+import {
+  getCreatedDateDisplay,
+  getDateKeyInTimeZone,
+  getScheduledDateDisplay,
+  getTodayDateKey,
+  listDateKeysInRange,
+  shiftDateKey,
+} from '../dateUtils';
 
 describe('getCreatedDateDisplay', () => {
   it('returns "-" for undefined input', () => {
@@ -48,5 +55,30 @@ describe('getScheduledDateDisplay', () => {
     const istResult = getScheduledDateDisplay('2024-06-15T23:30:00Z', 'Asia/Kolkata');
     // IST is UTC+5:30, so 23:30 UTC = 05:00 IST next day
     expect(utcResult).not.toBe(istResult);
+  });
+});
+
+describe('date key helpers', () => {
+  it('builds a timezone-aware day key', () => {
+    expect(getDateKeyInTimeZone('2024-06-15T23:30:00Z', 'UTC')).toBe('2024-06-15');
+    expect(getDateKeyInTimeZone('2024-06-15T23:30:00Z', 'Asia/Kolkata')).toBe('2024-06-16');
+  });
+
+  it('shifts day keys without timezone drift', () => {
+    expect(shiftDateKey('2026-03-18', -6)).toBe('2026-03-12');
+    expect(shiftDateKey('2026-03-18', 1)).toBe('2026-03-19');
+  });
+
+  it('lists every day in an inclusive range', () => {
+    expect(listDateKeysInRange('2026-03-16', '2026-03-18')).toEqual([
+      '2026-03-16',
+      '2026-03-17',
+      '2026-03-18',
+    ]);
+  });
+
+  it('returns today in the requested timezone', () => {
+    const today = getTodayDateKey('Asia/Kolkata');
+    expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

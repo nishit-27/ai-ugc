@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import LateChartTooltip from './LateChartTooltip';
 
 type DailyMetric = {
   date: string;
@@ -79,9 +80,12 @@ export default function LateEngagementChart({ dailyMetrics }: { dailyMetrics: Da
           <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickFormatter={v => new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
           <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v} />
           <Tooltip
-            contentStyle={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}
-            labelFormatter={v => new Date(v).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-            formatter={(value: number) => value.toLocaleString()}
+            wrapperStyle={{ outline: 'none', zIndex: 20 }}
+            content={(
+              <LateChartTooltip
+                formatLabel={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+              />
+            )}
           />
           {METRIC_CONFIG.filter(m => activeMetrics.has(m.key)).map(m => (
             <Line key={m.key} type="monotone" dataKey={m.key} stroke={m.color} strokeWidth={2} dot={false} />

@@ -12,7 +12,9 @@
   --surface: rgba(255, 255, 255, 0.8);
   --text: #18181b;
   --text-muted: #71717a;
+  --text-primary: #18181b;
   --border: rgba(0, 0, 0, 0.06);
+  --border-primary: rgba(0, 0, 0, 0.06);
   --primary: #d4698e;
   --primary-foreground: #ffffff;
   --primary-hover: #c4507a;
@@ -35,6 +37,9 @@
   --card-foreground: #18181b;
   --popover: #ffffff;
   --popover-foreground: #18181b;
+  --bg-primary: #ffffff;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f4f4f5;
   --secondary: #fdf2f8;
   --secondary-foreground: #18181b;
   --muted: #f4f4f5;
@@ -177,7 +182,9 @@ body {
   --surface: rgba(255, 255, 255, 0.04);
   --text: #fafafa;
   --text-muted: #a1a1aa;
+  --text-primary: #fafafa;
   --border: rgba(255, 255, 255, 0.04);
+  --border-primary: rgba(255, 255, 255, 0.08);
   --primary: #e8729a;
   --primary-foreground: #ffffff;
   --primary-hover: #d4608a;
@@ -185,6 +192,9 @@ body {
   --card-foreground: #fafafa;
   --popover: #0a0a0a;
   --popover-foreground: #fafafa;
+  --bg-primary: #212121;
+  --bg-secondary: #262626;
+  --bg-tertiary: #303030;
   --secondary: rgba(255, 255, 255, 0.06);
   --secondary-foreground: #fafafa;
   --muted: rgba(255, 255, 255, 0.06);

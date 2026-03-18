@@ -2,6 +2,8 @@
 
 import { useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { getTodayDateKey, listDateKeysInRange } from '@/lib/dateUtils';
+import LateChartTooltip from './LateChartTooltip';
 
 type DailyMetric = {
   date: string;
@@ -11,14 +13,15 @@ type DailyMetric = {
 
 type Props = {
   dailyMetrics: DailyMetric[];
+  dateRange?: { fromDate: string; toDate: string };
 };
 
-export default function LatePostingActivity({ dailyMetrics }: Props) {
+export default function LatePostingActivity({ dailyMetrics, dateRange }: Props) {
   const { chartData, totalPosts, peak } = useMemo(() => {
     if (dailyMetrics.length === 0) return { chartData: [], totalPosts: 0, peak: { date: '', posts: 0 } };
 
     const sorted = [...dailyMetrics].sort((a, b) => a.date.localeCompare(b.date));
-    const nowStr = new Date().toISOString().split('T')[0];
+    const nowStr = getTodayDateKey();
 
     // Build date map
     const dayMap = new Map<string, number>();
@@ -28,12 +31,10 @@ export default function LatePostingActivity({ dailyMetrics }: Props) {
 
     // Fill missing dates across the full range
     const data: { date: string; posts: number; isToday: boolean }[] = [];
-    const cursor = new Date(sorted[0].date + 'T00:00:00');
-    const end = new Date(sorted[sorted.length - 1].date + 'T00:00:00');
-    while (cursor <= end) {
-      const dateStr = cursor.toISOString().split('T')[0];
+    const fillFrom = dateRange?.fromDate || sorted[0].date;
+    const fillTo = dateRange?.toDate || sorted[sorted.length - 1].date;
+    for (const dateStr of listDateKeysInRange(fillFrom, fillTo)) {
       data.push({ date: dateStr, posts: dayMap.get(dateStr) || 0, isToday: dateStr === nowStr });
-      cursor.setDate(cursor.getDate() + 1);
     }
 
     let total = 0;
@@ -44,7 +45,7 @@ export default function LatePostingActivity({ dailyMetrics }: Props) {
     }
 
     return { chartData: data, totalPosts: total, peak: peakDay };
-  }, [dailyMetrics]);
+  }, [dailyMetrics, dateRange]);
 
   const totalDays = chartData.length;
 
@@ -86,13 +87,18 @@ export default function LatePostingActivity({ dailyMetrics }: Props) {
           <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickFormatter={formatDateLabel} interval={tickInterval} />
           <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} allowDecimals={false} />
           <Tooltip
-            contentStyle={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}
-            labelFormatter={v => new Date(v + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-            formatter={(value: number) => [value, 'Posts']}
+            wrapperStyle={{ outline: 'none', zIndex: 20 }}
+            cursor={{ fill: 'rgba(113, 113, 122, 0.14)' }}
+            content={(
+              <LateChartTooltip
+                formatLabel={(value) => new Date(value + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                formatName={() => 'Posts'}
+              />
+            )}
           />
           <Bar dataKey="posts" radius={[4, 4, 0, 0]} fill="#f59e0b" />
           {chartData.some(d => d.isToday) && (
-            <ReferenceLine x={new Date().toISOString().split('T')[0]} stroke="var(--primary)" strokeDasharray="4 4" />
+            <ReferenceLine x={getTodayDateKey()} stroke="var(--primary)" strokeDasharray="4 4" />
           )}
         </BarChart>
       </ResponsiveContainer>

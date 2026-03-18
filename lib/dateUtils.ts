@@ -1,3 +1,76 @@
+export const DEFAULT_APP_TIMEZONE = 'Asia/Kolkata';
+
+function padTwo(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function parseDateKey(dateKey: string): { year: number; month: number; day: number } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!match) return null;
+
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+  };
+}
+
+function formatUtcDate(date: Date): string {
+  return `${date.getUTCFullYear()}-${padTwo(date.getUTCMonth() + 1)}-${padTwo(date.getUTCDate())}`;
+}
+
+export function getDateKeyInTimeZone(
+  value: Date | string | number,
+  timezone = DEFAULT_APP_TIMEZONE
+): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+
+  if (!year || !month || !day) return '';
+  return `${year}-${month}-${day}`;
+}
+
+export function getTodayDateKey(timezone = DEFAULT_APP_TIMEZONE): string {
+  return getDateKeyInTimeZone(new Date(), timezone);
+}
+
+export function shiftDateKey(dateKey: string, days: number): string {
+  const parsed = parseDateKey(dateKey);
+  if (!parsed) return dateKey;
+
+  const date = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return formatUtcDate(date);
+}
+
+export function listDateKeysInRange(fromDate: string, toDate: string): string[] {
+  const from = parseDateKey(fromDate);
+  const to = parseDateKey(toDate);
+  if (!from || !to) return [];
+
+  const cursor = new Date(Date.UTC(from.year, from.month - 1, from.day));
+  const end = new Date(Date.UTC(to.year, to.month - 1, to.day));
+  if (cursor.getTime() > end.getTime()) return [];
+
+  const dates: string[] = [];
+  while (cursor.getTime() <= end.getTime()) {
+    dates.push(formatUtcDate(cursor));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
 export function getCreatedDateDisplay(createdAt?: string): string {
   if (!createdAt) return '-';
   const date = new Date(createdAt);

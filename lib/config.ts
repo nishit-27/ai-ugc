@@ -10,22 +10,28 @@ export function getFalWebhookUrl(): string | undefined {
   return `${appUrl}/api/fal-webhook`;
 }
 
-function getLateApiKeys(): string[] {
-  const raw = process.env.LATE_API_KEYS;
+function getSocialApiKeys(): string[] {
+  const raw = process.env.ZERNIO_API_KEYS
+    || process.env.LATE_API_KEYS
+    || process.env.ZERNIO_API_KEY
+    || process.env.LATE_API_KEY;
   if (!raw) return [];
   return raw.split(',').map((k) => k.trim()).filter(Boolean);
 }
 
-const LATE_API_KEYS = getLateApiKeys();
+const SOCIAL_API_KEYS = getSocialApiKeys();
+const SOCIAL_API_URL = process.env.ZERNIO_API_URL || process.env.LATE_API_URL || 'https://zernio.com/api/v1';
 
 export const config = {
   APP_URL: getAppUrl(),
   FAL_KEY: process.env.FAL_KEY,
   RAPIDAPI_KEY: process.env.RAPIDAPI_KEY,
-  LATE_API_KEYS,
+  LATE_API_KEYS: SOCIAL_API_KEYS,
+  ZERNIO_API_KEYS: SOCIAL_API_KEYS,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-  LATE_API_URL: 'https://getlate.dev/api/v1',
+  LATE_API_URL: SOCIAL_API_URL,
+  ZERNIO_API_URL: SOCIAL_API_URL,
   TIKTOK_ACCOUNT_ID: process.env.TIKTOK_ACCOUNT_ID,
   DATABASE_URL: process.env.DATABASE_URL,
   GCS_BUCKET_NAME: process.env.GCS_BUCKET_NAME || 'runable-ai-ugc',
