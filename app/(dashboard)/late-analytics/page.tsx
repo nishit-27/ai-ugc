@@ -19,6 +19,7 @@ import LateAccountsTable from '@/components/late-analytics/LateAccountsTable';
 import LateContentTable from '@/components/late-analytics/LateContentTable';
 import LateAccountViewsChart from '@/components/late-analytics/LateAccountViewsChart';
 import LateMetricsChart from '@/components/late-analytics/LateMetricsChart';
+import LateRunnableVideosPanel from '@/components/late-analytics/LateRunnableVideosPanel';
 import {
   RUNABLE_INTEGRATION_VARIABLE_NAME,
   getRunableIntegrationValueByName,
@@ -470,7 +471,7 @@ function LateAnalyticsContent() {
           <TabsTrigger value="engagement">Engagement</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="content">Content</TabsTrigger>
-          <TabsTrigger value="runnable">Runnable</TabsTrigger>
+          <TabsTrigger value="runnable">Runable</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 pt-6">
@@ -536,10 +537,18 @@ function LateAnalyticsContent() {
           ) : (
             <>
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                Showing videos tagged <span className="font-semibold">{RUNABLE_INTEGRATION_VARIABLE_NAME} = True</span>.
+                {runnablePosts.length > 0 ? (
+                  <>
+                    Showing <span className="font-semibold">{runnablePosts.length}</span> posted social video{runnablePosts.length === 1 ? '' : 's'} tagged{' '}
+                    <span className="font-semibold">{RUNABLE_INTEGRATION_VARIABLE_NAME} = True</span>.
+                  </>
+                ) : (
+                  <>Showing posted social videos tagged <span className="font-semibold">{RUNABLE_INTEGRATION_VARIABLE_NAME} = True</span>.</>
+                )}
               </div>
               {runnablePosts.length > 0 ? (
                 <>
+                  <LateRunnableVideosPanel posts={runnablePosts} />
                   <LateMetricCards totals={runnableTotals} totalFollowers={totalFollowers} />
                   <LateMetricsChart dailyMetrics={runnableDailyMetrics} dateRange={dateRange} />
                   <LateAccountViewsChart accounts={runnableAccounts} posts={runnablePosts} dateRange={dateRange} />
@@ -548,7 +557,7 @@ function LateAnalyticsContent() {
                 </>
               ) : (
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-6 py-14 text-center text-sm text-[var(--text-muted)]">
-                  No videos are tagged with <span className="font-semibold text-[var(--text-primary)]">{RUNABLE_INTEGRATION_VARIABLE_NAME}</span> yet.
+                  No posted social videos with <span className="font-semibold text-[var(--text-primary)]">{RUNABLE_INTEGRATION_VARIABLE_NAME}</span> and synced analytics were found for this range yet.
                 </div>
               )}
             </>

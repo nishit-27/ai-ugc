@@ -191,7 +191,7 @@ export default function LateAccountsTable({ followerStats, posts, onSelectAccoun
                           {account.runableVideoCount > 0 && (
                             <div className="mt-1">
                               <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                                Runnable {account.runableVideoCount}
+                                Runable {account.runableVideoCount}
                               </span>
                             </div>
                           )}
@@ -252,7 +252,7 @@ export default function LateAccountsTable({ followerStats, posts, onSelectAccoun
                       {account.runableVideoCount > 0 && (
                         <div className="mt-1">
                           <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                            Runnable {account.runableVideoCount}
+                            Runable {account.runableVideoCount}
                           </span>
                         </div>
                       )}

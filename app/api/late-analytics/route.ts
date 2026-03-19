@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
-import { ensureDatabaseReady, getMediaVariableValuesByExternalIds } from '@/lib/db';
+import {
+  ensureDatabaseReady,
+  getMediaVariableValuesByExternalIds,
+  getPostVariableValuesByExternalIds,
+} from '@/lib/db';
 import { getApiKeys } from '@/lib/lateAccountPool';
 import { lateApiRequest } from '@/lib/lateApi';
 import {
@@ -113,10 +117,12 @@ export async function GET(request: Request) {
     }
 
     let variableValuesByExternalId: Record<string, Record<string, string>> = {};
+    let postVariableValuesByExternalId: Record<string, Record<string, string>> = {};
     if (candidateExternalIds.size > 0) {
       try {
         await ensureDatabaseReady();
         variableValuesByExternalId = await getMediaVariableValuesByExternalIds([...candidateExternalIds]);
+        postVariableValuesByExternalId = await getPostVariableValuesByExternalIds([...candidateExternalIds]);
       } catch (error) {
         console.error('Failed to load variable values for late analytics posts:', error);
       }
@@ -138,6 +144,7 @@ export async function GET(request: Request) {
       }
       for (const externalId of matchingExternalIds) {
         Object.assign(variableValues, variableValuesByExternalId[externalId] || {});
+        Object.assign(variableValues, postVariableValuesByExternalId[externalId] || {});
       }
 
       allPosts.push({

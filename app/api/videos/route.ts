@@ -5,7 +5,9 @@ import {
   getAllModels,
   getCompletedJobVideos,
   getCompletedTemplateJobVideos,
+  getJobVariableValuesByTemplateJobIds,
 } from '@/lib/db';
+import { getRunableIntegrationValueByName } from '@/lib/runable-integration';
 
 type MediaFile = {
   filename: string;
@@ -25,6 +27,8 @@ type OutputVideo = {
   createdBy?: string | null;
   modelId?: string | null;
   modelName?: string | null;
+  variableValues?: Record<string, string>;
+  hasRunableIntegration?: boolean;
 };
 
 function toMillis(value?: string | Date | null): number {
@@ -75,6 +79,12 @@ export async function GET(request: NextRequest) {
       getCompletedTemplateJobVideos(),
       getAllModels(),
     ]);
+    const templateJobIds = templateJobs
+      .map((job) => job.id)
+      .filter((jobId): jobId is string => typeof jobId === 'string' && jobId.length > 0);
+    const variableValuesByJobId: Record<string, Record<string, string>> = templateJobIds.length > 0
+      ? await getJobVariableValuesByTemplateJobIds(templateJobIds)
+      : {};
 
     const mediaByUrl = new Map<string, MediaFile>();
     for (const row of mediaRows) {
@@ -104,6 +114,8 @@ export async function GET(request: NextRequest) {
         createdBy: job.createdBy || null,
         modelId: null,
         modelName: null,
+        variableValues: {},
+        hasRunableIntegration: false,
       };
 
       const existing = byUrl.get(job.outputUrl);
@@ -116,6 +128,7 @@ export async function GET(request: NextRequest) {
       if (!job.outputUrl) continue;
       const media = mediaByUrl.get(job.outputUrl);
       const created = job.completedAt || job.createdAt || media?.createdAt || null;
+      const variableValues = variableValuesByJobId[job.id] || {};
       const next: OutputVideo = {
         name: media?.filename || filenameFromUrl(job.outputUrl),
         path: job.outputUrl,
@@ -126,6 +139,8 @@ export async function GET(request: NextRequest) {
         createdBy: job.createdBy || null,
         modelId: job.modelId || null,
         modelName: job.modelId ? (modelNameById.get(job.modelId) || null) : null,
+        variableValues,
+        hasRunableIntegration: getRunableIntegrationValueByName(variableValues),
       };
 
       const existing = byUrl.get(job.outputUrl);
