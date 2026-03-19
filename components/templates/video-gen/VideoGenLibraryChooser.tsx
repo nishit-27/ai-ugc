@@ -9,6 +9,9 @@ type Props = {
   selectedImageUrl?: string;
   onSelect: (img: GeneratedImage) => void;
   setPreviewUrl: (url: string | null) => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 };
 
 export default function VideoGenLibraryChooser({
@@ -19,6 +22,9 @@ export default function VideoGenLibraryChooser({
   selectedImageUrl,
   onSelect,
   setPreviewUrl,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
 }: Props) {
   if (!showLibrary) return null;
 
@@ -71,6 +77,22 @@ export default function VideoGenLibraryChooser({
               );
             })}
           </div>
+          {hasMore && (
+            <button
+              onClick={onLoadMore}
+              disabled={isLoadingMore}
+              className="w-full rounded-lg bg-[var(--accent)] px-2.5 py-2 text-[10px] font-medium text-[var(--text)] hover:bg-[var(--accent-border)]/30 disabled:opacity-50 transition-colors"
+            >
+              {isLoadingMore ? (
+                <span className="flex items-center justify-center gap-1.5">
+                  <span className="h-3 w-3 rounded-full border-2 border-[var(--text-muted)]/30 border-t-[var(--primary)] animate-spin" />
+                  Loading...
+                </span>
+              ) : (
+                'Load More'
+              )}
+            </button>
+          )}
         </>
       )}
     </div>

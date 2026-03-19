@@ -64,6 +64,9 @@ export default function VideoGenConfig({
   const [libraryImages, setLibraryImages] = useState<GeneratedImage[]>([]);
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [libraryPage, setLibraryPage] = useState(1);
+  const [libraryTotal, setLibraryTotal] = useState(0);
+  const [isLoadingMoreLibrary, setIsLoadingMoreLibrary] = useState(false);
   const [showScenePicker, setShowScenePicker] = useState(false);
   const [isUploadingScene, setIsUploadingScene] = useState(false);
   const [sceneDisplayUrl, setSceneDisplayUrl] = useState<string | null>(() => cached?.sceneDisplayUrl ?? null);
@@ -238,13 +241,31 @@ export default function VideoGenConfig({
 
     setShowLibrary(true);
     setIsLoadingLibrary(true);
+    setLibraryPage(1);
     try {
-      const images = await fetchGeneratedImages({ modelId: config.modelId || undefined, limit: 50 });
+      const { images, total } = await fetchGeneratedImages({ modelId: config.modelId || undefined, limit: 50, page: 1 });
       setLibraryImages(await ensureSignedGeneratedImages(images as GeneratedImage[]));
+      setLibraryTotal(total);
     } catch {
       // no-op
     } finally {
       setIsLoadingLibrary(false);
+    }
+  };
+
+  const handleLoadMoreLibrary = async () => {
+    const nextPage = libraryPage + 1;
+    setIsLoadingMoreLibrary(true);
+    try {
+      const { images, total } = await fetchGeneratedImages({ modelId: config.modelId || undefined, limit: 50, page: nextPage });
+      const signed = await ensureSignedGeneratedImages(images as GeneratedImage[]);
+      setLibraryImages((prev) => [...prev, ...signed]);
+      setLibraryTotal(total);
+      setLibraryPage(nextPage);
+    } catch {
+      // no-op
+    } finally {
+      setIsLoadingMoreLibrary(false);
     }
   };
 
@@ -342,19 +363,42 @@ export default function VideoGenConfig({
     onChange({ ...config, masterFirstFrames: updated });
   };
 
+  const [masterLibraryPage, setMasterLibraryPage] = useState(1);
+  const [masterLibraryTotal, setMasterLibraryTotal] = useState(0);
+  const [isLoadingMoreMasterLibrary, setIsLoadingMoreMasterLibrary] = useState(false);
+
   const handleMasterBrowseLibrary = async (modelId: string) => {
     if (masterLibraryModelId === modelId) { setMasterLibraryModelId(null); return; }
 
     setMasterActivePanelByModel((prev) => ({ ...prev, [modelId]: null }));
     setMasterLibraryModelId(modelId);
     setIsLoadingMasterLibrary(true);
+    setMasterLibraryPage(1);
     try {
-      const images = await fetchGeneratedImages({ modelId });
+      const { images, total } = await fetchGeneratedImages({ modelId, page: 1 });
       setMasterLibraryImages(await ensureSignedGeneratedImages(images as GeneratedImage[]));
+      setMasterLibraryTotal(total);
     } catch {
       // no-op
     } finally {
       setIsLoadingMasterLibrary(false);
+    }
+  };
+
+  const handleLoadMoreMasterLibrary = async () => {
+    if (!masterLibraryModelId) return;
+    const nextPage = masterLibraryPage + 1;
+    setIsLoadingMoreMasterLibrary(true);
+    try {
+      const { images, total } = await fetchGeneratedImages({ modelId: masterLibraryModelId, limit: 50, page: nextPage });
+      const signed = await ensureSignedGeneratedImages(images as GeneratedImage[]);
+      setMasterLibraryImages((prev) => [...prev, ...signed]);
+      setMasterLibraryTotal(total);
+      setMasterLibraryPage(nextPage);
+    } catch {
+      // no-op
+    } finally {
+      setIsLoadingMoreMasterLibrary(false);
     }
   };
 
@@ -490,6 +534,9 @@ export default function VideoGenConfig({
       onSceneFileChange={handleSceneFileChange}
       onSceneDrop={handleSceneDrop}
       resolveModelImageDisplay={resolveFaceImageForDisplay}
+      hasMoreLibrary={libraryImages.length < libraryTotal}
+      isLoadingMoreLibrary={isLoadingMoreLibrary}
+      onLoadMoreLibrary={handleLoadMoreLibrary}
     />
   );
 
@@ -518,6 +565,9 @@ export default function VideoGenConfig({
       handleMasterTogglePanel={handleMasterTogglePanel}
       handleMasterUploadForModel={handleMasterUploadForModel}
       handleMasterFetchModelImages={handleMasterFetchModelImages}
+      hasMoreMasterLibrary={masterLibraryImages.length < masterLibraryTotal}
+      isLoadingMoreMasterLibrary={isLoadingMoreMasterLibrary}
+      onLoadMoreMasterLibrary={handleLoadMoreMasterLibrary}
     />
   );
 

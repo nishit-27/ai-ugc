@@ -42,6 +42,9 @@ type Props = {
   onSceneFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSceneDrop: (e: React.DragEvent) => void;
   resolveModelImageDisplay: () => string | null;
+  hasMoreLibrary?: boolean;
+  isLoadingMoreLibrary?: boolean;
+  onLoadMoreLibrary?: () => void;
 };
 export default function VideoGenSingleFirstFrameCard({
   config,
@@ -82,6 +85,9 @@ export default function VideoGenSingleFirstFrameCard({
   onSceneFileChange,
   onSceneDrop,
   resolveModelImageDisplay,
+  hasMoreLibrary,
+  isLoadingMoreLibrary,
+  onLoadMoreLibrary,
 }: Props) {
   if (!hasModelImage) return null;
   return (
@@ -165,6 +171,9 @@ export default function VideoGenSingleFirstFrameCard({
                 selectedImageUrl={config.imageUrl || undefined}
                 onSelect={onSelectLibraryImage}
                 setPreviewUrl={setPreviewUrl}
+                hasMore={hasMoreLibrary}
+                isLoadingMore={isLoadingMoreLibrary}
+                onLoadMore={onLoadMoreLibrary}
               />
             </div>
           ) : (
@@ -452,6 +461,9 @@ export default function VideoGenSingleFirstFrameCard({
                 selectedImageUrl={config.imageUrl || undefined}
                 onSelect={onSelectLibraryImage}
                 setPreviewUrl={setPreviewUrl}
+                hasMore={hasMoreLibrary}
+                isLoadingMore={isLoadingMoreLibrary}
+                onLoadMore={onLoadMoreLibrary}
               />
             </>
           )}

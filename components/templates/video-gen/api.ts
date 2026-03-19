@@ -42,12 +42,13 @@ export async function generateFirstFrameRequest(params: {
   return data.images || [];
 }
 
-export async function fetchGeneratedImages(params: { modelId?: string; limit?: number }): Promise<unknown[]> {
-  const query = params.modelId
-    ? `/api/generated-images?modelId=${params.modelId}&signed=true`
-    : `/api/generated-images?limit=${params.limit || 50}&signed=true`;
-  const res = await fetch(query);
+export async function fetchGeneratedImages(params: { modelId?: string; limit?: number; page?: number }): Promise<{ images: unknown[]; total: number }> {
+  const searchParams = new URLSearchParams({ signed: 'true' });
+  if (params.modelId) searchParams.set('modelId', params.modelId);
+  searchParams.set('limit', String(params.limit || 50));
+  searchParams.set('page', String(params.page || 1));
+  const res = await fetch(`/api/generated-images?${searchParams}`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to load images');
-  return data.images || [];
+  return { images: data.images || [], total: data.total ?? 0 };
 }

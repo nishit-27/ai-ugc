@@ -27,6 +27,9 @@ type Props = {
   handleMasterTogglePanel: (modelId: string, panel: 'upload' | 'model-images') => void;
   handleMasterUploadForModel: (modelId: string, file: File) => Promise<void>;
   handleMasterFetchModelImages: (modelId: string) => Promise<void>;
+  hasMoreMasterLibrary?: boolean;
+  isLoadingMoreMasterLibrary?: boolean;
+  onLoadMoreMasterLibrary?: () => void;
 };
 
 function ActionButton({
@@ -85,6 +88,9 @@ export default function VideoGenMasterPerModelPanel({
   handleMasterTogglePanel,
   handleMasterUploadForModel,
   handleMasterFetchModelImages,
+  hasMoreMasterLibrary,
+  isLoadingMoreMasterLibrary,
+  onLoadMoreMasterLibrary,
 }: Props) {
   if (!masterMode || !masterModels || masterModels.length === 0 || !config.extractedFrameUrl) {
     return null;
@@ -302,40 +308,58 @@ export default function VideoGenMasterPerModelPanel({
                 ) : masterLibraryImages.length === 0 ? (
                   <p className="py-4 text-center text-[10px] text-[var(--text-muted)]">No previous generations</p>
                 ) : (
-                  <div className="grid grid-cols-4 gap-1.5 max-h-[300px] overflow-y-auto">
-                    {masterLibraryImages.map((img) => {
-                      const displayUrl = img.signedUrl || img.gcsUrl;
-                      const isSelected = selected === img.gcsUrl;
-                      return (
-                        <button
-                          key={img.id}
-                          onClick={() => {
-                            handleMasterSelectForModel(model.modelId, img.gcsUrl);
-                            setMasterLibraryModelId(null);
-                          }}
-                          className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all duration-150 ${
-                            isSelected ? 'border-master shadow-md' : 'border-[var(--border)] hover:border-master-muted'
-                          }`}
-                        >
-                          <img src={displayUrl} alt={img.filename} className="h-full w-full object-cover" />
-                          <div
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPreviewUrl(displayUrl);
+                  <>
+                    <div className="grid grid-cols-4 gap-1.5 max-h-[300px] overflow-y-auto">
+                      {masterLibraryImages.map((img) => {
+                        const displayUrl = img.signedUrl || img.gcsUrl;
+                        const isSelected = selected === img.gcsUrl;
+                        return (
+                          <button
+                            key={img.id}
+                            onClick={() => {
+                              handleMasterSelectForModel(model.modelId, img.gcsUrl);
+                              setMasterLibraryModelId(null);
                             }}
-                            className="absolute bottom-0.5 right-0.5 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity"
+                            className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all duration-150 ${
+                              isSelected ? 'border-master shadow-md' : 'border-[var(--border)] hover:border-master-muted'
+                            }`}
                           >
-                            <Expand className="h-2 w-2" />
-                          </div>
-                          {isSelected && (
-                            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-master/90 to-transparent py-0.5 text-center">
-                              <span className="text-[9px] font-semibold text-white">Selected</span>
+                            <img src={displayUrl} alt={img.filename} className="h-full w-full object-cover" />
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewUrl(displayUrl);
+                              }}
+                              className="absolute bottom-0.5 right-0.5 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity"
+                            >
+                              <Expand className="h-2 w-2" />
                             </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                            {isSelected && (
+                              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-master/90 to-transparent py-0.5 text-center">
+                                <span className="text-[9px] font-semibold text-white">Selected</span>
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {hasMoreMasterLibrary && (
+                      <button
+                        onClick={onLoadMoreMasterLibrary}
+                        disabled={isLoadingMoreMasterLibrary}
+                        className="w-full rounded-lg bg-[var(--accent)] px-2.5 py-2 text-[10px] font-medium text-[var(--text)] hover:bg-[var(--accent-border)]/30 disabled:opacity-50 transition-colors"
+                      >
+                        {isLoadingMoreMasterLibrary ? (
+                          <span className="flex items-center justify-center gap-1.5">
+                            <span className="h-3 w-3 rounded-full border-2 border-[var(--text-muted)]/30 border-t-[var(--primary)] animate-spin" />
+                            Loading...
+                          </span>
+                        ) : (
+                          'Load More'
+                        )}
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             )}

@@ -2,10 +2,17 @@ import { NextResponse } from 'next/server';
 import {
   ensureDatabaseReady,
   getMediaVariableValuesByExternalIds,
+  getJobVariableValuesByTemplateJobIds,
   getPostVariableValuesByExternalIds,
+  sql,
 } from '@/lib/db';
 import { getApiKeys } from '@/lib/lateAccountPool';
 import { lateApiRequest } from '@/lib/lateApi';
+import { shiftDateKey } from '@/lib/dateUtils';
+import {
+  buildLateAnalyticsFallbackPosts,
+  type LocalLateAnalyticsPostRow,
+} from '@/lib/late-analytics-local-posts';
 import {
   extractLateAnalyticsPosts,
   type NormalizedLateAnalyticsPost,
@@ -20,10 +27,32 @@ export const maxDuration = 300;
 const PAGE_SIZE = 100;
 const PARALLEL_PAGES = 20;
 
+type LocalLateAnalyticsDbRow = {
+  id: string;
+  job_id: string | null;
+  late_account_id: string | null;
+  caption: string | null;
+  platform: string | null;
+  published_at: string | Date | null;
+  external_post_id: string | null;
+  late_post_id: string | null;
+  platform_post_url: string | null;
+  last_checked_at: string | Date | null;
+  created_at: string | Date | null;
+  updated_at: string | Date | null;
+  account_username: string | null;
+  account_display_name: string | null;
+};
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const baseParams = normalizeLateAnalyticsListParams(searchParams);
+    const fromDate = baseParams.get('fromDate');
+    const toDate = baseParams.get('toDate');
+    const platform = baseParams.get('platform');
+    const widenedFromBound = fromDate ? `${shiftDateKey(fromDate, -1)}T00:00:00.000Z` : null;
+    const widenedToBound = toDate ? `${shiftDateKey(toDate, 1)}T23:59:59.999Z` : null;
 
     const keys = getApiKeys();
     const rawPosts: ReturnType<typeof extractLateAnalyticsPosts> = [];
@@ -118,6 +147,7 @@ export async function GET(request: Request) {
 
     let variableValuesByExternalId: Record<string, Record<string, string>> = {};
     let postVariableValuesByExternalId: Record<string, Record<string, string>> = {};
+    let localFallbackPosts: Array<NormalizedLateAnalyticsPost & { variableValues: Record<string, string> }> = [];
     if (candidateExternalIds.size > 0) {
       try {
         await ensureDatabaseReady();
@@ -126,6 +156,79 @@ export async function GET(request: Request) {
       } catch (error) {
         console.error('Failed to load variable values for late analytics posts:', error);
       }
+    }
+
+    try {
+      await ensureDatabaseReady();
+
+      const localRows = await sql`
+        SELECT
+          p.id,
+          p.job_id,
+          p.late_account_id,
+          p.caption,
+          p.platform,
+          p.published_at,
+          p.external_post_id,
+          p.late_post_id,
+          p.platform_post_url,
+          p.last_checked_at,
+          p.created_at,
+          p.updated_at,
+          aa.username AS account_username,
+          aa.display_name AS account_display_name
+        FROM posts p
+        LEFT JOIN LATERAL (
+          SELECT
+            a.username,
+            a.display_name
+          FROM analytics_accounts a
+          WHERE a.late_account_id = p.late_account_id
+            AND a.platform = p.platform
+          ORDER BY a.last_synced_at DESC NULLS LAST, a.created_at DESC
+          LIMIT 1
+        ) aa ON TRUE
+        WHERE p.status IN ('published', 'partial')
+          AND (${platform} IS NULL OR p.platform = ${platform})
+          AND (${widenedFromBound}::timestamp IS NULL OR COALESCE(p.published_at, p.last_checked_at, p.updated_at, p.created_at) >= ${widenedFromBound}::timestamp)
+          AND (${widenedToBound}::timestamp IS NULL OR COALESCE(p.published_at, p.last_checked_at, p.updated_at, p.created_at) <= ${widenedToBound}::timestamp)
+        ORDER BY COALESCE(p.published_at, p.last_checked_at, p.updated_at, p.created_at) DESC
+      ` as LocalLateAnalyticsDbRow[];
+
+      const localJobIds = [...new Set(
+        localRows
+          .map((row) => row.job_id)
+          .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+      )];
+
+      const jobVariableValuesByJobId = localJobIds.length > 0
+        ? await getJobVariableValuesByTemplateJobIds(localJobIds)
+        : {};
+
+      localFallbackPosts = buildLateAnalyticsFallbackPosts({
+        rows: localRows.map<LocalLateAnalyticsPostRow>((row) => ({
+          id: row.id,
+          jobId: row.job_id,
+          lateAccountId: row.late_account_id,
+          caption: row.caption,
+          platform: row.platform,
+          publishedAt: row.published_at,
+          externalPostId: row.external_post_id,
+          latePostId: row.late_post_id,
+          platformPostUrl: row.platform_post_url,
+          lastCheckedAt: row.last_checked_at,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          accountUsername: row.account_username,
+          accountDisplayName: row.account_display_name,
+        })),
+        jobVariableValuesByJobId,
+        existingExternalIds: candidateExternalIds,
+        fromDate,
+        toDate,
+      });
+    } catch (error) {
+      console.error('Failed to load fallback local posts for late analytics:', error);
     }
 
     // Deduplicate posts by _id (safety net)
@@ -153,7 +256,9 @@ export async function GET(request: Request) {
       });
     }
 
-    return NextResponse.json({ posts: allPosts, overview, total: allPosts.length });
+    const mergedPosts = [...allPosts, ...localFallbackPosts].sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
+
+    return NextResponse.json({ posts: mergedPosts, overview, total: mergedPosts.length });
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }

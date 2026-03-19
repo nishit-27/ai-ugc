@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
-import { initDatabase, getPipelineBatch, getTemplateJob, getTemplateJobsByBatchId, updateTemplateJobPostStatus, getModelAccountMappings, createPost, getPostsByJobIds, acquireTemplateJobPostLock, releaseTemplateJobPostLock, beginPostIdempotency, completePostIdempotency, clearPostIdempotency } from '@/lib/db';
+import { initDatabase, getPipelineBatch, getTemplateJob, getTemplateJobsByBatchId, updateTemplateJobPostStatus, getModelAccountMappings, createPost, getPostsByJobIds, updatePost, acquireTemplateJobPostLock, releaseTemplateJobPostLock, beginPostIdempotency, completePostIdempotency, clearPostIdempotency } from '@/lib/db';
 import { lateApiRequest, LateApiError } from '@/lib/lateApi';
 import { getApiKeyByIndex } from '@/lib/lateAccountPool';
 import { downloadToBuffer } from '@/lib/storage';
@@ -560,7 +560,7 @@ export async function POST(
             }
 
             try {
-              await createPost({
+              const dbPost = await createPost({
                 jobId,
                 accountId: null,
                 lateAccountId: target.accountId,
@@ -574,6 +574,16 @@ export async function POST(
                 createdBy,
                 apiKeyIndex: keyIndex,
               });
+
+              if (dbStatus === 'published' && dbPost?.id) {
+                await updatePost(dbPost.id, {
+                  publishedAt: platformResult?.publishedAt || latePost.publishedAt || new Date(),
+                  externalPostId: platformResult?.platformPostId || null,
+                  platformPostUrl: platformResult?.platformPostUrl || null,
+                  publishAttempts: 1,
+                  lastCheckedAt: new Date(),
+                });
+              }
             } catch {
               // DB save failed, continue
             }
