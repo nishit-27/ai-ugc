@@ -8,6 +8,7 @@ import { initDatabase, createGeneratedImage } from '@/lib/db';
 import { createGenerationRequest, updateGenerationRequest } from '@/lib/db-generation-requests';
 import { getEndpointCost } from '@/lib/fal-pricing';
 import { auth } from '@/lib/auth';
+import { generateImageWithReferences } from '@/lib/gemini-image';
 
 export const maxDuration = 300;
 
@@ -37,7 +38,7 @@ async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
 
 export async function POST(req: Request) {
   try {
-    const { modelImageUrl, frameImageUrl, resolution, modelId } = await req.json();
+    const { modelImageUrl, frameImageUrl, resolution, modelId, provider = 'fal' } = await req.json();
 
     if (!modelImageUrl || !frameImageUrl) {
       return NextResponse.json(
@@ -116,11 +117,6 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!config.FAL_KEY) {
-      return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
-    }
-    fal.config({ credentials: config.FAL_KEY });
-
     // Convert to JPEG and ensure minimum size for model compatibility
     const [modelJpeg, frameJpeg] = await Promise.all([
       sharp(modelBuf)
@@ -134,77 +130,103 @@ export async function POST(req: Request) {
     ]);
     console.log(`[FirstFrame] Converted to JPEG — model: ${modelJpeg.length} bytes, frame: ${frameJpeg.length} bytes`);
 
-    const [falModelUrl, falFrameUrl] = await Promise.all([
-      fal.storage.upload(new Blob([new Uint8Array(modelJpeg)], { type: 'image/jpeg' })),
-      fal.storage.upload(new Blob([new Uint8Array(frameJpeg)], { type: 'image/jpeg' })),
-    ]);
-    const falImageUrls = [falModelUrl, falFrameUrl];
-
     await initDatabase();
     const session = await auth();
     const createdBy = session?.user?.name?.split(' ')[0] || null;
     const createdByEmail = session?.user?.email || null;
 
+    const activeProvider = provider === 'gemini' || provider === 'gemini-pro' ? 'gemini' : 'fal';
+    const activeModel = provider === 'gemini-pro' ? 'gemini-3-pro' : activeProvider === 'gemini' ? 'gemini-2.5-flash' : FAL_MODEL;
+
     // Track request
     const genReq = await createGenerationRequest({
       type: 'image',
-      provider: 'fal',
-      model: FAL_MODEL,
+      provider: activeProvider,
+      model: activeModel,
       status: 'processing',
-      metadata: { modelImageUrl, frameImageUrl, resolution, modelId },
+      metadata: { modelImageUrl, frameImageUrl, resolution, modelId, provider: activeProvider },
       createdBy,
       createdByEmail,
     });
 
-    console.log(`[FirstFrame] Generating 1 image with ${FAL_MODEL}...`);
+    console.log(`[FirstFrame] Generating 1 image with ${activeModel} (provider: ${activeProvider})...`);
 
     let resultBuf: Buffer;
-    try {
-      const result = await fal.subscribe(FAL_MODEL, {
-        input: {
-          image_urls: falImageUrls,
-          prompt: PROMPT,
-          num_images: 1,
-          output_format: 'jpeg',
-          limit_generations: true,
-          resolution: resolution || '1K',
-          safety_tolerance: 6,
-          thinking_level: 'high',
-        } as Parameters<typeof fal.subscribe<typeof FAL_MODEL>>[1]['input'],
-        logs: true,
-      });
-      const url = result.data?.images?.[0]?.url;
-      if (!url) throw new Error('No image URL returned from FAL');
-      resultBuf = Buffer.from(await fetchWithRetry(url));
-    } catch (err) {
-      let errorMsg = err instanceof Error ? err.message : String(err);
-      // Extract detailed error from FAL response body if available
-      if (err && typeof err === 'object' && 'body' in err) {
-        const body = (err as { body: unknown }).body;
-        // FAL errors can be a JSON array like [{"msg": "...", "type": "..."}]
-        if (Array.isArray(body) && body.length > 0) {
-          const first = body[0];
-          errorMsg = first?.msg || first?.message || first?.detail || JSON.stringify(first);
-        } else if (body && typeof body === 'object') {
-          const b = body as Record<string, unknown>;
-          const detail = b.detail || b.message || b.error;
-          if (detail) errorMsg = typeof detail === 'string' ? detail : JSON.stringify(detail);
-        }
-      }
-      // Also handle case where err.message itself is a JSON string
+
+    if (activeProvider === 'gemini') {
+      // --- Gemini path ---
       try {
-        const parsed = JSON.parse(errorMsg);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          errorMsg = parsed[0]?.msg || parsed[0]?.message || errorMsg;
+        resultBuf = await generateImageWithReferences({
+          prompt: PROMPT,
+          referenceImages: [
+            { data: modelJpeg, mimeType: 'image/jpeg' },
+            { data: frameJpeg, mimeType: 'image/jpeg' },
+          ],
+          model: activeModel as 'gemini-2.5-flash' | 'gemini-3-pro',
+        });
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error('[FirstFrame] Gemini generation failed:', errorMsg);
+        await updateGenerationRequest(genReq.id, { status: 'failed', error: errorMsg });
+        return NextResponse.json({ error: errorMsg, failed: true }, { status: 500 });
+      }
+    } else {
+      // --- FAL path ---
+      if (!config.FAL_KEY) {
+        return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
+      }
+      fal.config({ credentials: config.FAL_KEY });
+
+      const [falModelUrl, falFrameUrl] = await Promise.all([
+        fal.storage.upload(new Blob([new Uint8Array(modelJpeg)], { type: 'image/jpeg' })),
+        fal.storage.upload(new Blob([new Uint8Array(frameJpeg)], { type: 'image/jpeg' })),
+      ]);
+      const falImageUrls = [falModelUrl, falFrameUrl];
+
+      try {
+        const result = await fal.subscribe(FAL_MODEL, {
+          input: {
+            image_urls: falImageUrls,
+            prompt: PROMPT,
+            num_images: 1,
+            output_format: 'jpeg',
+            limit_generations: true,
+            resolution: resolution || '1K',
+            safety_tolerance: 6,
+            thinking_level: 'high',
+          } as Parameters<typeof fal.subscribe<typeof FAL_MODEL>>[1]['input'],
+          logs: true,
+        });
+        const url = result.data?.images?.[0]?.url;
+        if (!url) throw new Error('No image URL returned from FAL');
+        resultBuf = Buffer.from(await fetchWithRetry(url));
+      } catch (err) {
+        let errorMsg = err instanceof Error ? err.message : String(err);
+        if (err && typeof err === 'object' && 'body' in err) {
+          const body = (err as { body: unknown }).body;
+          if (Array.isArray(body) && body.length > 0) {
+            const first = body[0];
+            errorMsg = first?.msg || first?.message || first?.detail || JSON.stringify(first);
+          } else if (body && typeof body === 'object') {
+            const b = body as Record<string, unknown>;
+            const detail = b.detail || b.message || b.error;
+            if (detail) errorMsg = typeof detail === 'string' ? detail : JSON.stringify(detail);
+          }
         }
-      } catch { /* not JSON, use as-is */ }
-      console.error('[FirstFrame] Generation failed:', errorMsg);
-      await updateGenerationRequest(genReq.id, { status: 'failed', error: errorMsg });
-      return NextResponse.json({ error: errorMsg, failed: true }, { status: 500 });
+        try {
+          const parsed = JSON.parse(errorMsg);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            errorMsg = parsed[0]?.msg || parsed[0]?.message || errorMsg;
+          }
+        } catch { /* not JSON, use as-is */ }
+        console.error('[FirstFrame] Generation failed:', errorMsg);
+        await updateGenerationRequest(genReq.id, { status: 'failed', error: errorMsg });
+        return NextResponse.json({ error: errorMsg, failed: true }, { status: 500 });
+      }
     }
 
     // Success — compress, upload, persist
-    const imageCost = await getEndpointCost(FAL_MODEL, 1);
+    const imageCost = activeProvider === 'fal' ? await getEndpointCost(FAL_MODEL, 1) : 0;
     await updateGenerationRequest(genReq.id, { status: 'success', cost: imageCost });
 
     const compressed = await sharp(resultBuf).jpeg({ quality: 85 }).toBuffer();

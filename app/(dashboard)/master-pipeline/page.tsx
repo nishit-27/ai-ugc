@@ -54,7 +54,7 @@ export default function MasterPipelinePage() {
 
   // Pipeline state
   const [steps, setSteps] = useState<MiniAppStep[]>(() => draft.current?.steps ?? []);
-  const [name] = useState(() => draft.current?.name ?? '');
+  const [name, setName] = useState(() => draft.current?.name ?? '');
   const [videoSource, setVideoSource] = useState<'tiktok' | 'upload' | 'library'>(() => draft.current?.videoSource ?? 'tiktok');
   const [tiktokUrl, setTiktokUrl] = useState(() => draft.current?.tiktokUrl ?? '');
   const [libraryVideos, setLibraryVideos] = useState<Record<string, string>>(() => draft.current?.libraryVideos ?? {});
@@ -417,7 +417,7 @@ export default function MasterPipelinePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: name || `Master ${new Date().toLocaleTimeString()}`,
+          name: name || `Runable ${new Date().toLocaleTimeString()}`,
           pipeline: steps,
           videoSource,
           tiktokUrl: videoSource === 'tiktok' ? tiktokUrl : undefined,
@@ -600,6 +600,16 @@ export default function MasterPipelinePage() {
       {/* Run Confirmation Modal */}
       <Modal open={showRunConfirm} onClose={() => setShowRunConfirm(false)} title="Run Master Pipeline" maxWidth="max-w-sm">
         <div className="p-4 space-y-4">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Batch Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={`Runable ${new Date().toLocaleTimeString()}`}
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+            />
+          </div>
           <p className="text-sm font-medium text-[var(--text)]">Are you sure you have added runnable indicators?</p>
           <div className="rounded-lg border border-[var(--border)] bg-[var(--accent)]/40 px-3 py-2">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Current toggle</div>

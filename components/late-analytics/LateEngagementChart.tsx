@@ -24,7 +24,6 @@ const METRIC_CONFIG = [
   { key: 'likes', color: '#22c55e', label: 'Likes' },
   { key: 'comments', color: '#f59e0b', label: 'Comments' },
   { key: 'shares', color: '#8b5cf6', label: 'Shares' },
-  { key: 'impressions', color: '#ec4899', label: 'Impressions' },
 ] as const;
 
 export default function LateEngagementChart({ dailyMetrics }: { dailyMetrics: DailyMetric[] }) {

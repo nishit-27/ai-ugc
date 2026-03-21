@@ -31,6 +31,7 @@ type Props = {
   setShowLibrary: (value: boolean) => void;
   setPreviewUrl: (url: string | null) => void;
   onSetResolution: (resolution: '1K' | '2K' | '4K') => void;
+  onSetProvider: (provider: 'gemini' | 'gemini-pro' | 'fal' | 'gpt-image') => void;
   onToggleFirstFrame: (enabled: boolean) => void;
   onGenerateFirstFrame: () => Promise<void>;
   onBrowseLibrary: () => Promise<void>;
@@ -74,6 +75,7 @@ export default function VideoGenSingleFirstFrameCard({
   setShowLibrary,
   setPreviewUrl,
   onSetResolution,
+  onSetProvider,
   onToggleFirstFrame,
   onGenerateFirstFrame,
   onBrowseLibrary,
@@ -370,6 +372,15 @@ export default function VideoGenSingleFirstFrameCard({
                   </div>
                 </div>
               )}
+              {/* Provider & Resolution */}
+              <select
+                value={config.firstFrameProvider === 'gemini-pro' ? 'gemini-pro' : 'fal'}
+                onChange={(e) => onSetProvider(e.target.value as 'gemini-pro' | 'fal')}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+              >
+                <option value="fal">FAL</option>
+                <option value="gemini-pro">Gemini 3 Pro</option>
+              </select>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={onGenerateFirstFrame}

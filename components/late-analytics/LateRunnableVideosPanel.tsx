@@ -1,6 +1,7 @@
 'use client';
 
-import { ExternalLink, Film } from 'lucide-react';
+import { useState } from 'react';
+import { ExternalLink, Film, ChevronDown, ChevronUp } from 'lucide-react';
 import { RUNABLE_INTEGRATION_VARIABLE_NAME } from '@/lib/runable-integration';
 
 type RunablePost = {
@@ -33,8 +34,14 @@ function formatNum(n: number): string {
   return String(n);
 }
 
+const COLLAPSED_COUNT = 6;
+
 export default function LateRunnableVideosPanel({ posts }: { posts: RunablePost[] }) {
+  const [expanded, setExpanded] = useState(false);
   if (!posts.length) return null;
+
+  const hasMore = posts.length > COLLAPSED_COUNT;
+  const visiblePosts = expanded ? posts : posts.slice(0, COLLAPSED_COUNT);
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
@@ -43,7 +50,7 @@ export default function LateRunnableVideosPanel({ posts }: { posts: RunablePost[
           <h3 className="text-sm font-semibold text-[var(--text-primary)]">Tagged Videos</h3>
           <p className="mt-1 text-sm text-[var(--text-muted)]">
             {posts.length} posted social video{posts.length === 1 ? '' : 's'} in this range have {RUNABLE_INTEGRATION_VARIABLE_NAME} enabled.
-            The charts below are calculated from these same tagged posts.
+            The charts above are calculated from these same tagged posts.
           </p>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
@@ -53,7 +60,7 @@ export default function LateRunnableVideosPanel({ posts }: { posts: RunablePost[
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {posts.slice(0, 6).map((post) => {
+        {visiblePosts.map((post) => {
           const mainPlatform = post.platforms[0];
           return (
           <div key={post.postId} className="rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] p-4">
@@ -97,10 +104,23 @@ export default function LateRunnableVideosPanel({ posts }: { posts: RunablePost[
         )})}
       </div>
 
-      {posts.length > 6 && (
-        <div className="mt-4 text-xs text-[var(--text-muted)]">
-          Showing 6 of {posts.length} tagged posted videos in this range.
-        </div>
+      {hasMore && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-4 py-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+        >
+          {expanded ? (
+            <>
+              Show Less
+              <ChevronUp className="h-3.5 w-3.5" />
+            </>
+          ) : (
+            <>
+              Show All {posts.length} Videos
+              <ChevronDown className="h-3.5 w-3.5" />
+            </>
+          )}
+        </button>
       )}
     </div>
   );

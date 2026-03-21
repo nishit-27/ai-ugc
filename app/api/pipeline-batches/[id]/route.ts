@@ -5,6 +5,7 @@ import {
   deletePipelineBatch,
   getTemplateJobsByBatchId,
   initDatabase,
+  updatePipelineBatch,
 } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -47,6 +48,29 @@ export async function GET(
   } catch (err) {
     console.error('Get pipeline batch error:', err);
     return NextResponse.json({ error: 'Failed to get pipeline batch' }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await initDatabase();
+    const { id } = await params;
+    const body = await request.json();
+    const { name } = body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+    }
+    const updated = await updatePipelineBatch(id, { name: name.trim() });
+    if (!updated) {
+      return NextResponse.json({ error: 'Pipeline batch not found' }, { status: 404 });
+    }
+    return NextResponse.json(updated);
+  } catch (err) {
+    console.error('Update pipeline batch error:', err);
+    return NextResponse.json({ error: 'Failed to update pipeline batch' }, { status: 500 });
   }
 }
 

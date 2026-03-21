@@ -254,6 +254,15 @@ export default function VideoGenMasterFirstFrameCard({
           </div>
 
           {config.extractedFrameUrl && (
+            <>
+            <select
+              value={config.firstFrameProvider === 'gemini-pro' ? 'gemini-pro' : 'fal'}
+              onChange={(e) => onChange({ ...config, firstFrameProvider: e.target.value as 'fal' | 'gemini-pro' })}
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs font-medium text-[var(--text)] focus:border-[var(--accent-border)] focus:outline-none"
+            >
+              <option value="fal">FAL</option>
+              <option value="gemini-pro">Gemini 3 Pro</option>
+            </select>
             <button
               onClick={handleMasterGenerateAll}
               disabled={isMasterGeneratingAll || !masterModels || masterModels.length === 0}
@@ -270,6 +279,7 @@ export default function VideoGenMasterFirstFrameCard({
                 `Generate First Frame for All (${masterModels.length})`
               )}
             </button>
+            </>
           )}
 
           {!isExpanded && masterPerModelContent}

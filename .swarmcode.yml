@@ -1,0 +1,84 @@
+version: 1
+orchestrator:
+  provider: claude-code
+  command: claude
+  args:
+    - -p
+    - "{{prompt}}"
+    - --output-format
+    - text
+    - --verbose
+agents:
+  codex-cli:
+    displayName: Codex CLI
+    command: codex
+    args:
+      - exec
+      - "{{prompt}}"
+      - -a
+      - on-request
+      - --sandbox
+      - danger-full-access
+      - -C
+      - .
+    capabilities:
+      - implementation
+      - code-writing
+      - bug-fixing
+      - refactoring
+      - file-operations
+      - testing
+    role: Code implementer — writes, edits, and fixes code in a sandboxed
+      environment (OpenAI)
+    streamFormat: text
+    enabled: true
+  gemini:
+    displayName: Gemini CLI
+    command: gemini
+    args:
+      - -p
+      - "{{prompt}}"
+    capabilities:
+      - implementation
+      - code-writing
+      - research
+      - bug-fixing
+      - refactoring
+    role: Google Gemini coding agent — code generation, research, and analysis
+    streamFormat: text
+    enabled: true
+  kimi:
+    displayName: Kimi Code
+    command: kimi
+    args:
+      - --print
+      - -p
+      - "{{prompt}}"
+    capabilities:
+      - implementation
+      - code-writing
+      - bug-fixing
+      - refactoring
+      - file-operations
+    role: Kimi coding agent — code implementation and file operations (Moonshot AI)
+    streamFormat: text
+    enabled: true
+  opencode:
+    displayName: Open Code
+    command: opencode
+    args:
+      - run
+      - "{{prompt}}"
+    capabilities:
+      - implementation
+      - code-writing
+      - bug-fixing
+      - refactoring
+      - file-operations
+    role: Open Code agent — multi-model coding assistant
+    streamFormat: text
+    enabled: true
+confirm: false
+output:
+  showPhases: true
+  showDelegation: true

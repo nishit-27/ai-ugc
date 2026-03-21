@@ -516,6 +516,7 @@ export default function VideoGenConfig({
       setShowLibrary={setShowLibrary}
       setPreviewUrl={setPreviewUrl}
       onSetResolution={(resolution) => onChange({ ...config, firstFrameResolution: resolution })}
+      onSetProvider={(provider) => onChange({ ...config, firstFrameProvider: provider })}
       onToggleFirstFrame={handleToggleFirstFrame}
       onGenerateFirstFrame={handleGenerateFirstFrame}
       onBrowseLibrary={handleBrowseLibrary}

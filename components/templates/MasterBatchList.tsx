@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import type { PipelineBatch } from '@/types';
-import { ChevronLeft, ChevronRight, Loader2, CheckCircle2, XCircle, Clock, Crown, ChevronRight as Arrow } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, CheckCircle2, XCircle, Clock, Crown, ChevronRight as Arrow, Pencil } from 'lucide-react';
 import ProgressBar from '@/components/ui/ProgressBar';
 
 const PER_PAGE = 12;
@@ -15,12 +15,64 @@ function formatDate(dateStr?: string) {
     ', ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
+function InlineEditName({ batch, onRename }: { batch: PipelineBatch; onRename?: (id: string, name: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(batch.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setValue(batch.name); }, [batch.name]);
+  useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+
+  const save = () => {
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== batch.name) {
+      onRename?.(batch.id, trimmed);
+    } else {
+      setValue(batch.name);
+    }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') save();
+          if (e.key === 'Escape') { setValue(batch.name); setEditing(false); }
+        }}
+        onClick={(e) => e.preventDefault()}
+        className="w-full truncate rounded border border-[var(--primary)] bg-[var(--bg-primary)] px-1.5 py-0.5 text-sm font-semibold text-[var(--text)] outline-none"
+      />
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 min-w-0">
+      <span className="truncate text-sm font-semibold group-hover:text-[var(--primary)] transition-colors">{batch.name}</span>
+      {onRename && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditing(true); }}
+          className="shrink-0 rounded p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--primary)]"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function MasterBatchList({
   batches,
   loading,
+  onRename,
 }: {
   batches: PipelineBatch[];
   loading?: boolean;
+  onRename?: (id: string, name: string) => void;
 }) {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(batches.length / PER_PAGE));
@@ -103,7 +155,7 @@ export default function MasterBatchList({
                       <Crown className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold group-hover:text-[var(--primary)] transition-colors">{batch.name}</div>
+                      <InlineEditName batch={batch} onRename={onRename} />
                       <div className="text-[10px] text-[var(--text-muted)]">
                         {modelCount} model{modelCount !== 1 ? 's' : ''} &middot; {batch.totalJobs} video{batch.totalJobs !== 1 ? 's' : ''}
                       </div>

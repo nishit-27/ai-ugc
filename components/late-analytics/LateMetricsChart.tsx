@@ -25,7 +25,6 @@ const METRICS = [
   { key: 'comments', label: 'Comments', icon: '\uD83D\uDCAC', color: '#3b82f6' },
   { key: 'shares', label: 'Shares', icon: '\u27A1\uFE0F', color: '#22c55e' },
   { key: 'views', label: 'Views', icon: '\uD83D\uDC41\uFE0F', color: '#f59e0b' },
-  { key: 'impressions', label: 'Impress.', icon: '\uD83D\uDCC8', color: '#8b5cf6' },
   { key: 'reach', label: 'Reach', icon: '\uD83D\uDC65', color: '#06b6d4' },
   { key: 'clicks', label: 'Clicks', icon: '\uD83D\uDDB1\uFE0F', color: '#64748b' },
 ] as const;
@@ -47,7 +46,7 @@ export default function LateMetricsChart({
   dailyMetrics: DailyMetric[];
   dateRange?: { fromDate: string; toDate: string };
 }) {
-  const [activeMetrics, setActiveMetrics] = useState<Set<string>>(new Set(['likes', 'comments', 'views', 'impressions']));
+  const [activeMetrics, setActiveMetrics] = useState<Set<string>>(new Set(['likes', 'comments', 'views']));
 
   const toggleMetric = (key: string) => {
     setActiveMetrics(prev => {

@@ -35,8 +35,8 @@ const ANALYTICS_START_DATE = '2020-01-01';
 
 function LateMetricCardsSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-      {Array.from({ length: 8 }, (_, index) => (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+      {Array.from({ length: 7 }, (_, index) => (
         <div
           key={index}
           className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-3"
@@ -548,10 +548,10 @@ function LateAnalyticsContent() {
               </div>
               {runnablePosts.length > 0 ? (
                 <>
-                  <LateRunnableVideosPanel posts={runnablePosts} />
                   <LateMetricCards totals={runnableTotals} totalFollowers={totalFollowers} />
                   <LateMetricsChart dailyMetrics={runnableDailyMetrics} dateRange={dateRange} />
                   <LateAccountViewsChart accounts={runnableAccounts} posts={runnablePosts} dateRange={dateRange} />
+                  <LateRunnableVideosPanel posts={runnablePosts} />
                   <LateAccountsTable followerStats={runnableFollowerStats} posts={runnablePosts} />
                   <LateContentTable posts={runnablePosts} accounts={runnableAccounts} />
                 </>

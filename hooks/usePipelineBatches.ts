@@ -123,8 +123,27 @@ export function usePipelineBatches() {
     scheduleNext();
   }, [loadBatches, scheduleNext]);
 
+  const renameBatch = useCallback(async (id: string, name: string) => {
+    // Optimistic update
+    setBatches((prev) => {
+      const updated = prev.map((b) => (b.id === id ? { ...b, name } : b));
+      setCachedBatches(updated);
+      return updated;
+    });
+    try {
+      await fetch(`/api/pipeline-batches/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+    } catch {
+      // Revert on failure
+      void loadBatches();
+    }
+  }, [loadBatches]);
+
   const masterBatches = batches.filter(b => b.isMaster);
   const regularBatches = batches.filter(b => !b.isMaster);
 
-  return { batches, masterBatches, regularBatches, loading, refresh, refreshing };
+  return { batches, masterBatches, regularBatches, loading, refresh, refreshing, renameBatch };
 }

@@ -1,5 +1,5 @@
 'use client';
-import { Heart, MessageCircle, Share2, Eye, BarChart2, Users, MousePointer, TrendingUp } from 'lucide-react';
+import { Heart, MessageCircle, Share2, Eye, Users, MousePointer, TrendingUp } from 'lucide-react';
 
 function formatNum(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
@@ -17,14 +17,13 @@ export default function LateMetricCards({ totals, totalFollowers }: { totals: To
     { label: 'Comments', value: totals.comments, icon: MessageCircle, color: 'text-blue-500' },
     { label: 'Shares', value: totals.shares, icon: Share2, color: 'text-green-500' },
     { label: 'Views', value: totals.views, icon: Eye, color: 'text-purple-500' },
-    { label: 'Impressions', value: totals.impressions, icon: BarChart2, color: 'text-cyan-500' },
     { label: 'Reach', value: totals.reach, icon: Users, color: 'text-orange-500' },
     { label: 'Clicks', value: totals.clicks, icon: MousePointer, color: 'text-slate-500' },
     { label: 'Eng. Rate', value: engRate, icon: TrendingUp, color: 'text-emerald-500', isPercent: true },
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
       {cards.map(card => {
         const Icon = card.icon;
         return (

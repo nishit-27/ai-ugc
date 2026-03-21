@@ -6,6 +6,7 @@ import { uploadImage, downloadToBuffer } from '@/lib/storage.js';
 import { isR2Url } from '@/lib/r2';
 import { initDatabase, createGeneratedImage } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { generateImageWithReferences } from '@/lib/gemini-image';
 
 export const maxDuration = 300;
 
@@ -137,6 +138,7 @@ export async function POST(req: Request) {
       resolution = '1K',
       modelId,
       preserveText = false,
+      provider = 'fal',
     } = await req.json();
 
     if (!modelImageUrl || !sceneImageUrl) {
@@ -158,30 +160,55 @@ export async function POST(req: Request) {
     const sceneBuf = await padToSquare(rawSceneBuf);
     console.log(`[CarouselGen] Downloaded — model: ${modelBuf.length}B, scene: ${sceneBuf.length}B (padded to 1:1)`);
 
-    if (!config.FAL_KEY) {
-      return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
-    }
-    fal.config({ credentials: config.FAL_KEY });
-
     // Convert to JPEG and ensure minimum size
     const [modelJpeg, sceneJpeg] = await Promise.all([
       sharp(modelBuf).resize(1024, 1024, { fit: 'inside', withoutEnlargement: false }).jpeg({ quality: 95 }).toBuffer(),
       sharp(sceneBuf).resize(1024, 1024, { fit: 'inside', withoutEnlargement: false }).jpeg({ quality: 95 }).toBuffer(),
     ]);
 
-    const [falModelUrl, falSceneUrl] = await Promise.all([
-      fal.storage.upload(new Blob([new Uint8Array(modelJpeg)], { type: 'image/jpeg' })),
-      fal.storage.upload(new Blob([new Uint8Array(sceneJpeg)], { type: 'image/jpeg' })),
-    ]);
-    const falImageUrls = [falModelUrl, falSceneUrl];
-
-    // Generate variants
+    const activeProvider = provider === 'gemini' ? 'gemini' : 'fal';
     const prompt = preserveText ? FACE_SWAP_PROMPT_PRESERVE_TEXT : FACE_SWAP_PROMPT;
-    const promises = Array.from({ length: numVariants }, () =>
-      generateFaceSwap(prompt, resolution, falImageUrls),
-    );
-    const results = await Promise.all(promises);
-    const successfulBuffers = results.filter((b): b is Buffer => b !== null);
+    console.log(`[CarouselGen] Using provider: ${activeProvider}`);
+
+    let successfulBuffers: Buffer[];
+
+    if (activeProvider === 'gemini') {
+      // --- Gemini path ---
+      const promises = Array.from({ length: numVariants }, async () => {
+        try {
+          return await generateImageWithReferences({
+            prompt,
+            referenceImages: [
+              { data: modelJpeg, mimeType: 'image/jpeg' },
+              { data: sceneJpeg, mimeType: 'image/jpeg' },
+            ],
+          });
+        } catch (err) {
+          console.error('[CarouselGen] Gemini generation failed:', (err as Error).message);
+          return null;
+        }
+      });
+      const results = await Promise.all(promises);
+      successfulBuffers = results.filter((b): b is Buffer => b !== null);
+    } else {
+      // --- FAL path ---
+      if (!config.FAL_KEY) {
+        return NextResponse.json({ error: 'FAL API key not configured' }, { status: 500 });
+      }
+      fal.config({ credentials: config.FAL_KEY });
+
+      const [falModelUrl, falSceneUrl] = await Promise.all([
+        fal.storage.upload(new Blob([new Uint8Array(modelJpeg)], { type: 'image/jpeg' })),
+        fal.storage.upload(new Blob([new Uint8Array(sceneJpeg)], { type: 'image/jpeg' })),
+      ]);
+      const falImageUrls = [falModelUrl, falSceneUrl];
+
+      const promises = Array.from({ length: numVariants }, () =>
+        generateFaceSwap(prompt, resolution, falImageUrls),
+      );
+      const results = await Promise.all(promises);
+      successfulBuffers = results.filter((b): b is Buffer => b !== null);
+    }
 
     if (successfulBuffers.length === 0) {
       return NextResponse.json({ error: 'Face swap generation failed' }, { status: 500 });

@@ -148,6 +148,7 @@ export async function GET(request: Request) {
     let variableValuesByExternalId: Record<string, Record<string, string>> = {};
     let postVariableValuesByExternalId: Record<string, Record<string, string>> = {};
     let localFallbackPosts: Array<NormalizedLateAnalyticsPost & { variableValues: Record<string, string> }> = [];
+
     if (candidateExternalIds.size > 0) {
       try {
         await ensureDatabaseReady();
@@ -189,9 +190,9 @@ export async function GET(request: Request) {
           LIMIT 1
         ) aa ON TRUE
         WHERE p.status IN ('published', 'partial')
-          AND (${platform} IS NULL OR p.platform = ${platform})
-          AND (${widenedFromBound}::timestamp IS NULL OR COALESCE(p.published_at, p.last_checked_at, p.updated_at, p.created_at) >= ${widenedFromBound}::timestamp)
-          AND (${widenedToBound}::timestamp IS NULL OR COALESCE(p.published_at, p.last_checked_at, p.updated_at, p.created_at) <= ${widenedToBound}::timestamp)
+          AND (${platform || null}::text IS NULL OR p.platform = ${platform || null}::text)
+          AND (${widenedFromBound || null}::timestamp IS NULL OR COALESCE(p.published_at, p.last_checked_at, p.updated_at, p.created_at) >= ${widenedFromBound || null}::timestamp)
+          AND (${widenedToBound || null}::timestamp IS NULL OR COALESCE(p.published_at, p.last_checked_at, p.updated_at, p.created_at) <= ${widenedToBound || null}::timestamp)
         ORDER BY COALESCE(p.published_at, p.last_checked_at, p.updated_at, p.created_at) DESC
       ` as LocalLateAnalyticsDbRow[];
 
@@ -204,6 +205,23 @@ export async function GET(request: Request) {
       const jobVariableValuesByJobId = localJobIds.length > 0
         ? await getJobVariableValuesByTemplateJobIds(localJobIds)
         : {};
+
+      // Build a map from all known post IDs → variable values (via job_id)
+      // This serves as a robust fallback when external-ID-based lookups miss
+      const jobVarMap = jobVariableValuesByJobId as Record<string, Record<string, string>>;
+      for (const row of localRows) {
+        if (!row.job_id || !jobVarMap[row.job_id]) continue;
+        const vars = jobVarMap[row.job_id];
+        if (Object.keys(vars).length === 0) continue;
+        for (const alias of [row.late_post_id, row.external_post_id, row.id]) {
+          if (alias && alias.trim()) {
+            if (!postVariableValuesByExternalId[alias.trim()]) {
+              postVariableValuesByExternalId[alias.trim()] = {};
+            }
+            Object.assign(postVariableValuesByExternalId[alias.trim()], vars);
+          }
+        }
+      }
 
       localFallbackPosts = buildLateAnalyticsFallbackPosts({
         rows: localRows.map<LocalLateAnalyticsPostRow>((row) => ({

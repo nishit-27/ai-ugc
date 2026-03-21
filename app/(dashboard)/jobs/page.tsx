@@ -49,7 +49,7 @@ function getItemTimeMs(item: { createdAt?: string; completedAt?: string }): numb
 function JobsPageInner() {
   const searchParams = useSearchParams();
   const { jobs, loading: jobsLoading, refresh: refreshJobs, refreshing: refreshingJobs } = useTemplates();
-  const { batches, loading: batchesLoading, refresh: refreshBatches, refreshing: refreshingBatches } = usePipelineBatches();
+  const { batches, loading: batchesLoading, refresh: refreshBatches, refreshing: refreshingBatches, renameBatch } = usePipelineBatches();
   const { models: modelOptions } = useModelFilterOptions();
   const [modelFilter, setModelFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState<DateFilterValue>('newest');
@@ -226,7 +226,7 @@ function JobsPageInner() {
           ) : tab === 'batch' ? (
             <PipelineBatchList batches={filteredRegularBatches} />
           ) : (
-            <MasterBatchList batches={filteredMasterBatches} />
+            <MasterBatchList batches={filteredMasterBatches} onRename={renameBatch} />
           )}
         </>
       )}
