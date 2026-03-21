@@ -45,8 +45,9 @@ export async function generateImageFromPrompt(opts: {
     } as Parameters<typeof ai.models.generateContent>[0]['config'],
   });
 
-  const imagePart = response.candidates?.[0]?.content?.parts?.find(
-    (p: { inlineData?: { data: string; mimeType: string } }) => p.inlineData?.data,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const imagePart = (response.candidates?.[0]?.content?.parts as any[])?.find(
+    (p) => p.inlineData?.data,
   );
   if (!imagePart?.inlineData?.data) {
     throw new Error('Gemini returned no image data');
@@ -98,8 +99,9 @@ export async function generateImageWithReferences(opts: {
     } as Parameters<typeof ai.models.generateContent>[0]['config'],
   });
 
-  const imagePart = response.candidates?.[0]?.content?.parts?.find(
-    (p: { inlineData?: { data: string; mimeType: string } }) => p.inlineData?.data,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const imagePart = (response.candidates?.[0]?.content?.parts as any[])?.find(
+    (p) => p.inlineData?.data,
   );
   if (!imagePart?.inlineData?.data) {
     throw new Error('Gemini returned no image data');

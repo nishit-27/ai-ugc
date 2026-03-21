@@ -30,12 +30,12 @@ export async function generateFirstFrameRequest(params: {
   frameImageUrl: string;
   resolution: '1K' | '2K' | '4K';
   modelId?: string | null;
-  provider?: 'gemini' | 'fal' | 'gpt-image';
+  provider?: 'gemini' | 'gemini-pro' | 'fal' | 'gpt-image';
 }): Promise<FirstFrameOption[]> {
   const res = await fetch('/api/generate-first-frame', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...params, provider: params.provider ?? 'gemini' }),
+    body: JSON.stringify({ ...params, provider: params.provider ?? 'fal' }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to generate first frame');

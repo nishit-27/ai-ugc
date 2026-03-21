@@ -210,7 +210,7 @@ export default function VideoGenConfig({
           frameImageUrl: config.extractedFrameUrl,
           resolution: config.firstFrameResolution || '1K',
           modelId: config.modelId || null,
-          provider: config.firstFrameProvider || 'gemini',
+          provider: config.firstFrameProvider || 'fal',
         }),
       );
     } catch (error: unknown) {
@@ -314,7 +314,7 @@ export default function VideoGenConfig({
         frameImageUrl: config.extractedFrameUrl,
         resolution: config.firstFrameResolution || '1K',
         modelId,
-        provider: config.firstFrameProvider || 'gemini',
+        provider: config.firstFrameProvider || 'fal',
       });
       setMasterPerModelResults((prev) => ({ ...prev, [modelId]: options }));
       return options;
@@ -347,7 +347,7 @@ export default function VideoGenConfig({
       onProgress: (done, total) => setMasterProgress({ done, total }),
       frameImageUrl: config.extractedFrameUrl,
       resolution: config.firstFrameResolution || '1K',
-      provider: config.firstFrameProvider || 'gemini',
+      provider: config.firstFrameProvider || 'fal',
     });
     setMasterGeneratingIds(new Set());
     setIsMasterGeneratingAll(false);
