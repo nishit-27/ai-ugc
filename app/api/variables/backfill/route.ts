@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { initDatabase, getAllCustomVariables, createCustomVariable, setJobVariableValues, getTemplateJobsWithPipelineStep } from '@/lib/db';
+import { initDatabase, getAllCustomVariables, createCustomVariable, setJobVariableValues, sql } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 export async function POST() {
   try {
@@ -22,8 +23,16 @@ export async function POST() {
       });
     }
 
-    // Step 2: Find template_jobs that have an attach-video step in their pipeline
-    const matchingJobs = await getTemplateJobsWithPipelineStep('attach-video');
+    // Step 2: Find ALL template_jobs that have at least one published post
+    const matchingJobs = await sql`
+      SELECT DISTINCT tj.id
+      FROM template_jobs tj
+      WHERE EXISTS (
+        SELECT 1 FROM posts p
+        WHERE p.job_id = tj.id
+          AND p.status IN ('published', 'partial')
+      )
+    ` as { id: string }[];
 
     // Step 3: Upsert job_variable_values for each matching job
     let jobsUpdated = 0;

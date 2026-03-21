@@ -144,6 +144,14 @@ export async function GET(request: Request) {
         if (platform.platformPostId) candidateExternalIds.add(platform.platformPostId);
       }
     }
+    // Also collect latePostId from raw posts — the Late API analytics _id differs
+    // from the original post creation ID stored in posts.late_post_id
+    for (const raw of rawPosts) {
+      const rp = raw as Record<string, unknown>;
+      if (typeof rp.latePostId === 'string' && rp.latePostId) candidateExternalIds.add(rp.latePostId);
+      if (typeof rp.postId === 'string' && rp.postId) candidateExternalIds.add(rp.postId);
+      if (typeof rp.externalPostId === 'string' && rp.externalPostId) candidateExternalIds.add(rp.externalPostId);
+    }
 
     let variableValuesByExternalId: Record<string, Record<string, string>> = {};
     let postVariableValuesByExternalId: Record<string, Record<string, string>> = {};
@@ -249,6 +257,13 @@ export async function GET(request: Request) {
       console.error('Failed to load fallback local posts for late analytics:', error);
     }
 
+    // Build a map from normalized _id → raw post for extra ID lookups
+    const rawPostByNormalizedId = new Map<string, Record<string, unknown>>();
+    for (let i = 0; i < normalizedPosts.length; i++) {
+      const nId = normalizedPosts[i]._id;
+      if (nId) rawPostByNormalizedId.set(nId, rawPosts[i] as Record<string, unknown>);
+    }
+
     // Deduplicate posts by _id (safety net)
     const seenIds = new Set<string>();
     const allPosts: Array<NormalizedLateAnalyticsPost & { variableValues: Record<string, string> }> = [];
@@ -262,6 +277,13 @@ export async function GET(request: Request) {
       if (normalized._id) matchingExternalIds.add(normalized._id);
       for (const platform of normalized.platforms) {
         if (platform.platformPostId) matchingExternalIds.add(platform.platformPostId);
+      }
+      // Also check latePostId / postId / externalPostId from raw data
+      const rawPost = id ? rawPostByNormalizedId.get(id) : undefined;
+      if (rawPost) {
+        if (typeof rawPost.latePostId === 'string' && rawPost.latePostId) matchingExternalIds.add(rawPost.latePostId);
+        if (typeof rawPost.postId === 'string' && rawPost.postId) matchingExternalIds.add(rawPost.postId);
+        if (typeof rawPost.externalPostId === 'string' && rawPost.externalPostId) matchingExternalIds.add(rawPost.externalPostId);
       }
       for (const externalId of matchingExternalIds) {
         Object.assign(variableValues, variableValuesByExternalId[externalId] || {});
