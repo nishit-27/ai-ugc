@@ -46,6 +46,18 @@ export default function ImageGallery({
     setLoadedSrcById((prev) => (prev[id] === src ? prev : { ...prev, [id]: src }));
   }, []);
 
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!gridRef.current || images.length === 0) return;
+    const cards = gridRef.current.querySelectorAll(':scope > div');
+    if (!cards.length) return;
+    gsap.fromTo(cards,
+      { autoAlpha: 0, y: 20 },
+      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
+    );
+  }, { scope: gridRef, dependencies: [images] });
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -66,18 +78,6 @@ export default function ImageGallery({
       </div>
     );
   }
-
-  const gridRef = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    if (!gridRef.current || images.length === 0) return;
-    const cards = gridRef.current.querySelectorAll(':scope > div');
-    if (!cards.length) return;
-    gsap.fromTo(cards,
-      { autoAlpha: 0, y: 20 },
-      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
-    );
-  }, { scope: gridRef, dependencies: [images] });
 
   return (
     <div ref={gridRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
