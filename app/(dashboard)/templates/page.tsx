@@ -20,7 +20,7 @@ const DRAFT_KEY = 'ai-ugc-pipeline-draft';
 type PipelineDraft = {
   steps: MiniAppStep[];
   name: string;
-  videoSource: 'tiktok' | 'upload' | 'library';
+  videoSource: 'tiktok' | 'upload' | 'library' | 'generate';
   tiktokUrl: string;
   videoUrl: string;
   uploadedFilename: string;
@@ -44,7 +44,7 @@ export default function TemplatesPage() {
   const draft = useRef(loadDraft());
   const [steps, setSteps] = useState<MiniAppStep[]>(() => draft.current?.steps ?? []);
   const [name, setName] = useState(() => draft.current?.name ?? '');
-  const [videoSource, setVideoSource] = useState<'tiktok' | 'upload' | 'library'>(() => draft.current?.videoSource ?? 'tiktok');
+  const [videoSource, setVideoSource] = useState<'tiktok' | 'upload' | 'library' | 'generate'>(() => draft.current?.videoSource ?? 'tiktok');
   const [tiktokUrl, setTiktokUrl] = useState(() => draft.current?.tiktokUrl ?? '');
   const [videoUrl, setVideoUrl] = useState(() => draft.current?.videoUrl ?? '');
   const [uploadedFilename, setUploadedFilename] = useState(() => draft.current?.uploadedFilename ?? '');
@@ -481,6 +481,11 @@ export default function TemplatesPage() {
                   onFileDrop: handleVideoFile,
                   variableValues,
                   onVariableValuesChange: setVariableValues,
+                  onGeneratedVideo: (url: string) => {
+                    setVideoUrl(url);
+                    setPreviewUrl(url);
+                    setUploadedFilename('Generated video');
+                  },
                 }}
                 videoUrl={previewUrl || undefined}
                 sourceDuration={sourceDuration}

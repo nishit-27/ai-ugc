@@ -13,6 +13,7 @@ import TemplateJobList from '@/components/templates/TemplateJobList';
 import PipelineBatchList from '@/components/templates/PipelineBatchList';
 import MasterBatchList from '@/components/templates/MasterBatchList';
 import ModelDateToolbar from '@/components/media/ModelDateToolbar';
+import PageTransition from '@/components/ui/PageTransition';
 
 function getStepModelIds(steps: MiniAppStep[] = []): string[] {
   const ids = new Set<string>();
@@ -140,7 +141,7 @@ function JobsPageInner() {
   const isTabLoading = (tab === 'single' && jobsLoading) || ((tab === 'batch' || tab === 'master') && batchesLoading);
 
   return (
-    <div className="space-y-6">
+    <PageTransition className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Jobs</h1>
@@ -230,7 +231,7 @@ function JobsPageInner() {
           )}
         </>
       )}
-    </div>
+    </PageTransition>
   );
 }
 

@@ -217,30 +217,53 @@ export default function MasterBatchList({
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={safePage <= 1}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
+            className="flex h-8 items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Prev</span>
           </button>
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPage(p)}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors ${
-                p === safePage
-                  ? 'bg-[var(--primary)] text-white'
-                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'
-              }`}
-            >
-              {p}
-            </button>
-          ))}
+          {(() => {
+            const pages: (number | '...')[] = [];
+            if (totalPages <= 7) {
+              for (let i = 1; i <= totalPages; i++) pages.push(i);
+            } else {
+              pages.push(1);
+              if (safePage > 3) pages.push('...');
+              const start = Math.max(2, safePage - 1);
+              const end = Math.min(totalPages - 1, safePage + 1);
+              for (let i = start; i <= end; i++) pages.push(i);
+              if (safePage < totalPages - 2) pages.push('...');
+              pages.push(totalPages);
+            }
+            return pages.map((p, idx) =>
+              p === '...' ? (
+                <span key={`ellipsis-${idx}`} className="flex h-8 w-6 items-center justify-center text-xs text-[var(--text-muted)]">...</span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors ${
+                    p === safePage
+                      ? 'bg-[var(--primary)] text-white'
+                      : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            );
+          })()}
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={safePage >= totalPages}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
+            className="flex h-8 items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
-            <ChevronRight className="h-4 w-4" />
+            <span className="hidden sm:inline">Next</span>
+            <ChevronRight className="h-3.5 w-3.5" />
           </button>
+          <span className="ml-2 text-[10px] text-[var(--text-muted)]">
+            Page {safePage} of {totalPages}
+          </span>
         </div>
       )}
     </>

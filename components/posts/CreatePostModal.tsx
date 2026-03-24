@@ -313,24 +313,30 @@ export default function CreatePostModal({
       : null;
 
   const submitLabel = (() => {
+    if (selectedAccountIds.length === 0) {
+      if (selectedProfiles.length > 0 && postableAccounts.length === 0) {
+        return 'No postable accounts for selected profiles';
+      }
+      return forceRepost ? 'Select accounts to force repost' : 'Select accounts to publish';
+    }
+    const count = selectedAccountIds.length;
+    const s = count > 1 ? 's' : '';
     if (forceRepost) {
       if (publishMode === 'draft') return 'Force Save Draft';
-      if (publishMode === 'schedule') return 'Force Schedule Post';
-      if (publishMode === 'queue') return 'Force Add to Queue';
-      if (selectedAccountIds.length === 0) return 'Select accounts to force repost';
-      return `Force Repost to ${selectedAccountIds.length} account${selectedAccountIds.length > 1 ? 's' : ''}`;
+      if (publishMode === 'schedule') return `Force Schedule to ${count} account${s}`;
+      if (publishMode === 'queue') return `Force Queue to ${count} account${s}`;
+      return `Force Repost to ${count} account${s}`;
     }
     if (publishMode === 'draft') return 'Save Draft';
-    if (publishMode === 'schedule') return 'Schedule Post';
-    if (publishMode === 'queue') return 'Add to Queue';
-    if (selectedAccountIds.length === 0) return 'Select accounts to publish';
+    if (publishMode === 'schedule') return `Schedule to ${count} account${s}`;
+    if (publishMode === 'queue') return `Queue to ${count} account${s}`;
     const selectedPlatforms = selectedAccountIds.map((id) => postableAccounts.find((a) => a._id === id)?.platform).filter(Boolean);
     const uniquePlatforms = [...new Set(selectedPlatforms)];
-    if (selectedAccountIds.length === 1 && uniquePlatforms.length === 1) {
+    if (count === 1 && uniquePlatforms.length === 1) {
       const name = uniquePlatforms[0] === 'tiktok' ? 'TikTok' : uniquePlatforms[0] === 'youtube' ? 'YouTube' : 'Instagram';
       return `Publish to ${name}`;
     }
-    return `Publish to ${selectedAccountIds.length} accounts`;
+    return `Publish to ${count} accounts`;
   })();
 
   return (

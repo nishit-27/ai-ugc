@@ -1,10 +1,14 @@
 'use client';
 
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useState, useRef } from 'react';
 import { ImageIcon, Link2 } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaFacebook, FaXTwitter, FaLinkedin } from 'react-icons/fa6';
+import gsap from 'gsap';
+import { useGSAP } from '@gsap/react';
 import type { Model } from '@/types';
 import { Skeleton } from '@/components/ui/skeleton';
+
+gsap.registerPlugin(useGSAP);
 
 const PLATFORM_META: Record<string, { label: string; icon: ReactNode; color: string }> = {
   tiktok:    { label: 'TikTok',    icon: <FaTiktok className="h-3 w-3" />,    color: '#00f2ea' },
@@ -103,8 +107,21 @@ export default function ModelGrid({
     );
   }
 
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!gridRef.current || models.length === 0) return;
+    const cards = gridRef.current.querySelectorAll(':scope > div');
+    if (!cards.length) return;
+    gsap.fromTo(
+      cards,
+      { autoAlpha: 0, y: 20, scale: 0.97 },
+      { autoAlpha: 1, y: 0, scale: 1, duration: 0.35, stagger: 0.04, ease: 'power2.out' }
+    );
+  }, { scope: gridRef, dependencies: [models] });
+
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+    <div ref={gridRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {models.map((model, index) => {
         const platforms = model.linkedPlatforms || [];
         const groupNames = model.groupNames?.filter((g) => g.trim()) || [];
@@ -113,7 +130,8 @@ export default function ModelGrid({
           <div
             key={model.id}
             onClick={() => onModelClick(model)}
-            className="group cursor-pointer overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] transition-all hover:border-[var(--primary)]/50 hover:shadow-lg"
+            className="group cursor-pointer overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] transition-all hover:border-[var(--primary)]/50 hover:shadow-lg will-change-transform"
+            style={{ visibility: 'hidden' }}
           >
             {/* Avatar / Hero Image */}
             <div className="relative aspect-[3/4] bg-[var(--background)]">
@@ -178,8 +196,8 @@ export default function ModelGrid({
       {/* New model card */}
       <div
         onClick={onNewModel}
-        className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--surface)] transition-colors hover:border-[var(--primary)] hover:bg-[var(--accent)]"
-        style={{ minHeight: '200px' }}
+        className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--surface)] transition-colors hover:border-[var(--primary)] hover:bg-[var(--accent)] will-change-transform"
+        style={{ visibility: 'hidden', minHeight: '200px' }}
       >
         <div className="mb-2 text-3xl text-[var(--text-muted)]">+</div>
         <div className="text-sm font-medium text-[var(--text-muted)]">New Model</div>

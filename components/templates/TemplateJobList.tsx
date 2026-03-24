@@ -1,14 +1,18 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Send, Download, Check, Loader2, AlertCircle, ChevronLeft, ChevronRight, Play, Trash2 } from 'lucide-react';
+import gsap from 'gsap';
+import { useGSAP } from '@gsap/react';
 import type { TemplateJob, StepResult } from '@/types';
 import Spinner from '@/components/ui/Spinner';
 import StatusBadge from '@/components/ui/StatusBadge';
 import ProgressBar from '@/components/ui/ProgressBar';
 import Modal from '@/components/ui/Modal';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
+
+gsap.registerPlugin(useGSAP);
 
 function SkeletonCard() {
   return (
@@ -118,9 +122,21 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
     );
   }
 
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!gridRef.current || paginatedJobs.length === 0) return;
+    const cards = gridRef.current.querySelectorAll(':scope > div');
+    if (!cards.length) return;
+    gsap.fromTo(cards,
+      { autoAlpha: 0, y: 20 },
+      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
+    );
+  }, { scope: gridRef, dependencies: [paginatedJobs] });
+
   return (
     <>
-      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+      <div ref={gridRef} className="grid gap-4 grid-cols-2 sm:grid-cols-4">
         {paginatedJobs.map((job) => {
           const isActive = job.status === 'queued' || job.status === 'processing';
           const isFailedCard = job.status === 'failed';
@@ -238,30 +254,51 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={safePage <= 1}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
+            className="flex h-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
             <ChevronLeft className="h-4 w-4" />
+            <span className="text-xs">Prev</span>
           </button>
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPage(p)}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors ${
-                p === safePage
-                  ? 'bg-[var(--primary)] text-white'
-                  : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'
-              }`}
-            >
-              {p}
-            </button>
-          ))}
+          {(() => {
+            const pages: (number | '...')[] = [];
+            if (totalPages <= 7) {
+              for (let i = 1; i <= totalPages; i++) pages.push(i);
+            } else {
+              pages.push(1);
+              if (safePage > 3) pages.push('...');
+              const start = Math.max(2, safePage - 1);
+              const end = Math.min(totalPages - 1, safePage + 1);
+              for (let i = start; i <= end; i++) pages.push(i);
+              if (safePage < totalPages - 2) pages.push('...');
+              pages.push(totalPages);
+            }
+            return pages.map((p, idx) =>
+              p === '...' ? (
+                <span key={`ellipsis-${idx}`} className="flex h-8 w-6 items-center justify-center text-xs text-[var(--text-muted)]">...</span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors ${
+                    p === safePage
+                      ? 'bg-[var(--primary)] text-white'
+                      : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            );
+          })()}
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={safePage >= totalPages}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
+            className="flex h-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
+            <span className="text-xs">Next</span>
             <ChevronRight className="h-4 w-4" />
           </button>
+          <span className="ml-2 text-xs text-[var(--text-muted)]">Page {safePage} of {totalPages}</span>
         </div>
       )}
 

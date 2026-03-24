@@ -148,11 +148,15 @@ export async function processStep(
           },
           webhookUrl: getFalWebhookUrl(),
         });
-        await updateTemplateJob(jobId, {
-          step: `Step ${stepIndex + 1}: Veo 3.1 — generating...`,
-          falRequestId: request_id,
-          falEndpoint,
-        });
+        try {
+          await updateTemplateJob(jobId, {
+            step: `Step ${stepIndex + 1}: Veo 3.1 — generating...`,
+            falRequestId: request_id,
+            falEndpoint,
+          });
+        } catch (e) {
+          console.error(`[Template] Non-fatal: failed to save FAL request info for ${jobId}:`, e instanceof Error ? e.message : e);
+        }
         console.log(`[FAL] Template ${jobId} step ${stepIndex}: submitted Veo 3.1, request_id=${request_id}`);
         await fal.queue.subscribeToStatus(falEndpoint, {
           requestId: request_id,
@@ -202,11 +206,15 @@ export async function processStep(
           },
           webhookUrl: getFalWebhookUrl(),
         });
-        await updateTemplateJob(jobId, {
-          step: `Step ${stepIndex + 1}: Motion Control — processing...`,
-          falRequestId: request_id,
-          falEndpoint,
-        });
+        try {
+          await updateTemplateJob(jobId, {
+            step: `Step ${stepIndex + 1}: Motion Control — processing...`,
+            falRequestId: request_id,
+            falEndpoint,
+          });
+        } catch (e) {
+          console.error(`[Template] Non-fatal: failed to save FAL request info for ${jobId}:`, e instanceof Error ? e.message : e);
+        }
         console.log(`[FAL] Template ${jobId} step ${stepIndex}: submitted Motion Control, request_id=${request_id}`);
         await fal.queue.subscribeToStatus(falEndpoint, {
           requestId: request_id,
@@ -409,52 +417,120 @@ export async function processStep(
 }
 /**
  * Process a template job: iterate through pipeline steps sequentially.
+ * If fromStepIndex is provided, reuses prior step results and resumes from that step.
  */
-export async function processTemplateJob(jobId: string): Promise<void> {
+export async function processTemplateJob(jobId: string, fromStepIndex?: number): Promise<void> {
   const job = await getTemplateJob(jobId);
   if (!job) return;
   const tempDir = getTempDir();
   const tempFiles: string[] = [];
   const inlineMusicTrackPaths: string[] = []; // BG music tracks downloaded for inline application
+  const resuming = typeof fromStepIndex === 'number' && fromStepIndex > 0;
   try {
-    await updateTemplateJob(jobId, { status: 'processing', step: 'Starting pipeline...' });
-    if (job.tiktokUrl && job.videoSource !== 'upload') {
-      await updateTemplateJob(jobId, { step: 'Fetching video...' });
-      const rapidApiKey = config.RAPIDAPI_KEY;
-      if (!rapidApiKey) throw new Error('RAPIDAPI_KEY not configured');
-      const playUrl = await getVideoDownloadUrl(job.tiktokUrl, rapidApiKey);
-      await updateTemplateJob(jobId, { step: 'Downloading and storing video...' });
-      const tempPath = path.join(tempDir, `tpl-source-${jobId}-${Date.now()}.mp4`);
-      try {
-        await downloadFile(playUrl, tempPath);
-        const { url: gcsUrl } = await uploadVideoFromPath(tempPath, `tpl-source-${jobId}.mp4`);
-        await updateTemplateJob(jobId, { videoUrl: gcsUrl, videoSource: 'upload' });
-        job.videoUrl = gcsUrl;
-        job.videoSource = 'upload';
-        console.log(`[Template] Video stored in GCS: ${gcsUrl.slice(0, 80)}...`);
-      } finally {
-        try { fs.unlinkSync(tempPath); } catch {}
+    try {
+      await updateTemplateJob(jobId, { status: 'processing', step: resuming ? `Resuming from step ${fromStepIndex + 1}...` : 'Starting pipeline...' });
+    } catch (statusErr) {
+      console.error(`[Template] Non-fatal: failed to set processing status for ${jobId}:`, statusErr instanceof Error ? statusErr.message : statusErr);
+    }
+
+    const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
+
+    // ── Resume support: restore prior results and download the input video ──
+    let currentVideoPath: string = '';
+    const stepOutputs = new Map<string, string>();
+    const stepResults: { stepId: string; type: string; label: string; outputUrl: string; outputUrls?: string[]; isCarousel?: boolean }[] = [];
+    let carouselImagePaths: string[] | null = null;
+
+    if (resuming) {
+      // Restore step results from prior steps
+      const existingResults = job.stepResults || [];
+      const priorStepIds = new Set(enabledSteps.slice(0, fromStepIndex).map((s: MiniAppStep) => s.id));
+      for (const sr of existingResults) {
+        if (priorStepIds.has(sr.stepId)) {
+          stepResults.push(sr);
+        }
+      }
+
+      // Download the output from the step before fromStepIndex as our starting video
+      const prevResult = stepResults[stepResults.length - 1];
+      if (prevResult) {
+        if (prevResult.isCarousel && prevResult.outputUrls) {
+          // Restore carousel image paths
+          carouselImagePaths = [];
+          for (let imgIdx = 0; imgIdx < prevResult.outputUrls.length; imgIdx++) {
+            const ext = path.extname(prevResult.outputUrls[imgIdx]) || '.jpg';
+            const localPath = path.join(tempDir, `tpl-resume-carousel-${imgIdx}-${jobId}-${Date.now()}${ext}`);
+            await downloadToLocal(prevResult.outputUrls[imgIdx], localPath);
+            carouselImagePaths.push(localPath);
+            tempFiles.push(localPath);
+          }
+        } else {
+          currentVideoPath = path.join(tempDir, `tpl-resume-${jobId}-${Date.now()}.mp4`);
+          await downloadToLocal(prevResult.outputUrl, currentVideoPath);
+          tempFiles.push(currentVideoPath);
+        }
+
+        // Pre-populate stepOutputs so attach-video/compose can reference prior steps
+        for (const sr of stepResults) {
+          if (!sr.isCarousel) {
+            const localPath = path.join(tempDir, `tpl-resume-stepout-${sr.stepId}-${Date.now()}.mp4`);
+            // Only download if different from currentVideoPath source
+            if (sr.stepId !== prevResult.stepId) {
+              await downloadToLocal(sr.outputUrl, localPath);
+              tempFiles.push(localPath);
+            } else {
+              // Reuse the already-downloaded file
+              stepOutputs.set(sr.stepId, currentVideoPath);
+              continue;
+            }
+            stepOutputs.set(sr.stepId, localPath);
+          }
+        }
+      }
+      console.log(`[Template] Resuming job ${jobId} from step ${fromStepIndex}, restored ${stepResults.length} prior results`);
+    } else {
+      // ── Normal full processing ──
+      if (job.tiktokUrl && job.videoSource !== 'upload') {
+        try { await updateTemplateJob(jobId, { step: 'Fetching video...' }); } catch {}
+        const rapidApiKey = config.RAPIDAPI_KEY;
+        if (!rapidApiKey) throw new Error('RAPIDAPI_KEY not configured');
+        const playUrl = await getVideoDownloadUrl(job.tiktokUrl, rapidApiKey);
+        try { await updateTemplateJob(jobId, { step: 'Downloading and storing video...' }); } catch {}
+        const tempPath = path.join(tempDir, `tpl-source-${jobId}-${Date.now()}.mp4`);
+        try {
+          await downloadFile(playUrl, tempPath);
+          const { url: gcsUrl } = await uploadVideoFromPath(tempPath, `tpl-source-${jobId}.mp4`);
+          try { await updateTemplateJob(jobId, { videoUrl: gcsUrl, videoSource: 'upload' }); } catch (e) {
+            console.error(`[Template] Non-fatal: failed to persist video URL for ${jobId}:`, e instanceof Error ? e.message : e);
+          }
+          job.videoUrl = gcsUrl;
+          job.videoSource = 'upload';
+          console.log(`[Template] Video stored in GCS: ${gcsUrl.slice(0, 80)}...`);
+        } finally {
+          try { fs.unlinkSync(tempPath); } catch {}
+        }
+      }
+
+      const firstStep = enabledSteps[0];
+      if (firstStep?.type === 'video-generation' && (firstStep.config as VideoGenConfig).mode === 'subtle-animation') {
+        currentVideoPath = '';
+      } else if (firstStep?.type === 'compose') {
+        currentVideoPath = '';
+      } else if (firstStep?.type === 'carousel') {
+        currentVideoPath = '';
+      } else if (job.videoSource === 'upload' && job.videoUrl) {
+        try { await updateTemplateJob(jobId, { step: 'Downloading video...' }); } catch {}
+        currentVideoPath = path.join(tempDir, `tpl-input-${jobId}-${Date.now()}.mp4`);
+        await downloadToLocal(job.videoUrl, currentVideoPath);
+        tempFiles.push(currentVideoPath);
+      } else {
+        throw new Error('No video source provided');
       }
     }
-    let currentVideoPath: string;
-    const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
-    const firstStep = enabledSteps[0];
-    if (firstStep?.type === 'video-generation' && (firstStep.config as VideoGenConfig).mode === 'subtle-animation') {
-      currentVideoPath = '';
-    } else if (firstStep?.type === 'compose') {
-      currentVideoPath = ''; // compose step has its own inputs
-    } else if (firstStep?.type === 'carousel') {
-      currentVideoPath = ''; // carousel step collects its own images
-    } else if (job.videoSource === 'upload' && job.videoUrl) {
-      await updateTemplateJob(jobId, { step: 'Downloading video...' });
-      currentVideoPath = path.join(tempDir, `tpl-input-${jobId}-${Date.now()}.mp4`);
-      await downloadToLocal(job.videoUrl, currentVideoPath);
-      tempFiles.push(currentVideoPath);
-    } else {
-      throw new Error('No video source provided');
-    }
+
+    // ── Inline music setup (always runs for full step list) ──
     const inlineMusicMap = new Map<string, { config: BgMusicConfig; trackPath: string }>();
-    const inlineMusicSkipSet = new Set<string>(); // BG music step IDs to skip (already applied inline)
+    const inlineMusicSkipSet = new Set<string>();
     for (const s of enabledSteps) {
       if (s.type === 'bg-music') {
         const bgCfg = s.config as BgMusicConfig;
@@ -480,19 +556,23 @@ export async function processTemplateJob(jobId: string): Promise<void> {
         }
       }
     }
-    const stepOutputs = new Map<string, string>();
-    const stepResults: { stepId: string; type: string; label: string; outputUrl: string; outputUrls?: string[]; isCarousel?: boolean }[] = [];
-    let carouselImagePaths: string[] | null = null;
-    for (let i = 0; i < enabledSteps.length; i++) {
+
+    // ── Main step loop (starts from fromStepIndex if resuming) ──
+    const startIdx = fromStepIndex ?? 0;
+    for (let i = startIdx; i < enabledSteps.length; i++) {
       const step = enabledSteps[i];
       const stepLabel = getStepLabel(step);
       if (inlineMusicSkipSet.has(step.id)) {
         continue;
       }
-      await updateTemplateJob(jobId, {
-        currentStep: i,
-        step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel}`,
-      });
+      try {
+        await updateTemplateJob(jobId, {
+          currentStep: i,
+          step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel}`,
+        });
+      } catch (progressErr) {
+        console.error(`[Template] Non-fatal: failed to update progress for step ${i}:`, progressErr instanceof Error ? progressErr.message : progressErr);
+      }
       const inlineMusic = inlineMusicMap.get(step.id);
       const result = await processStep(step, currentVideoPath, jobId, i, stepOutputs, inlineMusic, carouselImagePaths);
 
@@ -538,11 +618,15 @@ export async function processTemplateJob(jobId: string): Promise<void> {
         currentVideoPath = newVideoPath;
         tempFiles.push(newVideoPath);
       }
-      await updateTemplateJob(jobId, {
-        currentStep: i + 1,
-        step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel} — done`,
-        stepResults,
-      });
+      try {
+        await updateTemplateJob(jobId, {
+          currentStep: i + 1,
+          step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel} — done`,
+          stepResults,
+        });
+      } catch (progressErr) {
+        console.error(`[Template] Non-fatal: failed to update progress after step ${i}:`, progressErr instanceof Error ? progressErr.message : progressErr);
+      }
     }
     // Determine final output URL
     const lastResult = stepResults[stepResults.length - 1];
@@ -554,13 +638,26 @@ export async function processTemplateJob(jobId: string): Promise<void> {
     } else {
       finalUrl = (await uploadVideoFromPath(currentVideoPath, `template-${jobId}.mp4`)).url;
     }
-    await updateTemplateJob(jobId, {
-      status: 'completed',
-      step: 'Done!',
-      outputUrl: finalUrl,
-      stepResults,
-      completedAt: new Date(),
-    });
+    // Completion update — retry once since the video is already processed
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await updateTemplateJob(jobId, {
+          status: 'completed',
+          step: 'Done!',
+          outputUrl: finalUrl,
+          stepResults,
+          completedAt: new Date(),
+        });
+        break;
+      } catch (completionErr) {
+        if (attempt === 0) {
+          console.error(`[Template] Completion update failed (retrying): ${completionErr instanceof Error ? completionErr.message : completionErr}`);
+          await new Promise((r) => setTimeout(r, 1000));
+        } else {
+          throw completionErr;
+        }
+      }
+    }
     if (job.pipelineBatchId) {
       try {
         await updatePipelineBatchProgress(job.pipelineBatchId);
@@ -569,18 +666,29 @@ export async function processTemplateJob(jobId: string): Promise<void> {
       }
     }
   } catch (error) {
-    await updateTemplateJob(jobId, {
-      status: 'failed',
-      step: 'Failed',
-      error: error instanceof Error ? error.message : String(error),
-    });
-    const failedJob = await getTemplateJob(jobId);
-    if (failedJob?.pipelineBatchId) {
-      try {
-        await updatePipelineBatchProgress(failedJob.pipelineBatchId);
-      } catch (e) {
-        console.error('Failed to update pipeline batch progress:', e);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errCause = error instanceof Error && error.cause ? ` | cause: ${error.cause instanceof Error ? error.cause.message : String(error.cause)}` : '';
+    console.error(`[Template] Job ${jobId} failed: ${errMsg}${errCause}`);
+    try {
+      await updateTemplateJob(jobId, {
+        status: 'failed',
+        step: 'Failed',
+        error: errMsg + errCause,
+      });
+    } catch (updateErr) {
+      console.error(`[Template] Failed to mark job ${jobId} as failed:`, updateErr);
+    }
+    try {
+      const failedJob = await getTemplateJob(jobId);
+      if (failedJob?.pipelineBatchId) {
+        try {
+          await updatePipelineBatchProgress(failedJob.pipelineBatchId);
+        } catch (e) {
+          console.error('Failed to update pipeline batch progress:', e);
+        }
       }
+    } catch (fetchErr) {
+      console.error(`[Template] Failed to fetch job ${jobId} for batch progress:`, fetchErr);
     }
   } finally {
     for (const f of tempFiles) {
@@ -674,7 +782,11 @@ export async function processPipelineBatch(
       );
       console.log(`[PipelineBatch] Video uploaded to stable storage: ${stableUrl.slice(0, 80)}...`);
       for (const jobId of childJobIds) {
-        await updateTemplateJob(jobId, { videoUrl: stableUrl, videoSource: 'upload' });
+        try {
+          await updateTemplateJob(jobId, { videoUrl: stableUrl, videoSource: 'upload' });
+        } catch (e) {
+          console.error(`[PipelineBatch] Non-fatal: failed to set videoUrl for child job ${jobId}:`, e instanceof Error ? e.message : e);
+        }
       }
     }
 

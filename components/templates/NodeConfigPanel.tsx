@@ -1,7 +1,8 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { X, Video, Type, Music, Film, Upload, Layers, LayoutGrid, Images, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import { useRef, useState, useEffect } from 'react';
+import { X, Video, Type, Music, Film, Upload, Layers, LayoutGrid, Images, Maximize2, Minimize2, Trash2, Sparkles } from 'lucide-react';
+import Spinner from '@/components/ui/Spinner';
 import PreviewModal from '@/components/ui/PreviewModal';
 import type { MiniAppStep, MiniAppType, VideoGenConfig as VGC, TextOverlayConfig as TOC, BgMusicConfig as BMC, AttachVideoConfig as AVC, BatchVideoGenConfig as BVGC, ComposeConfig as CC, CarouselConfig as CRC } from '@/types';
 import VideoGenConfig from './VideoGenConfig';
@@ -26,14 +27,14 @@ const nodeMeta: Record<MiniAppType, { label: string; icon: typeof Video; iconBg:
 };
 
 type SourceConfig = {
-  videoSource: 'tiktok' | 'upload' | 'library';
+  videoSource: 'tiktok' | 'upload' | 'library' | 'generate';
   tiktokUrl: string;
   videoUrl: string;
   previewUrl?: string;
   uploadedFilename: string;
   isUploading: boolean;
   uploadProgress: number;
-  onVideoSourceChange: (src: 'tiktok' | 'upload' | 'library') => void;
+  onVideoSourceChange: (src: 'tiktok' | 'upload' | 'library' | 'generate') => void;
   onTiktokUrlChange: (url: string) => void;
   onVideoUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onVideoRemove: () => void;
@@ -46,6 +47,8 @@ type SourceConfig = {
   // Variable tagging
   variableValues?: Record<string, string>;
   onVariableValuesChange?: (values: Record<string, string>) => void;
+  // Generate mode callback
+  onGeneratedVideo?: (url: string) => void;
 };
 
 export type MasterModel = { modelId: string; modelName: string; primaryImageUrl: string; primaryGcsUrl: string };
@@ -106,8 +109,8 @@ export default function NodeConfigPanel({
           <div className={isExpanded ? 'mx-auto max-w-2xl space-y-4' : 'space-y-4'}>
           <div className="flex gap-2">
             {(masterMode
-              ? (['tiktok', 'upload', 'library'] as const)
-              : (['tiktok', 'upload'] as const)
+              ? (['tiktok', 'upload', 'library', 'generate'] as const)
+              : (['tiktok', 'upload', 'generate'] as const)
             ).map((src) => (
               <button
                 key={src}
@@ -118,12 +121,14 @@ export default function NodeConfigPanel({
                     : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)] hover:text-[var(--text)]'
                 }`}
               >
-                {src === 'tiktok' ? 'Paste URL' : src === 'upload' ? 'Upload Video' : 'From Library'}
+                {src === 'tiktok' ? 'Paste URL' : src === 'upload' ? 'Upload Video' : src === 'library' ? 'From Library' : 'Generate'}
               </button>
             ))}
           </div>
 
-          {sourceConfig.videoSource === 'library' && masterMode ? (
+          {sourceConfig.videoSource === 'generate' ? (
+            <GenerateVideoInline onGenerated={sourceConfig.onGeneratedVideo} />
+          ) : sourceConfig.videoSource === 'library' && masterMode ? (
             <LibraryVideoSelector
               masterModels={masterModels || []}
               selectedModelIds={sourceConfig.selectedModelIds || []}
@@ -300,6 +305,209 @@ export default function NodeConfigPanel({
       </div>
       <p className="text-sm font-medium text-[var(--text)]">Select a step</p>
       <p className="mt-1 text-xs text-[var(--text-muted)]">Click a node to edit its settings</p>
+    </div>
+  );
+}
+
+/* ── Inline Generate Video ── */
+
+type GenModel = { id: string; label: string; requiresImage: boolean; supportsImage: boolean; aspectRatios: string[]; durations: string[] };
+type GenState = 'idle' | 'uploading' | 'generating' | 'done' | 'error';
+
+function GenerateVideoInline({ onGenerated }: { onGenerated?: (url: string) => void }) {
+  const [models, setModels] = useState<GenModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [aspectRatio, setAspectRatio] = useState('9:16');
+  const [duration, setDuration] = useState('5');
+  const [state, setState] = useState<GenState>('idle');
+  const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    fetch('/api/generate-video')
+      .then((r) => r.json())
+      .then((d) => { setModels(d.models || []); if (d.models?.[0]) setSelectedModel(d.models[0].id); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (state === 'generating') {
+      setElapsed(0);
+      timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    } else if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [state]);
+
+  const current = models.find((m) => m.id === selectedModel);
+
+  // When model changes, clamp aspect ratio and duration to valid options
+  useEffect(() => {
+    if (!current) return;
+    if (!current.aspectRatios.includes(aspectRatio)) setAspectRatio(current.aspectRatios[0] || '9:16');
+    if (!current.durations.includes(duration)) setDuration(current.durations[0] || '5');
+  }, [selectedModel, current]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const needsImage = current?.requiresImage ?? false;
+  const canImage = current?.supportsImage ?? false;
+  const missingImage = needsImage && !imageUrl;
+
+  // Validation issues to show
+  const issues: string[] = [];
+  if (!prompt.trim()) issues.push('Prompt required');
+  if (missingImage) issues.push('Image required for this model');
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImagePreview(URL.createObjectURL(file));
+    setState('uploading');
+    const fd = new FormData();
+    fd.append('image', file);
+    try {
+      const res = await fetch('/api/upload-image', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.success) setImageUrl(data.url || data.path);
+    } catch {}
+    setState('idle');
+    e.target.value = '';
+  };
+
+  const handleGenerate = async () => {
+    if (issues.length > 0) return;
+    setState('generating');
+    setResultUrl(null);
+    setErrorMsg(null);
+    try {
+      const res = await fetch('/api/generate-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId: selectedModel, prompt: prompt.trim(), imageUrl: imageUrl || undefined, aspectRatio, duration }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setResultUrl(data.videoUrl);
+        setState('done');
+        onGenerated?.(data.videoUrl);
+      } else {
+        setErrorMsg(data.error || 'Failed');
+        setState('error');
+      }
+    } catch (err) {
+      setErrorMsg((err as Error).message);
+      setState('error');
+    }
+  };
+
+  const fmt = (s: number) => { const m = Math.floor(s / 60); return m > 0 ? `${m}m ${s % 60}s` : `${s}s`; };
+
+  if (state === 'generating') {
+    return (
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-[var(--primary)]/40 bg-[var(--accent)] py-8">
+        <Spinner className="h-6 w-6 text-[var(--primary)]" />
+        <span className="text-xs font-semibold text-[var(--primary)]">Generating... {fmt(elapsed)}</span>
+        <span className="text-[10px] text-[var(--text-muted)]">{current?.label} — takes 1-5 min</span>
+      </div>
+    );
+  }
+
+  if (state === 'done' && resultUrl) {
+    return (
+      <div className="space-y-2">
+        <div className="overflow-hidden rounded-xl border border-emerald-400/60 bg-black">
+          <video src={resultUrl} controls autoPlay loop className="w-full" style={{ maxHeight: 200 }} />
+        </div>
+        <div className="flex gap-2">
+          <a href={resultUrl} download target="_blank" rel="noopener noreferrer" className="flex-1 rounded-lg border border-[var(--border)] py-1.5 text-center text-[11px] font-medium text-[var(--text)] hover:bg-[var(--accent)]">Download</a>
+          <button onClick={() => { setState('idle'); setResultUrl(null); }} className="flex-1 rounded-lg border border-[var(--border)] py-1.5 text-[11px] font-medium text-[var(--text)] hover:bg-[var(--accent)]">New</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === 'error') {
+    return (
+      <div className="rounded-xl border border-red-300/60 bg-red-50 p-3 text-center dark:bg-red-950/30 dark:border-red-800/40">
+        <p className="text-[11px] font-medium text-red-700 dark:text-red-400">{errorMsg}</p>
+        <button onClick={() => setState('idle')} className="mt-2 rounded-lg bg-red-500 px-3 py-1 text-[11px] font-medium text-white hover:bg-red-600">Retry</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2.5">
+      {/* Model */}
+      <select
+        value={selectedModel}
+        onChange={(e) => setSelectedModel(e.target.value)}
+        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-xs text-[var(--text)] focus:outline-none"
+      >
+        {models.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}{m.requiresImage ? ' (needs image)' : ''}
+          </option>
+        ))}
+      </select>
+
+      {/* Image — only if model supports it */}
+      {canImage && (
+        imagePreview ? (
+          <div className="flex items-center gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--background)] p-2">
+            <img src={imagePreview} alt="" className="h-12 w-12 shrink-0 rounded-md object-cover" />
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-[11px] font-medium text-[var(--text)]">Reference image</span>
+              {state === 'uploading' ? (
+                <span className="text-[10px] text-[var(--text-muted)]">Uploading...</span>
+              ) : (
+                <button onClick={() => { setImageUrl(null); setImagePreview(null); }} className="text-[10px] text-red-500 hover:underline">Remove</button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <label className={`flex cursor-pointer items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 transition-colors hover:border-[var(--primary)] hover:bg-[var(--accent)] ${needsImage ? 'border-amber-400 bg-amber-50/50 dark:bg-amber-950/20' : 'border-[var(--border)]'}`}>
+            <Upload className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
+            <span className="text-[11px] text-[var(--text-muted)]">{needsImage ? 'Upload image (required)' : 'Upload image (optional)'}</span>
+            <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+          </label>
+        )
+      )}
+
+      {/* Prompt */}
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        placeholder="Describe the video..."
+        rows={2}
+        className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none"
+      />
+
+      {/* Aspect + Duration — only show valid options for current model */}
+      <div className="flex gap-2">
+        <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-[11px] text-[var(--text)] focus:outline-none">
+          {(current?.aspectRatios || ['9:16', '16:9']).map((ar) => (
+            <option key={ar} value={ar}>{ar}</option>
+          ))}
+        </select>
+        <select value={duration} onChange={(e) => setDuration(e.target.value)} className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-[11px] text-[var(--text)] focus:outline-none">
+          {(current?.durations || ['5']).map((d) => (
+            <option key={d} value={d}>{d}s</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Generate */}
+      <button
+        onClick={handleGenerate}
+        disabled={issues.length > 0 || state === 'uploading'}
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Sparkles className="h-3 w-3" />
+        {issues.length > 0 ? issues[0] : 'Generate Video'}
+      </button>
     </div>
   );
 }

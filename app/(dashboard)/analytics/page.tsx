@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef, useCallback, Suspense } from 'react';
 import { RefreshCw, Plus, BarChart3, Link2, Filter, ArrowDownUp, Clock, Search, LayoutGrid, List, ExternalLink } from 'lucide-react';
+import PageTransition from '@/components/ui/PageTransition';
 import { FaTiktok, FaInstagram, FaYoutube } from 'react-icons/fa6';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -465,7 +466,7 @@ function AnalyticsContent() {
   }
 
   return (
-    <div className="space-y-6">
+    <PageTransition className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -858,7 +859,7 @@ function AnalyticsContent() {
       </Tabs>
 
       <AddAccountModal open={addModalOpen} onClose={() => setAddModalOpen(false)} onAdd={handleAddAccount} />
-    </div>
+    </PageTransition>
   );
 }
 

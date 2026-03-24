@@ -10,6 +10,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import ModelGrid from '@/components/models/ModelGrid';
 import NewModelModal from '@/components/models/NewModelModal';
 import ModelDetailModal from '@/components/models/ModelDetailModal';
+import PageTransition from '@/components/ui/PageTransition';
 
 const ALL_GROUPS_KEY = '__all__';
 const UNGROUPED_KEY = '__ungrouped__';
@@ -152,7 +153,7 @@ export default function ModelsPage() {
   const currentGroupOption = groupData.groupOptions.find((g) => g.key === resolvedGroupKey);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <PageTransition className="mx-auto max-w-5xl space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -416,6 +417,6 @@ export default function ModelsPage() {
         loadModels={handleRefresh}
         existingGroupNames={groupData.existingGroupNames}
       />
-    </div>
+    </PageTransition>
   );
 }

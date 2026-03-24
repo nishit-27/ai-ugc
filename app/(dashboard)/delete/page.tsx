@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import PageTransition from '@/components/ui/PageTransition';
 import {
   Search,
   Trash2,
@@ -304,7 +305,7 @@ export default function DeletePage() {
   const meta = selectedPlatform ? PLATFORM_META[selectedPlatform] : null;
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+    <PageTransition className="flex h-[calc(100vh-3.5rem)] flex-col">
       {/* ── Header ── */}
       <div className="shrink-0 border-b border-[var(--border)] bg-[var(--surface)] px-6 py-4">
         <div className="mx-auto flex max-w-7xl items-center justify-between">
@@ -710,6 +711,6 @@ export default function DeletePage() {
           </div>
         </div>
       )}
-    </div>
+    </PageTransition>
   );
 }

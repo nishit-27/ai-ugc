@@ -40,6 +40,9 @@ const TRACKED_ENDPOINTS = [
   'fal-ai/nano-banana-2/edit',
   'fal-ai/kling-video/v2.6/standard/motion-control',
   'fal-ai/veo3.1/image-to-video',
+  'fal-ai/veo3.1',
+  'fal-ai/bytedance/seedance/v1.5/pro/image-to-video',
+  'fal-ai/kling-video/v2.6/pro/image-to-video',
 ];
 
 async function getCachedPricing(): Promise<Map<string, FalPrice>> {

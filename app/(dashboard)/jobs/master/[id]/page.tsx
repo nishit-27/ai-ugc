@@ -386,6 +386,29 @@ export default function MasterBatchDetailPage() {
     await loadBatch();
   };
 
+  const handleRegenStep = async (jobId: string, stepIndex: number) => {
+    addBusy(jobId);
+    try {
+      const res = await fetch(`/api/templates/${jobId}/regen-step`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepIndex }),
+      });
+      if (res.ok) {
+        showToast(`Re-running from step ${stepIndex + 1}...`, 'success');
+        setModalJob(null);
+        await loadBatch();
+      } else {
+        const data = await res.json();
+        showToast(data.error || 'Failed to regenerate step', 'error');
+      }
+    } catch {
+      showToast('Failed to regenerate step', 'error');
+    } finally {
+      removeBusy(jobId);
+    }
+  };
+
   const handleEditRegenerate = async (jobId: string, overrides?: { imageUrl?: string; imageId?: string }) => {
     setRegenerateJob(null);
     addBusy(jobId);
@@ -585,6 +608,7 @@ export default function MasterBatchDetailPage() {
         onRepost={handleRepost}
         onReject={handleSingleReject}
         onQuickRegenerate={handleQuickRegenerate}
+        onRegenStep={handleRegenStep}
         onEditRegenerateOpen={openRegenerateModal}
         onEditRegenerateSubmit={handleEditRegenerate}
         onEditJobOverrides={setEditOverridesJob}

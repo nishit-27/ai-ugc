@@ -1,6 +1,7 @@
 'use client';
 
 import { useBatches } from '@/hooks/useBatches';
+import PageTransition from '@/components/ui/PageTransition';
 import BatchList from '@/components/batches/BatchList';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -10,7 +11,7 @@ export default function BatchesPage() {
   const { batches, isLoadingPage, refresh } = useBatches();
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <PageTransition className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Batches</h1>
@@ -29,6 +30,6 @@ export default function BatchesPage() {
       </div>
 
       <BatchList batches={batches} isLoading={isLoadingPage} />
-    </div>
+    </PageTransition>
   );
 }

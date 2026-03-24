@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import PageTransition from '@/components/ui/PageTransition';
 import { FolderPlus, RefreshCw, Pencil, Trash2, Users, FolderOpen, Loader2, GripVertical, Search, Check, ChevronDown } from 'lucide-react';
 import { useModels } from '@/hooks/useModels';
 import { Button } from '@/components/ui/button';
@@ -423,7 +424,7 @@ export default function ModelGroupsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <PageTransition className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[var(--primary)]">Model Groups</h1>
@@ -674,6 +675,6 @@ export default function ModelGroupsPage() {
           </div>
         </div>
       </div>
-    </div>
+    </PageTransition>
   );
 }

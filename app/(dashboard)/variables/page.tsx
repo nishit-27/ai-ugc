@@ -8,6 +8,7 @@ import { useVariables, type CustomVariable } from '@/hooks/useVariables';
 import { useToast } from '@/hooks/useToast';
 import VariableTable from '@/components/variables/VariableTable';
 import VariableModal from '@/components/variables/VariableModal';
+import PageTransition from '@/components/ui/PageTransition';
 
 export default function VariablesPage() {
   const { variables, loading, createVariable, updateVariable, deleteVariable } = useVariables();
@@ -77,7 +78,7 @@ export default function VariablesPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <PageTransition className="space-y-8">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -142,6 +143,6 @@ export default function VariablesPage() {
         onSave={handleSave}
         variable={editing}
       />
-    </div>
+    </PageTransition>
   );
 }

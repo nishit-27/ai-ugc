@@ -24,6 +24,7 @@ type Props = {
   onRepost: (jobId: string) => void;
   onReject: (jobId: string) => void;
   onQuickRegenerate: (jobId: string) => void;
+  onRegenStep?: (jobId: string, stepIndex: number) => void;
   onEditRegenerateOpen: (job: TemplateJob) => void;
   onEditRegenerateSubmit: (jobId: string, overrides?: { imageUrl?: string; imageId?: string }) => void;
   onEditJobOverrides?: (job: TemplateJob) => void;
@@ -58,6 +59,7 @@ export default function MasterBatchModals({
   onRepost,
   onReject,
   onQuickRegenerate,
+  onRegenStep,
   onEditRegenerateOpen,
   onEditRegenerateSubmit,
   onEditJobOverrides,
@@ -77,6 +79,7 @@ export default function MasterBatchModals({
           onRepost={() => onRepost(modalJob.id)}
           onReject={() => onReject(modalJob.id)}
           onQuickRegenerate={() => onQuickRegenerate(modalJob.id)}
+          onRegenStep={onRegenStep ? (stepIndex) => onRegenStep(modalJob.id, stepIndex) : undefined}
           onEditRegenerate={() => onEditRegenerateOpen(modalJob)}
           onEditOverrides={onEditJobOverrides ? () => onEditJobOverrides(modalJob) : undefined}
           hasOverrides={jobsWithOverrides?.has(modalJob.id)}

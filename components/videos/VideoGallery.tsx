@@ -2,8 +2,12 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { PlayCircle } from 'lucide-react';
+import gsap from 'gsap';
+import { useGSAP } from '@gsap/react';
 import type { GeneratedVideo } from '@/hooks/useGeneratedVideos';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
+
+gsap.registerPlugin(useGSAP);
 
 function formatDate(iso: string) {
   const value = +new Date(iso);
@@ -131,8 +135,20 @@ export default function VideoGallery({
     );
   }
 
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!gridRef.current || videos.length === 0) return;
+    const cards = gridRef.current.querySelectorAll(':scope > div');
+    if (!cards.length) return;
+    gsap.fromTo(cards,
+      { autoAlpha: 0, y: 20 },
+      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
+    );
+  }, { scope: gridRef, dependencies: [videos] });
+
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+    <div ref={gridRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {videos.map((video) => (
         <LazyVideoCard key={video.id} video={video} onVideoClick={onVideoClick} />
       ))}

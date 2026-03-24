@@ -10,6 +10,7 @@ import ProfileSelector from '@/components/connections/ProfileSelector';
 import PlatformGrid from '@/components/connections/PlatformGrid';
 import NewProfileModal from '@/components/connections/NewProfileModal';
 import EditProfileModal from '@/components/connections/EditProfileModal';
+import PageTransition from '@/components/ui/PageTransition';
 
 export default function ConnectionsPage() {
   const { showToast } = useToast();
@@ -57,7 +58,7 @@ export default function ConnectionsPage() {
   ];
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <PageTransition className="mx-auto max-w-6xl space-y-6">
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -132,6 +133,6 @@ export default function ConnectionsPage() {
           refresh();
         }}
       />
-    </div>
+    </PageTransition>
   );
 }

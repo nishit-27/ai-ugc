@@ -87,6 +87,7 @@ type Filters = {
   profile?: string;
   customFrom?: string;
   customTo?: string;
+  groups?: string[];
 };
 
 type RawPostAnalytics = {
@@ -152,10 +153,13 @@ type RawContentDecayBucket = {
   postCount?: number;
 };
 
+type GroupAccountMap = { name: string; accountIds: string[] };
+
 // Module-level cache so navigating away and back doesn't re-fetch
 let _allPostsCache: PostAnalytics[] = [];
 let _overviewCache: { totalPosts: number; publishedPosts: number; scheduledPosts: number; lastSync: string | null } | null = null;
 let _accountsCache: { id: string; platform: string; username: string; displayName?: string }[] = [];
+let _groupAccountsCache: GroupAccountMap[] = [];
 let _cacheTime = 0;
 let _cachedDateKey = '';
 const CACHE_TTL = 5 * 60_000; // 5 minutes
@@ -170,6 +174,7 @@ export function useLateAnalytics() {
   const [contentDecay, setContentDecay] = useState<ContentDecayBucket[]>([]);
   const [overview, setOverview] = useState(_overviewCache);
   const [accounts, setAccounts] = useState(_accountsCache);
+  const [groupAccounts, setGroupAccounts] = useState<GroupAccountMap[]>(_groupAccountsCache);
   const [loading, setLoading] = useState(_allPostsCache.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [filters, setFilters] = useState<Filters>({ platform: '', dateRange: '30d', sortBy: 'newest' });
@@ -445,6 +450,24 @@ export function useLateAnalytics() {
       );
     }
 
+    // Group filter (multi-select)
+    if (filters.groups && filters.groups.length > 0) {
+      const accountIdSet = new Set<string>();
+      for (const groupName of filters.groups) {
+        const group = groupAccounts.find((g) => g.name === groupName);
+        if (group) {
+          for (const id of group.accountIds) accountIdSet.add(id);
+        }
+      }
+      if (accountIdSet.size > 0) {
+        result = result.filter(p =>
+          (p.platforms || []).some((pl) => accountIdSet.has(pl.accountId))
+        );
+      } else {
+        result = [];
+      }
+    }
+
     // Sort
     const sorted = [...result];
     if (filters.sortBy === 'oldest') {
@@ -461,7 +484,20 @@ export function useLateAnalytics() {
     }
 
     return sorted;
-  }, [allPosts, filters.platform, filters.profile, filters.sortBy, getDateRange]);
+  }, [allPosts, filters.platform, filters.profile, filters.groups, filters.sortBy, getDateRange, groupAccounts]);
+
+  // Load group accounts
+  useEffect(() => {
+    if (_groupAccountsCache.length > 0) return;
+    fetch('/api/model-groups/accounts')
+      .then((r) => r.json())
+      .then((data) => {
+        const groups = data.groups || [];
+        _groupAccountsCache = groups;
+        setGroupAccounts(groups);
+      })
+      .catch(console.error);
+  }, []);
 
   // Load posts once on mount
   useEffect(() => {
@@ -481,14 +517,14 @@ export function useLateAnalytics() {
   }, [loadPosts, loadSecondary]);
 
   const updateFilters = useCallback((next: Filters) => {
-    const shouldShowRefreshState =
+    // Only show refresh/loading state for changes that require new API data
+    const needsApiFetch =
       filters.platform !== next.platform ||
       filters.dateRange !== next.dateRange ||
       filters.customFrom !== next.customFrom ||
-      filters.customTo !== next.customTo ||
-      filters.profile !== next.profile;
+      filters.customTo !== next.customTo;
 
-    if (shouldShowRefreshState) {
+    if (needsApiFetch) {
       setRefreshing(true);
     }
 
@@ -504,6 +540,7 @@ export function useLateAnalytics() {
     contentDecay,
     overview,
     accounts,
+    groupAccounts,
     loading,
     refreshing,
     filters,

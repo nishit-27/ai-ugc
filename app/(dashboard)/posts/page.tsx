@@ -10,6 +10,7 @@ import PostFilters from '@/components/posts/PostFilters';
 import PostList from '@/components/posts/PostList';
 import CreatePostModal from '@/components/posts/CreatePostModal';
 import VideoPreviewModal from '@/components/posts/VideoPreviewModal';
+import PageTransition from '@/components/ui/PageTransition';
 
 function PostsPageContent() {
   const searchParams = useSearchParams();
@@ -28,7 +29,7 @@ function PostsPageContent() {
   const [videoPreview, setVideoPreview] = useState<{ url: string; caption: string } | null>(null);
 
   return (
-    <div>
+    <PageTransition>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--primary)]">Posts</h1>
@@ -80,7 +81,7 @@ function PostsPageContent() {
       />
 
       <VideoPreviewModal video={videoPreview} onClose={() => setVideoPreview(null)} />
-    </div>
+    </PageTransition>
   );
 }
 

@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Trash2, RotateCw, ExternalLink, Copy, AlertTriangle } from 'lucide-react';
 import { FaTiktok, FaInstagram, FaYoutube, FaXTwitter } from 'react-icons/fa6';
+import gsap from 'gsap';
+import { useGSAP } from '@gsap/react';
 import type { Post } from '@/types';
 import { useToast } from '@/hooks/useToast';
 import { getCreatedDateDisplay, getScheduledDateDisplay } from '@/lib/dateUtils';
@@ -11,6 +13,8 @@ import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
 import GlBadge from '@/components/ui/GlBadge';
+
+gsap.registerPlugin(useGSAP);
 
 const PER_PAGE = 16;
 
@@ -124,17 +128,21 @@ export default function PostList({
     () => posts.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE),
     [posts, safePage],
   );
-  const visiblePages = useMemo(
-    () =>
-      Array.from({ length: totalPages }, (_, i) => i + 1)
-        .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 2)
-        .reduce<(number | 'dots')[]>((acc, p, i, arr) => {
-          if (i > 0 && p - arr[i - 1] > 1) acc.push('dots');
-          acc.push(p);
-          return acc;
-        }, []),
-    [safePage, totalPages],
-  );
+  const visiblePages = useMemo(() => {
+    const pages: (number | '...')[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (safePage > 3) pages.push('...');
+      const start = Math.max(2, safePage - 1);
+      const end = Math.min(totalPages - 1, safePage + 1);
+      for (let i = start; i <= end; i++) pages.push(i);
+      if (safePage < totalPages - 2) pages.push('...');
+      pages.push(totalPages);
+    }
+    return pages;
+  }, [safePage, totalPages]);
 
   if (isLoading) {
     return (
@@ -158,9 +166,21 @@ export default function PostList({
     );
   }
 
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!gridRef.current || paginatedPosts.length === 0) return;
+    const cards = gridRef.current.querySelectorAll(':scope > div');
+    if (!cards.length) return;
+    gsap.fromTo(cards,
+      { autoAlpha: 0, y: 20 },
+      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
+    );
+  }, { scope: gridRef, dependencies: [paginatedPosts] });
+
   return (
     <>
-      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+      <div ref={gridRef} className="grid gap-4 grid-cols-2 sm:grid-cols-4">
         {/* Publishing placeholder card */}
         {publishingPost && safePage === 1 && (
           <div className="overflow-hidden rounded-xl border border-amber-200 bg-[var(--surface)] shadow ring-1 ring-amber-300 dark:border-amber-900/50">
@@ -358,21 +378,20 @@ export default function PostList({
             type="button"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={safePage <= 1}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
+            className="flex h-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
             <ChevronLeft className="h-4 w-4" />
+            <span className="text-xs">Prev</span>
           </button>
           {visiblePages.map((item, i) =>
-            item === 'dots' ? (
-              <span key={`dots-${i}`} className="px-1 text-[var(--text-muted)]">
-                ...
-              </span>
+            item === '...' ? (
+              <span key={`ellipsis-${i}`} className="flex h-8 w-6 items-center justify-center text-xs text-[var(--text-muted)]">...</span>
             ) : (
               <button
                 key={item}
                 type="button"
                 onClick={() => setPage(item)}
-                className={`flex h-8 min-w-[2rem] items-center justify-center rounded-lg px-2 text-xs font-medium transition-colors ${
+                className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors ${
                   item === safePage
                     ? 'bg-[var(--primary)] text-white'
                     : 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'
@@ -386,10 +405,12 @@ export default function PostList({
             type="button"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={safePage >= totalPages}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
+            className="flex h-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
+            <span className="text-xs">Next</span>
             <ChevronRight className="h-4 w-4" />
           </button>
+          <span className="ml-2 text-xs text-[var(--text-muted)]">Page {safePage} of {totalPages}</span>
         </div>
       )}
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import PageTransition from '@/components/ui/PageTransition';
 import { useRouter } from 'next/navigation';
 import { usePresets } from '@/hooks/usePresets';
 import { useVideoUpload } from '@/hooks/useVideoUpload';
@@ -25,7 +26,7 @@ const MASTER_DRAFT_KEY = 'ai-ugc-master-pipeline-draft';
 type MasterDraft = {
   steps: MiniAppStep[];
   name: string;
-  videoSource: 'tiktok' | 'upload' | 'library';
+  videoSource: 'tiktok' | 'upload' | 'library' | 'generate';
   tiktokUrl: string;
   videoUrl: string;
   uploadedFilename: string;
@@ -55,7 +56,7 @@ export default function MasterPipelinePage() {
   // Pipeline state
   const [steps, setSteps] = useState<MiniAppStep[]>(() => draft.current?.steps ?? []);
   const [name, setName] = useState(() => draft.current?.name ?? '');
-  const [videoSource, setVideoSource] = useState<'tiktok' | 'upload' | 'library'>(() => draft.current?.videoSource ?? 'tiktok');
+  const [videoSource, setVideoSource] = useState<'tiktok' | 'upload' | 'library' | 'generate'>(() => draft.current?.videoSource ?? 'tiktok');
   const [tiktokUrl, setTiktokUrl] = useState(() => draft.current?.tiktokUrl ?? '');
   const [libraryVideos, setLibraryVideos] = useState<Record<string, string>>(() => draft.current?.libraryVideos ?? {});
   const [videoUrl, setVideoUrl] = useState(() => draft.current?.videoUrl ?? '');
@@ -465,7 +466,7 @@ export default function MasterPipelinePage() {
   };
 
   return (
-    <div className="-m-8">
+    <PageTransition className="-m-8">
       <MasterPipelineHeader
         enabledStepCount={steps.filter((step) => step.enabled).length}
         selectedModelCount={selectedModelIds.length}
@@ -555,6 +556,11 @@ export default function MasterPipelinePage() {
                     selectedModelIds,
                     variableValues,
                     onVariableValuesChange: setVariableValues,
+                    onGeneratedVideo: (url: string) => {
+                      setVideoUrl(url);
+                      setPreviewUrl(url);
+                      setUploadedFilename('Generated video');
+                    },
                   }}
                   videoUrl={previewUrl || undefined}
                   sourceDuration={sourceDuration}
@@ -637,6 +643,6 @@ export default function MasterPipelinePage() {
           </div>
         </div>
       </Modal>
-    </div>
+    </PageTransition>
   );
 }

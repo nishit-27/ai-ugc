@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useState } from 'react';
+import PageTransition from '@/components/ui/PageTransition';
 import { useSearchParams } from 'next/navigation';
 import { useModels } from '@/hooks/useModels';
 import { useBatches } from '@/hooks/useBatches';
@@ -32,7 +33,7 @@ function GeneratePageContent() {
   };
 
   return (
-    <div>
+    <PageTransition>
       <h1 className="mb-1 text-2xl font-bold text-[var(--primary)]">Generate Videos</h1>
       <p className="mb-6 text-[var(--text-muted)]">Create AI-powered UGC videos from TikTok content</p>
 
@@ -70,7 +71,7 @@ function GeneratePageContent() {
           handleImageUpload={handleImageUpload}
         />
       )}
-    </div>
+    </PageTransition>
   );
 }
 

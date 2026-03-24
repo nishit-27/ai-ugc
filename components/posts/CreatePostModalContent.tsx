@@ -288,7 +288,18 @@ export default function CreatePostModalContent({
                           <div className="flex gap-2 border-b border-[var(--border)] px-3 py-1.5">
                             <button
                               type="button"
-                              onClick={() => setSelectedProfiles(profiles.map((p) => p._id))}
+                              onClick={() => {
+                                const allProfileIds = profiles.map((p) => p._id);
+                                setSelectedProfiles(allProfileIds);
+                                // Auto-select all postable accounts for all profiles
+                                const allPostableAccountIds = accounts
+                                  .filter((a) => {
+                                    const aProfileId = typeof a.profileId === 'object' ? (a.profileId as { _id: string })?._id : a.profileId;
+                                    return aProfileId && allProfileIds.includes(aProfileId) && (a.platform === 'tiktok' || a.platform === 'instagram' || a.platform === 'youtube');
+                                  })
+                                  .map((a) => a._id);
+                                setSelectedAccountIds(allPostableAccountIds);
+                              }}
                               className="text-[10px] font-medium text-[var(--primary)] hover:underline"
                             >
                               Select All
@@ -345,6 +356,14 @@ export default function CreatePostModalContent({
                   </div>
 
                   {/* Accounts */}
+                  {selectedProfiles.length > 0 && postableAccounts.length === 0 && (
+                    <div className="rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2.5">
+                      <div className="text-xs font-medium text-amber-800">No postable accounts</div>
+                      <div className="mt-0.5 text-[11px] text-amber-700">
+                        Selected profiles don&apos;t have any TikTok, Instagram, or YouTube accounts connected. Connect accounts in the Connections page.
+                      </div>
+                    </div>
+                  )}
                   {postableAccounts.length > 0 && (
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
@@ -498,7 +517,7 @@ export default function CreatePostModalContent({
                 <div className="shrink-0 border-t border-[var(--border)] p-3 sm:p-4">
                   <button
                     onClick={submitPost}
-                    disabled={isPosting || selectedAccountIds.length === 0}
+                    disabled={isPosting || selectedAccountIds.length === 0 || !hasVideo}
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {isPosting ? (

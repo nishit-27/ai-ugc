@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useMemo, useCallback } from 'react';
+import PageTransition from '@/components/ui/PageTransition';
 import { useLateAnalytics } from '@/hooks/useLateAnalytics';
 import Spinner from '@/components/ui/Spinner';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,6 +21,8 @@ import LateContentTable from '@/components/late-analytics/LateContentTable';
 import LateAccountViewsChart from '@/components/late-analytics/LateAccountViewsChart';
 import LateMetricsChart from '@/components/late-analytics/LateMetricsChart';
 import LateRunnableVideosPanel from '@/components/late-analytics/LateRunnableVideosPanel';
+import LateCumulativeViewsChart from '@/components/late-analytics/LateCumulativeViewsChart';
+import LateMedianViewsChart from '@/components/late-analytics/LateMedianViewsChart';
 import {
   RUNABLE_INTEGRATION_VARIABLE_NAME,
   getRunableIntegrationValueByName,
@@ -276,6 +279,7 @@ function LateAnalyticsContent() {
     postingFrequency,
     contentDecay,
     accounts,
+    groupAccounts,
     loading,
     refreshing,
     filters,
@@ -380,6 +384,14 @@ function LateAnalyticsContent() {
     [dateRange, runnablePosts]
   );
 
+  const hasGroupFilter = (filters.groups?.length || 0) > 0;
+
+  // When group filter is active, recompute daily metrics from filtered posts
+  const effectiveDailyMetrics = useMemo(() => {
+    if (!hasGroupFilter) return dailyMetrics;
+    return buildDailyMetricsFromPosts(posts as RunnableAnalyticsPost[], dateRange);
+  }, [hasGroupFilter, dailyMetrics, posts, dateRange]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -388,9 +400,9 @@ function LateAnalyticsContent() {
     );
   }
 
-  // Compute aggregate metrics from daily-metrics
-  const totals = dailyMetrics.length > 0
-    ? dailyMetrics.reduce(
+  // Compute aggregate metrics
+  const totals = (!hasGroupFilter && effectiveDailyMetrics.length > 0)
+    ? effectiveDailyMetrics.reduce(
         (acc, day) => {
           const m = day.metrics || {} as Record<string, number>;
           acc.likes += m.likes || 0;
@@ -406,22 +418,7 @@ function LateAnalyticsContent() {
         },
         { likes: 0, comments: 0, shares: 0, views: 0, impressions: 0, reach: 0, clicks: 0, saves: 0, postCount: 0 }
       )
-    : posts.reduce(
-        (acc, post) => {
-          const a = post.analytics || {} as Record<string, number>;
-          acc.likes += a.likes || 0;
-          acc.comments += a.comments || 0;
-          acc.shares += a.shares || 0;
-          acc.views += a.views || 0;
-          acc.impressions += a.impressions || 0;
-          acc.reach += a.reach || 0;
-          acc.clicks += a.clicks || 0;
-          acc.saves += a.saves || 0;
-          acc.postCount += 1;
-          return acc;
-        },
-        { likes: 0, comments: 0, shares: 0, views: 0, impressions: 0, reach: 0, clicks: 0, saves: 0, postCount: 0 }
-      );
+    : buildTotalsFromPosts(posts as RunnableAnalyticsPost[]);
 
   const totalFollowers = followerStats.reduce((sum, s) => sum + (s.followerCount || 0), 0);
 
@@ -446,8 +443,8 @@ function LateAnalyticsContent() {
   }
 
   return (
-    <div className="space-y-6" aria-busy={refreshing}>
-      <LateAnalyticsFilters filters={filters} setFilters={setFilters} lastSync={lastSync} onRefresh={refresh} onDownload={handleDownload} accounts={accounts} />
+    <PageTransition className="space-y-6">
+      <LateAnalyticsFilters filters={filters} setFilters={setFilters} lastSync={lastSync} onRefresh={refresh} onDownload={handleDownload} accounts={accounts} groupAccounts={groupAccounts} />
 
       {refreshing && (
         <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-xs text-[var(--text-muted)]">
@@ -479,14 +476,18 @@ function LateAnalyticsContent() {
             <OverviewTabSkeleton />
           ) : (
             <>
-              <LateMetricsChart dailyMetrics={dailyMetrics} dateRange={dateRange} />
-              <LatePostingActivity dailyMetrics={dailyMetrics} dateRange={dateRange} />
+              <LateMetricsChart dailyMetrics={effectiveDailyMetrics} dateRange={dateRange} />
+              <LatePostingActivity dailyMetrics={effectiveDailyMetrics} dateRange={dateRange} />
+              <LateCumulativeViewsChart allPosts={posts} runnablePosts={runnablePosts} dateRange={dateRange} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                <LateFollowerChart followerStats={followerStats} totalFollowers={totalFollowers} />
+                <LateMedianViewsChart posts={posts} accounts={accounts} dateRange={dateRange} />
                 <LateAccountViewsChart accounts={accounts} posts={posts} dateRange={dateRange} />
               </div>
-              <LateDailyChart dailyMetrics={dailyMetrics} dateRange={dateRange} />
-              <LatePlatformBreakdown platforms={platformTotals} totalFollowers={totalFollowers} followerStats={followerStats} />
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <LateFollowerChart followerStats={followerStats} totalFollowers={totalFollowers} />
+                <LatePlatformBreakdown platforms={platformTotals} totalFollowers={totalFollowers} followerStats={followerStats} />
+              </div>
+              <LateDailyChart dailyMetrics={effectiveDailyMetrics} dateRange={dateRange} />
             </>
           )}
         </TabsContent>
@@ -496,7 +497,7 @@ function LateAnalyticsContent() {
             <EngagementTabSkeleton />
           ) : (
             <>
-              <LateMetricsChart dailyMetrics={dailyMetrics} dateRange={dateRange} />
+              <LateMetricsChart dailyMetrics={effectiveDailyMetrics} dateRange={dateRange} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <LateBestTimeHeatmap bestTimes={bestTimes} />
                 <LateTopPosts posts={posts} />
@@ -564,7 +565,7 @@ function LateAnalyticsContent() {
           )}
         </TabsContent>
       </Tabs>
-    </div>
+    </PageTransition>
   );
 }
 

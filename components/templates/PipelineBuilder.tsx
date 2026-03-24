@@ -264,7 +264,7 @@ export default function PipelineBuilder({
   onChange: (steps: MiniAppStep[]) => void;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  videoSource: 'tiktok' | 'upload' | 'library';
+  videoSource: 'tiktok' | 'upload' | 'library' | 'generate';
   tiktokUrl: string;
   videoUrl: string;
   validationErrors?: Map<string, string>;

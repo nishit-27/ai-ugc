@@ -16,3 +16,5 @@ export { default as LateContentTable } from './LateContentTable';
 export { default as LatePostingActivity } from './LatePostingActivity';
 export { default as LateAccountViewsChart } from './LateAccountViewsChart';
 export { default as LateMetricsChart } from './LateMetricsChart';
+export { default as LateCumulativeViewsChart } from './LateCumulativeViewsChart';
+export { default as LateMedianViewsChart } from './LateMedianViewsChart';
