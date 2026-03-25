@@ -2,7 +2,7 @@
 
 Create AI-powered UGC videos from TikTok content: paste a TikTok URL, upload a model image, and generate a face-swapped video. Schedule or publish directly to TikTok via Late API.
 
-## Features
+## Featuress
 
 - **Generate**: TikTok URL + model image → FAL (Kling motion-control) → downloadable video
 - **Posts**: List, filter, retry, delete Late posts; create new posts with generated or uploaded videos
