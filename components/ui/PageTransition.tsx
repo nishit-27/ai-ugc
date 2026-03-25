@@ -18,10 +18,16 @@ export default function PageTransition({ children, className = '' }: { children:
       },
       (context) => {
         const { reduced } = context.conditions!;
+        // Use opacity only (no transform) to avoid breaking position:fixed in child modals
         gsap.fromTo(
           containerRef.current,
-          { autoAlpha: 0, y: reduced ? 0 : 12 },
-          { autoAlpha: 1, y: 0, duration: reduced ? 0 : 0.4, ease: 'power2.out' }
+          { opacity: 0 },
+          {
+            opacity: 1,
+            duration: reduced ? 0 : 0.35,
+            ease: 'power2.out',
+            onStart() { if (containerRef.current) containerRef.current.style.visibility = 'visible'; },
+          }
         );
       }
     );

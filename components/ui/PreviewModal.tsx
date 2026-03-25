@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 export default function PreviewModal({
@@ -20,7 +21,7 @@ export default function PreviewModal({
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 backdrop-blur-sm"
       onClick={onClose}
@@ -48,6 +49,7 @@ export default function PreviewModal({
           />
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
