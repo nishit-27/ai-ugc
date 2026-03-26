@@ -5,16 +5,6 @@ import type { Post } from '@/types';
 import { derivePostStatus, isActiveStatus, postMatchesFilter } from '@/lib/postStatus';
 import { getDateFilterCutoffMs, getDateFilterSortDirection, toMillis } from '@/lib/media-filters';
 import type { DateFilterValue } from '@/types/media-filters';
-import { usePageVisibility } from './usePageVisibility';
-
-const ACTIVE_POLL_INTERVAL = 5_000;   // 5s when posts are publishing (server caches for 4s)
-const IDLE_POLL_INTERVAL = 60_000;    // 60s baseline
-const HIDDEN_POLL_INTERVAL = 120_000; // 2m when tab is hidden
-const CACHE_KEY = 'ai-ugc-posts-v3';
-const VIDEO_MODEL_CACHE_TTL_MS = 60_000;
-const EMPTY_RETRY_DELAYS_MS = [300, 700];
-const INITIAL_EMPTY_RETRY_INTERVAL_MS = 900;
-const INITIAL_EMPTY_GRACE_MS = 20_000;
 
 type UsePostsOptions = {
   modelId?: string;
@@ -35,6 +25,7 @@ type ApiVideoRow = {
 
 let _videoModelLookupCache = new Map<string, VideoModelInfo>();
 let _videoModelLookupTs = 0;
+const VIDEO_MODEL_CACHE_TTL_MS = 60_000;
 
 // Account→Model map cache (primary enrichment source)
 let _accountModelMapCache: Record<string, { modelId: string; modelName: string }> = {};
@@ -75,20 +66,6 @@ function enrichPostFromAccountMap(
     }
   }
   return post;
-}
-
-function getCachedPosts(): Post[] | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
-  } catch {}
-  return null;
-}
-
-function setCachedPosts(posts: Post[]) {
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(posts)); } catch {}
 }
 
 function canonicalUrlKey(rawUrl?: string | null): string | null {
@@ -195,38 +172,12 @@ function getPostTimeMs(post: Post): number {
   return toMillis(post.createdAt || post.updatedAt || post.publishedAt || post.scheduledFor || null);
 }
 
-/** URLs are now all R2 public — no signing needed. */
-function resolvePostMedia(posts: Post[]): Post[] {
-  return posts;
-}
-
 async function fetchPostsOnce(signal: AbortSignal): Promise<Post[] | null> {
   const endpoint = '/api/late/posts';
-  const res = await fetch(endpoint, { signal });
+  const res = await fetch(endpoint, { signal, cache: 'no-store' });
   if (!res.ok) return null;
   const data = await res.json();
-  return resolvePostMedia(data.posts || []);
-}
-
-function buildSnapshot(arr: Post[]): string {
-  return arr.map((p) => {
-    const normalizedStatus = p.derivedStatus || derivePostStatus(p);
-    const platformState = p.platforms
-      ?.map((platform) => `${platform.platform}:${platform.status || ''}:${platform.platformPostUrl || ''}`)
-      .sort()
-      .join(',') || '';
-    return [
-      p._id,
-      p.status || '',
-      normalizedStatus,
-      p.modelId || '',
-      p.updatedAt || '',
-      p.publishedAt || '',
-      p.scheduledFor || '',
-      platformState,
-      p.content?.slice(0, 40) || '',
-    ].join(':');
-  }).join('|');
+  return data.posts || [];
 }
 
 export function usePosts(options: UsePostsOptions = {}) {
@@ -234,166 +185,61 @@ export function usePosts(options: UsePostsOptions = {}) {
   const selectedDateFilter = options.dateFilter || 'newest';
 
   const [postsFilter, setPostsFilter] = useState<string>('all');
-  const isPageVisible = usePageVisibility();
 
-  // Initialize from cache instantly to avoid blocking UI on slow network
-  const [postsAll, setPostsAll] = useState<Post[]>(() => getCachedPosts() || []);
-  const [isLoadingPage, setIsLoadingPage] = useState(() => {
-    const cached = getCachedPosts();
-    return !(cached && cached.length > 0);
-  });
+  // Start empty — no stale localStorage cache. Show loading until fresh data arrives.
+  const [postsAll, setPostsAll] = useState<Post[]>([]);
+  const [isLoadingPage, setIsLoadingPage] = useState(true);
 
-  const lastSnapshotRef = useRef('');
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const emptyBootstrapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
-  const firstLoadStartedAtRef = useRef<number>(Date.now());
-  const postsRef = useRef(postsAll);
-  const wasVisibleRef = useRef(isPageVisible);
-  postsRef.current = postsAll;
 
   const loadPosts = useCallback(async (forceModelRefresh = false) => {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
 
-    let keepLoadingForBootstrap = false;
-    const withinInitialGrace = () =>
-      Date.now() - firstLoadStartedAtRef.current < INITIAL_EMPTY_GRACE_MS;
-
-    const scheduleBootstrapRetry = () => {
-      if (!withinInitialGrace()) return;
-      keepLoadingForBootstrap = true;
-      if (emptyBootstrapTimerRef.current) clearTimeout(emptyBootstrapTimerRef.current);
-      emptyBootstrapTimerRef.current = setTimeout(() => {
-        if (!mountedRef.current) return;
-        void loadPosts(forceModelRefresh);
-      }, INITIAL_EMPTY_RETRY_INTERVAL_MS);
-    };
     try {
       if (!mountedRef.current) return;
-      const fetchWithTimeout = async () => {
-        const timeout = setTimeout(() => ac.abort(), 15_000);
-        try {
-          return await fetchPostsOnce(ac.signal);
-        } finally {
-          clearTimeout(timeout);
-        }
-      };
 
-      let arr = await fetchWithTimeout();
+      const timeout = setTimeout(() => ac.abort(), 15_000);
+      let arr: Post[] | null;
+      try {
+        arr = await fetchPostsOnce(ac.signal);
+      } finally {
+        clearTimeout(timeout);
+      }
+
       if (!arr || !mountedRef.current || ac.signal.aborted) return;
 
-      // Single retry on empty (instead of multiple delayed retries)
-      if (arr.length === 0) {
-        const retry = await fetchWithTimeout();
-        if (retry && retry.length > 0 && !ac.signal.aborted && mountedRef.current) {
-          arr = retry;
-        }
-      }
+      // Enrich with model info inline (single state update)
+      const enriched = await enrichPostsWithModelInfo(arr, forceModelRefresh);
+      if (!mountedRef.current || ac.signal.aborted) return;
 
-      // Keep prior content visible when API momentarily returns empty.
-      if (arr.length === 0 && postsRef.current.length > 0) return;
-
-      // Show posts immediately, then enrich with model info async
-      const snapshot = buildSnapshot(arr);
-      if (snapshot !== lastSnapshotRef.current) {
-        lastSnapshotRef.current = snapshot;
-        setPostsAll(arr);
-        setCachedPosts(arr);
-      }
-
-      // Enrich with model info in the background (non-blocking)
-      if (arr.length > 0) {
-        enrichPostsWithModelInfo(arr, forceModelRefresh).then((enriched) => {
-          if (!mountedRef.current || ac.signal.aborted) return;
-          const enrichedSnapshot = buildSnapshot(enriched);
-          if (enrichedSnapshot !== lastSnapshotRef.current) {
-            lastSnapshotRef.current = enrichedSnapshot;
-            setPostsAll(enriched);
-            setCachedPosts(enriched);
-          }
-        }).catch(() => {});
-      }
-
-      if (arr.length === 0 && postsRef.current.length === 0) {
-        scheduleBootstrapRetry();
-      }
+      setPostsAll(enriched);
     } catch {
-      // Keep cached posts visible on transient fetch failures.
-      if (postsRef.current.length === 0) {
-        scheduleBootstrapRetry();
-      }
+      // Keep current posts visible on transient fetch failures
     } finally {
-      if (!mountedRef.current) return;
-      if (keepLoadingForBootstrap) {
-        setIsLoadingPage(true);
-      } else {
+      if (mountedRef.current) {
         setIsLoadingPage(false);
       }
     }
   }, []);
 
-  // Adaptive polling — single schedule function, no redundant fetches
-  const isPageVisibleRef = useRef(isPageVisible);
-  isPageVisibleRef.current = isPageVisible;
-
-  const scheduleNext = useCallback(() => {
-    if (!mountedRef.current) return;
-    if (timerRef.current) clearTimeout(timerRef.current);
-
-    let delay = HIDDEN_POLL_INTERVAL;
-    if (isPageVisibleRef.current) {
-      const hasActive = postsRef.current.some((post) => {
-        const status = post.derivedStatus || derivePostStatus(post);
-        return isActiveStatus(status)
-          || isActiveStatus(post.status)
-          || post.platforms?.some((platform) => isActiveStatus(platform.status));
-      });
-      delay = hasActive ? ACTIVE_POLL_INTERVAL : IDLE_POLL_INTERVAL;
-    }
-
-    timerRef.current = setTimeout(async () => {
-      await loadPosts();
-      scheduleNext();
-    }, delay);
-  }, [loadPosts]);
-
-  // Mount: initial load + start polling
+  // Mount: fetch once
   useEffect(() => {
     mountedRef.current = true;
-    firstLoadStartedAtRef.current = Date.now();
-    if ((getCachedPosts() || []).length === 0) setIsLoadingPage(true);
-    loadPosts().then(() => scheduleNext());
+    setIsLoadingPage(true);
+    loadPosts();
     return () => {
       mountedRef.current = false;
       abortRef.current?.abort();
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (emptyBootstrapTimerRef.current) clearTimeout(emptyBootstrapTimerRef.current);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Visibility change: fetch once + reschedule
-  useEffect(() => {
-    const wasVisible = wasVisibleRef.current;
-    wasVisibleRef.current = isPageVisible;
-    if (!wasVisible && isPageVisible && mountedRef.current) {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      loadPosts().then(() => scheduleNext());
-    } else if (mountedRef.current) {
-      // Just reschedule with new delay (visible vs hidden)
-      scheduleNext();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPageVisible]);
-
-  // Duplicate detection: per-account, check last 5 posts — if 2+ share the same caption, mark as duplicate
-  // Returns both a quick-lookup Set and a detailed Map with sibling links per platform
+  // Duplicate detection
   const { duplicateIds, duplicateMap } = useMemo(() => {
     type AcctEntry = { postId: string; caption: string; timeMs: number; platformPostUrl?: string };
-    // Group posts by each platform account they target
     const accountPosts = new Map<string, { platform: string; entries: AcctEntry[] }>();
     for (const post of postsAll) {
       const caption = (post.content || '').trim().toLowerCase();
@@ -413,10 +259,8 @@ export function usePosts(options: UsePostsOptions = {}) {
     const map = new Map<string, { platform: string; postId: string; url?: string; createdAt?: string }[]>();
 
     for (const { platform, entries } of accountPosts.values()) {
-      // Sort newest first, take last 5
       entries.sort((a, b) => b.timeMs - a.timeMs);
       const recent = entries.slice(0, 5);
-      // Group by caption within these 5
       const captionGroups = new Map<string, AcctEntry[]>();
       for (const entry of recent) {
         const group = captionGroups.get(entry.caption);
@@ -427,7 +271,6 @@ export function usePosts(options: UsePostsOptions = {}) {
         if (group.length < 2) continue;
         for (const entry of group) {
           ids.add(entry.postId);
-          // Add siblings (the OTHER posts in this group) to this post's duplicate map
           const siblings = group
             .filter((s) => s.postId !== entry.postId)
             .map((s) => ({
@@ -468,12 +311,9 @@ export function usePosts(options: UsePostsOptions = {}) {
   }, [postsAll, postsFilter, selectedModelId, selectedDateFilter, duplicateIds]);
 
   const refresh = useCallback(async () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = null;
-    lastSnapshotRef.current = '';
+    setIsLoadingPage(true);
     await loadPosts(true);
-    scheduleNext();
-  }, [loadPosts, scheduleNext]);
+  }, [loadPosts]);
 
   return { posts, postsFilter, setPostsFilter, isLoadingPage, refresh, duplicateIds, duplicateMap };
 }

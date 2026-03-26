@@ -128,6 +128,18 @@ export default function PostList({
     () => posts.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE),
     [posts, safePage],
   );
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!gridRef.current || paginatedPosts.length === 0) return;
+    const cards = gridRef.current.querySelectorAll(':scope > div');
+    if (!cards.length) return;
+    gsap.fromTo(cards,
+      { autoAlpha: 0, y: 20 },
+      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
+    );
+  }, { scope: gridRef, dependencies: [paginatedPosts] });
+
   const visiblePages = useMemo(() => {
     const pages: (number | '...')[] = [];
     if (totalPages <= 7) {
@@ -146,7 +158,7 @@ export default function PostList({
 
   if (isLoading) {
     return (
-      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+      <div className="grid gap-3 grid-cols-2 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
         {Array.from({ length: 8 }).map((_, i) => (
           <SkeletonCard key={i} />
         ))}
@@ -166,21 +178,9 @@ export default function PostList({
     );
   }
 
-  const gridRef = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    if (!gridRef.current || paginatedPosts.length === 0) return;
-    const cards = gridRef.current.querySelectorAll(':scope > div');
-    if (!cards.length) return;
-    gsap.fromTo(cards,
-      { autoAlpha: 0, y: 20 },
-      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
-    );
-  }, { scope: gridRef, dependencies: [paginatedPosts] });
-
   return (
     <>
-      <div ref={gridRef} className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+      <div ref={gridRef} className="grid gap-3 grid-cols-2 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
         {/* Publishing placeholder card */}
         {publishingPost && safePage === 1 && (
           <div className="overflow-hidden rounded-xl border border-amber-200 bg-[var(--surface)] shadow ring-1 ring-amber-300 dark:border-amber-900/50">
@@ -277,11 +277,11 @@ export default function PostList({
                 )}
 
                 {/* Top overlay bar */}
-                <div className="absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/60 to-transparent p-2 pb-5">
+                <div className="absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/60 to-transparent p-1.5 pb-5 sm:p-2">
                   {/* Status badge */}
                   <div className="flex flex-col gap-1">
                     <span
-                      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-bold shadow-sm ${
+                      className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold shadow-sm sm:px-2.5 sm:py-1.5 sm:text-[11px] ${
                         status === 'published' ? 'bg-emerald-500 text-white' :
                         status === 'failed' ? 'bg-red-500 text-white' :
                         status === 'partial' ? 'bg-orange-500 text-white' :
@@ -294,7 +294,7 @@ export default function PostList({
                       {isActive ? 'Publishing' : status.charAt(0).toUpperCase() + status.slice(1)}
                     </span>
                     {isDuplicate && (
-                      <span className="inline-flex w-fit items-center gap-1 rounded-md bg-purple-500 px-2 py-1 text-[10px] font-bold text-white shadow-sm">
+                      <span className="inline-flex w-fit items-center gap-1 rounded-md bg-purple-500 px-1.5 py-0.5 text-[9px] font-bold text-white shadow-sm sm:px-2 sm:py-1 sm:text-[10px]">
                         <Copy className="h-3 w-3" />
                         Duplicate
                       </span>
@@ -310,13 +310,13 @@ export default function PostList({
                         return (
                           <span
                             key={`${p.platform}-${idx}-${typeof p.accountId === 'string' ? p.accountId : p.accountId?._id || 'unknown'}`}
-                            className="relative flex h-7 w-7 items-center justify-center rounded-lg shadow-sm bg-black/50 backdrop-blur-sm"
+                            className="relative flex h-5 w-5 items-center justify-center rounded-md shadow-sm bg-black/50 backdrop-blur-sm sm:h-7 sm:w-7 sm:rounded-lg"
                           >
-                            {p.platform === 'tiktok' && <FaTiktok className="h-4 w-4" style={{ color: '#00f2ea' }} />}
-                            {p.platform === 'instagram' && <FaInstagram className="h-4 w-4" style={{ color: '#E1306C' }} />}
-                            {p.platform === 'youtube' && <FaYoutube className="h-4 w-4" style={{ color: '#FF0000' }} />}
-                            {p.platform === 'twitter' && <FaXTwitter className="h-4 w-4 text-white" />}
-                            <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-black/50 ${dotColor}`} />
+                            {p.platform === 'tiktok' && <FaTiktok className="h-3 w-3 sm:h-4 sm:w-4" style={{ color: '#00f2ea' }} />}
+                            {p.platform === 'instagram' && <FaInstagram className="h-3 w-3 sm:h-4 sm:w-4" style={{ color: '#E1306C' }} />}
+                            {p.platform === 'youtube' && <FaYoutube className="h-3 w-3 sm:h-4 sm:w-4" style={{ color: '#FF0000' }} />}
+                            {p.platform === 'twitter' && <FaXTwitter className="h-3 w-3 sm:h-4 sm:w-4 text-white" />}
+                            <span className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-black/50 sm:h-2.5 sm:w-2.5 sm:border-2 ${dotColor}`} />
                           </span>
                         );
                       })}
@@ -326,18 +326,18 @@ export default function PostList({
               </div>
 
               {/* Info bar */}
-              <div className="bg-[var(--surface)] px-3 py-2.5">
+              <div className="bg-[var(--surface)] px-2 py-2 sm:px-3 sm:py-2.5">
                 {/* Caption */}
-                <p className="truncate text-[11px] leading-snug text-[var(--text)]">{post.content || '(No caption)'}</p>
+                <p className="truncate text-[10px] leading-snug text-[var(--text)] sm:text-[11px]">{post.content || '(No caption)'}</p>
 
                 {/* Model name row */}
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  <span className="truncate text-[11px] font-semibold text-[var(--text)]">{postAuthor}</span>
+                <div className="mt-1 flex items-center gap-1.5 sm:mt-1.5">
+                  <span className="truncate text-[10px] font-semibold text-[var(--text)] sm:text-[11px]">{postAuthor}</span>
                   <GlBadge index={post.apiKeyIndex} />
                 </div>
 
                 {/* Date + platform breakdown */}
-                <div className="mt-1 flex items-center justify-between">
+                <div className="mt-0.5 flex items-center justify-between sm:mt-1">
                   {post.createdAt && (
                     <span className="text-[10px] text-[var(--text-muted)]">{getCreatedDateDisplay(post.createdAt)}</span>
                   )}
@@ -373,7 +373,7 @@ export default function PostList({
 
       {/* ── Pagination ── */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-1.5 pt-4">
+        <div className="flex flex-wrap items-center justify-center gap-1 pt-4 sm:gap-1.5">
           <button
             type="button"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -381,7 +381,7 @@ export default function PostList({
             className="flex h-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
             <ChevronLeft className="h-4 w-4" />
-            <span className="text-xs">Prev</span>
+            <span className="hidden text-xs sm:inline">Prev</span>
           </button>
           {visiblePages.map((item, i) =>
             item === '...' ? (
@@ -407,10 +407,10 @@ export default function PostList({
             disabled={safePage >= totalPages}
             className="flex h-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-30 disabled:pointer-events-none"
           >
-            <span className="text-xs">Next</span>
+            <span className="hidden text-xs sm:inline">Next</span>
             <ChevronRight className="h-4 w-4" />
           </button>
-          <span className="ml-2 text-xs text-[var(--text-muted)]">Page {safePage} of {totalPages}</span>
+          <span className="ml-1 text-[10px] text-[var(--text-muted)] sm:ml-2 sm:text-xs">{safePage}/{totalPages}</span>
         </div>
       )}
 
@@ -434,9 +434,9 @@ export default function PostList({
 
           return (
             <div className="flex flex-col sm:flex-row">
-              <div className="w-full sm:w-56 md:w-64 flex-shrink-0 bg-black">
+              <div className="w-full sm:w-48 md:w-56 lg:w-64 flex-shrink-0 bg-black">
                 <div
-                  className="relative w-full"
+                  className="relative mx-auto w-full max-h-[40vh] sm:max-h-none"
                   style={{ aspectRatio: '9/16' }}
                 >
                   {liveIsImage && liveImageUrls.length > 0 ? (

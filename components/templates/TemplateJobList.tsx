@@ -104,6 +104,18 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
     }
   }, [selectedJob]);
 
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!gridRef.current || paginatedJobs.length === 0) return;
+    const cards = gridRef.current.querySelectorAll(':scope > div');
+    if (!cards.length) return;
+    gsap.fromTo(cards,
+      { autoAlpha: 0, y: 20 },
+      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
+    );
+  }, { scope: gridRef, dependencies: [paginatedJobs] });
+
   if (loading) {
     return (
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
@@ -121,18 +133,6 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
       </div>
     );
   }
-
-  const gridRef = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    if (!gridRef.current || paginatedJobs.length === 0) return;
-    const cards = gridRef.current.querySelectorAll(':scope > div');
-    if (!cards.length) return;
-    gsap.fromTo(cards,
-      { autoAlpha: 0, y: 20 },
-      { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.035, ease: 'power2.out' }
-    );
-  }, { scope: gridRef, dependencies: [paginatedJobs] });
 
   return (
     <>

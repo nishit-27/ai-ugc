@@ -41,7 +41,7 @@ export default function PostFilters({
   setPostsFilter: (f: string) => void;
 }) {
   return (
-    <div className="mb-4 flex flex-wrap gap-1.5">
+    <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-x-visible sm:px-0 sm:pb-0">
       {FILTERS.map(({ key, label }) => {
         const isActive = postsFilter === key;
         const colors = FILTER_COLORS[key];
@@ -51,7 +51,7 @@ export default function PostFilters({
             key={key}
             type="button"
             onClick={() => setPostsFilter(key)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
               isActive
                 ? colors?.active || 'border-[var(--primary)] bg-[var(--primary)] text-white'
                 : colors?.inactive || 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:bg-[var(--accent)]'

@@ -33,13 +33,13 @@ export default function ModelDateToolbar({
   );
 
   return (
-    <div className={`flex flex-wrap items-center justify-end gap-2 ${className}`}>
+    <div className={`flex flex-wrap items-center gap-2 ${className}`}>
       <SearchableSelect
         value={modelId}
         onChange={onModelChange}
         options={selectOptions}
         placeholder="All models"
-        className="min-w-[11rem]"
+        className="min-w-0 flex-1 sm:min-w-[11rem] sm:flex-none"
       />
 
       <label className="sr-only" htmlFor="media-date-filter">Filter by date</label>
@@ -47,7 +47,7 @@ export default function ModelDateToolbar({
         id="media-date-filter"
         value={dateFilter}
         onChange={(e) => onDateFilterChange(e.target.value as DateFilterValue)}
-        className="h-10 min-w-[10.5rem] rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+        className="h-10 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 sm:min-w-[10.5rem] sm:flex-none"
       >
         {DATE_FILTER_OPTIONS.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>

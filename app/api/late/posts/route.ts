@@ -10,11 +10,6 @@ export const maxDuration = 30;
 
 const LINK_HYDRATE_CONCURRENCY = 3;
 const MAX_LINK_HYDRATE_POSTS = 8;
-const RESPONSE_CACHE_TTL_MS = 4_000;
-const MAX_CACHE_ENTRIES = 30;
-
-const responseCache = new Map<string, { ts: number; payload: { posts: Post[] } }>();
-const inflightByKey = new Map<string, Promise<{ posts: Post[] }>>();
 
 type LatePlatform = {
   platform: string;
@@ -48,28 +43,6 @@ type LatePost = {
   platforms?: LatePlatform[];
   apiKeyIndex?: number;
 };
-
-
-function getCacheKey(statusFilter: string, platformFilter: string): string {
-  return `${statusFilter}|${platformFilter}`;
-}
-
-function getCachedResponse(cacheKey: string): { posts: Post[] } | null {
-  const cached = responseCache.get(cacheKey);
-  if (!cached) return null;
-  if (Date.now() - cached.ts > RESPONSE_CACHE_TTL_MS) {
-    responseCache.delete(cacheKey);
-    return null;
-  }
-  return cached.payload;
-}
-
-function setCachedResponse(cacheKey: string, payload: { posts: Post[] }) {
-  responseCache.set(cacheKey, { ts: Date.now(), payload });
-  if (responseCache.size <= MAX_CACHE_ENTRIES) return;
-  const oldest = responseCache.keys().next().value;
-  if (oldest) responseCache.delete(oldest);
-}
 
 function extractPosts(payload: unknown): LatePost[] {
   if (!payload || typeof payload !== 'object') return [];
@@ -135,7 +108,6 @@ async function hydratePostLinks(posts: LatePost[]): Promise<LatePost[]> {
     const chunk = candidates.slice(i, i + LINK_HYDRATE_CONCURRENCY);
     await Promise.all(
       chunk.map(async (post) => {
-        // Use the same key that fetched this post for hydration
         const apiKey = post.apiKeyIndex !== undefined ? config.LATE_API_KEYS[post.apiKeyIndex] : undefined;
         try {
           const detailPayload = await lateApiRequest(`/posts/${post._id}`, {
@@ -169,67 +141,41 @@ export async function GET(request: NextRequest) {
       ? rawStatusFilter
       : 'all';
     const platformFilter = (request.nextUrl.searchParams.get('platform') || '').toLowerCase();
-    const cacheKey = getCacheKey(statusFilter, platformFilter);
-    const cached = getCachedResponse(cacheKey);
-    if (cached) {
-      return NextResponse.json(cached, {
-        headers: { 'Cache-Control': 'private, max-age=4, stale-while-revalidate=20' },
-      });
-    }
 
-    const inflight = inflightByKey.get(cacheKey);
-    if (inflight) {
-      const shared = await inflight;
-      return NextResponse.json(shared, {
-        headers: { 'Cache-Control': 'private, max-age=4, stale-while-revalidate=20' },
-      });
-    }
-
-    const loadPromise = (async () => {
-      // Fetch all posts from all API keys in parallel (no artificial limit)
-      const results = await fetchFromAllKeys<{ posts?: LatePost[] }>('/posts?limit=10000', {
-        timeout: 10_000,
-        retries: 1,
-      });
-
-      const allPosts: LatePost[] = [];
-      for (const { apiKeyIndex, data } of results) {
-        for (const post of extractPosts(data)) {
-          post.apiKeyIndex = apiKeyIndex;
-          allPosts.push(post);
-        }
-      }
-
-      // Sort by createdAt descending
-      allPosts.sort((a, b) => {
-        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return tb - ta;
-      });
-
-      const hydratedPosts = await hydratePostLinks(allPosts);
-
-      const normalized = hydratedPosts
-        .map(normalizePost)
-        .filter((post) => (platformFilter
-          ? post.platforms?.some((platform) => (platform.platform || '').toLowerCase() === platformFilter)
-          : true))
-        .filter((post) => postMatchesFilter(post, statusFilter));
-
-      return { posts: normalized };
-    })();
-    inflightByKey.set(cacheKey, loadPromise);
-
-    let payload: { posts: Post[] };
-    try {
-      payload = await loadPromise;
-    } finally {
-      inflightByKey.delete(cacheKey);
-    }
-    setCachedResponse(cacheKey, payload);
-    return NextResponse.json(payload, {
-      headers: { 'Cache-Control': 'private, max-age=4, stale-while-revalidate=20' },
+    // Fetch all posts from all API keys in parallel
+    const results = await fetchFromAllKeys<{ posts?: LatePost[] }>('/posts?limit=10000', {
+      timeout: 10_000,
+      retries: 1,
     });
+
+    const allPosts: LatePost[] = [];
+    for (const { apiKeyIndex, data } of results) {
+      for (const post of extractPosts(data)) {
+        post.apiKeyIndex = apiKeyIndex;
+        allPosts.push(post);
+      }
+    }
+
+    // Sort by createdAt descending
+    allPosts.sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    });
+
+    const hydratedPosts = await hydratePostLinks(allPosts);
+
+    const normalized = hydratedPosts
+      .map(normalizePost)
+      .filter((post) => (platformFilter
+        ? post.platforms?.some((platform) => (platform.platform || '').toLowerCase() === platformFilter)
+        : true))
+      .filter((post) => postMatchesFilter(post, statusFilter));
+
+    return NextResponse.json(
+      { posts: normalized },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }

@@ -73,6 +73,19 @@ export default function ModelGrid({
   onModelClick: (model: Model) => void;
   onNewModel: () => void;
 }) {
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!gridRef.current || models.length === 0) return;
+    const cards = gridRef.current.querySelectorAll(':scope > div');
+    if (!cards.length) return;
+    gsap.fromTo(
+      cards,
+      { autoAlpha: 0, y: 20, scale: 0.97 },
+      { autoAlpha: 1, y: 0, scale: 1, duration: 0.35, stagger: 0.04, ease: 'power2.out' }
+    );
+  }, { scope: gridRef, dependencies: [models] });
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -106,19 +119,6 @@ export default function ModelGrid({
       </div>
     );
   }
-
-  const gridRef = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    if (!gridRef.current || models.length === 0) return;
-    const cards = gridRef.current.querySelectorAll(':scope > div');
-    if (!cards.length) return;
-    gsap.fromTo(
-      cards,
-      { autoAlpha: 0, y: 20, scale: 0.97 },
-      { autoAlpha: 1, y: 0, scale: 1, duration: 0.35, stagger: 0.04, ease: 'power2.out' }
-    );
-  }, { scope: gridRef, dependencies: [models] });
 
   return (
     <div ref={gridRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

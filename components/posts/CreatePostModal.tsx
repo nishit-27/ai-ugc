@@ -227,7 +227,7 @@ export default function CreatePostModal({
     try {
       const platformTargets = selectedAccountIds.map((accId) => {
         const acc = postableAccounts.find((a) => a._id === accId);
-        return { platform: acc?.platform || 'tiktok', accountId: accId };
+        return { platform: acc?.platform || 'tiktok', accountId: accId, apiKeyIndex: acc?.apiKeyIndex ?? 0 };
       });
 
       const body: Record<string, unknown> = {

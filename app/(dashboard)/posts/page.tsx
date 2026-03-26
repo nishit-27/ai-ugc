@@ -30,14 +30,26 @@ function PostsPageContent() {
 
   return (
     <PageTransition>
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--primary)]">Posts</h1>
-          <p className="text-[var(--text-muted)]">
-            Manage scheduled and published content{posts.length > 0 && <span className="ml-1">({posts.length})</span>}
-          </p>
+      <div className="mb-4 sm:mb-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-[var(--primary)] sm:text-2xl">Posts</h1>
+            <p className="text-sm text-[var(--text-muted)]">
+              Manage scheduled and published content{posts.length > 0 && <span className="ml-1">({posts.length})</span>}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setPreselectedVideoUrl(null);
+              setCreatePostModal(true);
+            }}
+            className="shrink-0 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--primary-hover)] sm:px-4"
+          >
+            + Create Post
+          </button>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="mt-3">
           <ModelDateToolbar
             modelId={modelFilter}
             onModelChange={setModelFilter}
@@ -46,16 +58,6 @@ function PostsPageContent() {
             modelOptions={modelOptions}
             onRefresh={refresh}
           />
-          <button
-            type="button"
-            onClick={() => {
-              setPreselectedVideoUrl(null);
-              setCreatePostModal(true);
-            }}
-            className="rounded-lg bg-[var(--primary)] px-4 py-2 font-medium text-white hover:bg-[var(--primary-hover)]"
-          >
-            + Create Post
-          </button>
         </div>
       </div>
 
