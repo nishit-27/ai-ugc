@@ -5,6 +5,8 @@ import type { Account, Profile } from '@/types';
 
 type VideoOption = { name: string; path: string; url?: string };
 
+type ModelGroup = { name: string; accountIds: string[] };
+
 type Props = {
   onClose: () => void;
   isLoadingModal: boolean;
@@ -15,6 +17,8 @@ type Props = {
   videos: VideoOption[];
   profiles: Profile[];
   accounts: Account[];
+  modelGroups: ModelGroup[];
+  selectedGroups: string[];
   postForm: { caption: string; videoUrl: string; date: string; time: string };
   publishMode: 'now' | 'schedule' | 'queue' | 'draft';
   selectedProfiles: string[];
@@ -33,6 +37,7 @@ type Props = {
   setUploadedVideoName: (value: string | null) => void;
   setPostForm: React.Dispatch<React.SetStateAction<{ caption: string; videoUrl: string; date: string; time: string }>>;
   setSelectedProfiles: React.Dispatch<React.SetStateAction<string[]>>;
+  setSelectedGroups: React.Dispatch<React.SetStateAction<string[]>>;
   setSelectedAccountIds: React.Dispatch<React.SetStateAction<string[]>>;
   setProfileSearchQuery: (value: string) => void;
   setProfileMultiDropdownOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -55,6 +60,8 @@ export default function CreatePostModalContent({
   videos,
   profiles,
   accounts,
+  modelGroups,
+  selectedGroups,
   postForm,
   publishMode,
   selectedProfiles,
@@ -73,6 +80,7 @@ export default function CreatePostModalContent({
   setUploadedVideoName,
   setPostForm,
   setSelectedProfiles,
+  setSelectedGroups,
   setSelectedAccountIds,
   setProfileSearchQuery,
   setProfileMultiDropdownOpen,
@@ -241,6 +249,68 @@ export default function CreatePostModalContent({
                     />
                   </div>
 
+                  {/* Model Groups */}
+                  {modelGroups.length > 0 && (
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Model Groups</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {modelGroups.map((g) => {
+                          const isSelected = selectedGroups.includes(g.name);
+                          return (
+                            <button
+                              key={g.name}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedGroups((prev) => prev.filter((n) => n !== g.name));
+                                  // Remove accounts that were only from this group
+                                  const otherGroupAccountIds = new Set<string>();
+                                  for (const gName of selectedGroups) {
+                                    if (gName === g.name) continue;
+                                    const otherGroup = modelGroups.find((mg) => mg.name === gName);
+                                    if (otherGroup) otherGroup.accountIds.forEach((id) => otherGroupAccountIds.add(id));
+                                  }
+                                  // Keep accounts from profiles or other groups
+                                  const profileAccountIds = new Set(
+                                    accounts
+                                      .filter((a) => {
+                                        const pId = typeof a.profileId === 'object' ? (a.profileId as { _id: string })?._id : a.profileId;
+                                        return pId && selectedProfiles.includes(pId);
+                                      })
+                                      .filter((a) => a.platform === 'tiktok' || a.platform === 'instagram' || a.platform === 'youtube')
+                                      .map((a) => a._id)
+                                  );
+                                  setSelectedAccountIds((prev) =>
+                                    prev.filter((id) => profileAccountIds.has(id) || otherGroupAccountIds.has(id))
+                                  );
+                                } else {
+                                  setSelectedGroups((prev) => [...prev, g.name]);
+                                  // Auto-select postable accounts from this group
+                                  const groupPostableIds = g.accountIds.filter((id) => {
+                                    const acc = accounts.find((a) => a._id === id);
+                                    return acc && (acc.platform === 'tiktok' || acc.platform === 'instagram' || acc.platform === 'youtube');
+                                  });
+                                  setSelectedAccountIds((prev) => [...new Set([...prev, ...groupPostableIds])]);
+                                }
+                              }}
+                              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                                isSelected
+                                  ? 'border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]'
+                                  : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent-border)] hover:bg-[var(--accent)]'
+                              }`}
+                            >
+                              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                              </svg>
+                              {g.name}
+                              <span className="text-[10px] opacity-60">({g.accountIds.length})</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Profiles */}
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Profiles</label>
@@ -356,11 +426,11 @@ export default function CreatePostModalContent({
                   </div>
 
                   {/* Accounts */}
-                  {selectedProfiles.length > 0 && postableAccounts.length === 0 && (
+                  {(selectedProfiles.length > 0 || selectedGroups.length > 0) && postableAccounts.length === 0 && (
                     <div className="rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2.5">
                       <div className="text-xs font-medium text-amber-800">No postable accounts</div>
                       <div className="mt-0.5 text-[11px] text-amber-700">
-                        Selected profiles don&apos;t have any TikTok, Instagram, or YouTube accounts connected. Connect accounts in the Connections page.
+                        Selected profiles/groups don&apos;t have any TikTok, Instagram, or YouTube accounts connected.
                       </div>
                     </div>
                   )}

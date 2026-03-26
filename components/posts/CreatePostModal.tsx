@@ -93,6 +93,8 @@ export default function CreatePostModal({
   const [videos, setVideos] = useState<{ name: string; path: string; url?: string }[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [modelGroups, setModelGroups] = useState<{ name: string; accountIds: string[] }[]>([]);
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [postForm, setPostForm] = useState({ caption: '', videoUrl: '', date: '', time: '' });
   const [publishMode, setPublishMode] = useState<'now' | 'schedule' | 'queue' | 'draft'>('now');
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
@@ -109,12 +111,24 @@ export default function CreatePostModal({
   const [uploadedVideoName, setUploadedVideoName] = useState<string | null>(null);
   const submitGuardRef = useRef(false);
 
-  // Derived
+  // Derived: combine accounts from selected profiles + selected model groups
   const selectedProfileAccounts = accounts.filter((a) => {
     const pId = typeof a.profileId === 'object' ? (a.profileId as { _id: string })?._id : a.profileId;
     return pId && selectedProfiles.includes(pId);
   });
-  const postableAccounts = selectedProfileAccounts.filter(
+  const groupAccountIds = new Set<string>();
+  for (const gName of selectedGroups) {
+    const group = modelGroups.find((g) => g.name === gName);
+    if (group) group.accountIds.forEach((id) => groupAccountIds.add(id));
+  }
+  const selectedGroupAccounts = accounts.filter((a) => groupAccountIds.has(a._id));
+  // Merge profile + group accounts, dedupe by _id
+  const mergedAccountIds = new Set([
+    ...selectedProfileAccounts.map((a) => a._id),
+    ...selectedGroupAccounts.map((a) => a._id),
+  ]);
+  const allSelectedAccounts = accounts.filter((a) => mergedAccountIds.has(a._id));
+  const postableAccounts = allSelectedAccounts.filter(
     (a) => a.platform === 'tiktok' || a.platform === 'instagram' || a.platform === 'youtube'
   );
 
@@ -125,10 +139,12 @@ export default function CreatePostModal({
       fetch('/api/videos').then((r) => r.json()),
       fetch('/api/late/accounts').then((r) => r.json()),
       fetch('/api/late/profiles').then((r) => r.json()),
-    ]).then(([videosData, accountsData, profilesData]) => {
+      fetch('/api/model-groups/accounts').then((r) => r.json()),
+    ]).then(([videosData, accountsData, profilesData, groupsData]) => {
       setVideos(videosData.videos || []);
       setAccounts(accountsData.accounts || []);
       setProfiles(profilesData.profiles || []);
+      setModelGroups(groupsData.groups || []);
     }).catch(console.error).finally(() => {
       setIsLoadingModal(false);
     });
@@ -138,6 +154,7 @@ export default function CreatePostModal({
     setUploadedVideoName(null);
     setPublishMode('now');
     setSelectedProfiles([]);
+    setSelectedGroups([]);
     setSelectedAccountIds([]);
     setProfileSearchQuery('');
     setProfileMultiDropdownOpen(false);
@@ -350,6 +367,8 @@ export default function CreatePostModal({
       videos={videos}
       profiles={profiles}
       accounts={accounts}
+      modelGroups={modelGroups}
+      selectedGroups={selectedGroups}
       postForm={postForm}
       publishMode={publishMode}
       selectedProfiles={selectedProfiles}
@@ -368,6 +387,7 @@ export default function CreatePostModal({
       setUploadedVideoName={setUploadedVideoName}
       setPostForm={setPostForm}
       setSelectedProfiles={setSelectedProfiles}
+      setSelectedGroups={setSelectedGroups}
       setSelectedAccountIds={setSelectedAccountIds}
       setProfileSearchQuery={setProfileSearchQuery}
       setProfileMultiDropdownOpen={setProfileMultiDropdownOpen}
