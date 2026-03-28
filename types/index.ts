@@ -412,6 +412,143 @@ export type TemplatePreset = {
   updatedAt: string;
 };
 
+// ── Twitter Pipeline types ──
+
+export type TwitterStepType = 'tweet' | 'thread' | 'reply' | 'quote' | 'engage' | 'media';
+
+export type TwitterTweetConfig = {
+  content: string;
+  mode: 'manual' | 'generate' | 'enhance';
+  genre?: string;
+  topic?: string;
+  contextTweetUrl?: string;
+  contextTweet?: {
+    tweet_id: string;
+    text: string;
+    username: string;
+    name: string;
+    profile_pic_url: string;
+    favorite_count: number;
+    retweet_count: number;
+  };
+  mediaUrls?: string[];
+  replySettings?: 'following' | 'mentionedUsers' | 'subscribers' | 'verified';
+  poll?: {
+    options: string[];
+    duration_minutes: number;
+  };
+};
+
+export type TwitterThreadItem = {
+  id: string;
+  content: string;
+  mediaUrls?: string[];
+};
+
+export type TwitterThreadConfig = {
+  items: TwitterThreadItem[];
+  mode: 'manual' | 'generate';
+  genre?: string;
+  topic?: string;
+  contextTweetUrl?: string;
+};
+
+export type TwitterReplyConfig = {
+  tweetUrl: string;
+  tweetId?: string;
+  targetTweet?: {
+    tweet_id: string;
+    text: string;
+    username: string;
+    name: string;
+    profile_pic_url: string;
+    favorite_count: number;
+    retweet_count: number;
+  };
+  content: string;
+  mode: 'manual' | 'generate' | 'enhance';
+  genre?: string;
+  topic?: string;
+  mediaUrls?: string[];
+};
+
+export type TwitterQuoteConfig = {
+  tweetUrl: string;
+  tweetId?: string;
+  targetTweet?: {
+    tweet_id: string;
+    text: string;
+    username: string;
+    name: string;
+    profile_pic_url: string;
+    favorite_count: number;
+    retweet_count: number;
+  };
+  content: string;
+  mode: 'manual' | 'generate' | 'enhance';
+  genre?: string;
+  topic?: string;
+  mediaUrls?: string[];
+};
+
+export type TwitterEngageConfig = {
+  tweetUrl: string;
+  tweetId?: string;
+  targetTweet?: {
+    tweet_id: string;
+    text: string;
+    username: string;
+    name: string;
+    profile_pic_url: string;
+    favorite_count: number;
+    retweet_count: number;
+  };
+  actions: {
+    retweet: boolean;
+    like: boolean;
+    bookmark: boolean;
+  };
+};
+
+export type TwitterMediaConfig = {
+  source: 'upload' | 'library' | 'generate';
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video' | 'gif';
+  generatePrompt?: string;
+  generateProvider?: 'fal' | 'gpt-image' | 'gemini';
+  attachToStepId?: string;
+};
+
+export type TwitterStepConfig =
+  | TwitterTweetConfig
+  | TwitterThreadConfig
+  | TwitterReplyConfig
+  | TwitterQuoteConfig
+  | TwitterEngageConfig
+  | TwitterMediaConfig;
+
+export type TwitterPipelineStep = {
+  id: string;
+  type: TwitterStepType;
+  config: TwitterStepConfig;
+  enabled: boolean;
+};
+
+export type TwitterPipeline = {
+  id: string;
+  name: string;
+  status: 'draft' | 'running' | 'completed' | 'failed';
+  steps: TwitterPipelineStep[];
+  accountIds: string[];
+  scheduledFor?: string;
+  timezone?: string;
+  error?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+};
+
 // ── Generation request (cost tracking) ──
 
 export type GenerationRequest = {

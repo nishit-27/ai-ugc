@@ -465,3 +465,23 @@ export const lateProfileApiKeys = pgTable('late_profile_api_keys', {
   apiKeyIndex: integer('api_key_index').notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+// ── Twitter Pipelines ──
+
+export const twitterPipelines = pgTable('twitter_pipelines', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  status: text('status').notNull().default('draft'),
+  steps: jsonb('steps').notNull().default([]),
+  accountIds: jsonb('account_ids').notNull().default([]),
+  scheduledFor: timestamp('scheduled_for'),
+  timezone: text('timezone'),
+  error: text('error'),
+  createdBy: text('created_by'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+  completedAt: timestamp('completed_at'),
+}, (t) => [
+  index('idx_twitter_pipelines_status').on(t.status),
+  index('idx_twitter_pipelines_created_at').on(t.createdAt),
+]);

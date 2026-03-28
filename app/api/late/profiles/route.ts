@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { lateApiRequest } from '@/lib/lateApi';
-import { fetchFromAllKeys, getBalancedApiKeyIndex, getAccountLabel, getKeyUsage, MAX_PROFILES_PER_KEY } from '@/lib/lateAccountPool';
+import { fetchFromAllKeys, getBalancedApiKeyIndex, getAccountLabel, getKeyUsage } from '@/lib/lateAccountPool';
 import { saveProfileApiKey, getProfileApiKeysBatch, getProfileCountPerKey } from '@/lib/db-late-profile-keys';
 
 export const dynamic = 'force-dynamic';
@@ -63,12 +63,12 @@ export async function POST(request: NextRequest) {
     // Use explicit apiKeyIndex if provided and valid, otherwise auto-balance
     let targetIndex: number;
     if (typeof requestedIndex === 'number' && requestedIndex >= 0 && requestedIndex < config.LATE_API_KEYS.length) {
-      // Check cap on the requested key
-      const counts = await getProfileCountPerKey();
-      const currentCount = counts.get(requestedIndex) ?? 0;
-      if (currentCount >= MAX_PROFILES_PER_KEY) {
+      // Check cap on the requested key using per-key limits
+      const usage = await getKeyUsage();
+      const keyInfo = usage.find((k) => k.index === requestedIndex);
+      if (keyInfo && keyInfo.count >= keyInfo.max) {
         return NextResponse.json(
-          { error: `${getAccountLabel(requestedIndex)} is full (${MAX_PROFILES_PER_KEY}/${MAX_PROFILES_PER_KEY} profiles). Choose a different account.` },
+          { error: `${getAccountLabel(requestedIndex)} is full (${keyInfo.count}/${keyInfo.max} profiles). Choose a different account.` },
           { status: 400 }
         );
       }

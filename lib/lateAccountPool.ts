@@ -2,7 +2,20 @@ import { config } from './config';
 import { lateApiRequest } from './lateApi';
 import { getProfileApiKey, getProfileCountPerKey } from './db-late-profile-keys';
 
-export const MAX_PROFILES_PER_KEY = 50;
+export const DEFAULT_MAX_PROFILES_PER_KEY = 50;
+
+// Allow per-key limits via LATE_API_KEY_LIMITS env var (comma-separated, e.g., "50,100,50")
+function getMaxProfilesForKey(index: number): number {
+  const raw = process.env.LATE_API_KEY_LIMITS;
+  if (raw) {
+    const limits = raw.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
+    if (index < limits.length) return limits[index];
+  }
+  return DEFAULT_MAX_PROFILES_PER_KEY;
+}
+
+// Backwards compat — keep the constant for code that imports it directly
+export const MAX_PROFILES_PER_KEY = DEFAULT_MAX_PROFILES_PER_KEY;
 
 export function getApiKeys(): string[] {
   return config.LATE_API_KEYS;
@@ -32,13 +45,14 @@ export async function getBalancedApiKeyIndex(): Promise<number> {
   let minCount = Infinity;
   for (let i = 0; i < keys.length; i++) {
     const count = counts.get(i) ?? 0;
-    if (count < MAX_PROFILES_PER_KEY && count < minCount) {
+    const maxForKey = getMaxProfilesForKey(i);
+    if (count < maxForKey && count < minCount) {
       minCount = count;
       minIndex = i;
     }
   }
   if (minIndex === -1) {
-    throw new Error(`All GetLate accounts are full (${MAX_PROFILES_PER_KEY} profiles each). Add a new API key to LATE_API_KEYS.`);
+    throw new Error('All GetLate accounts are full. Add a new API key to LATE_API_KEYS.');
   }
   return minIndex;
 }
@@ -49,7 +63,7 @@ export async function getKeyUsage(): Promise<{ index: number; count: number; max
   return keys.map((_, i) => ({
     index: i,
     count: counts.get(i) ?? 0,
-    max: MAX_PROFILES_PER_KEY,
+    max: getMaxProfilesForKey(i),
     label: getAccountLabel(i),
   }));
 }

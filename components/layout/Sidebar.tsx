@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList, ImageIcon, Crown, LogOut, Video, LayoutGrid, BarChart3, TrendingUp, Tag, FolderOpen, Trash2, DollarSign } from 'lucide-react';
+import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList, ImageIcon, Crown, LogOut, Video, LayoutGrid, BarChart3, TrendingUp, Tag, FolderOpen, Trash2, DollarSign, Twitter } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 import {
   Sidebar,
@@ -24,6 +24,7 @@ const createItems = [
   { href: '/templates', label: 'Pipelines', icon: LayoutTemplate },
   { href: '/master-pipeline', label: 'Master Pipeline', icon: Crown },
   { href: '/compose', label: 'Compose', icon: LayoutGrid },
+  { href: '/twitter', label: 'Twitter', icon: Twitter },
   // { href: '/generate', label: 'Generate', icon: Sparkles },
 ];
 

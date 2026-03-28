@@ -59,10 +59,11 @@ function JobsPageInner() {
   const masterBatches = useMemo(() => batches.filter(b => b.isMaster), [batches]);
   const regularBatches = useMemo(() => batches.filter(b => !b.isMaster), [batches]);
 
-  const [tab, setTab] = useState<'single' | 'batch' | 'master'>(() => {
+  const [tab, setTab] = useState<'single' | 'batch' | 'master' | 'twitter'>(() => {
     const param = searchParams.get('tab');
     if (param === 'batch') return 'batch';
     if (param === 'master') return 'master';
+    if (param === 'twitter') return 'twitter';
     return 'single';
   });
 
@@ -133,12 +134,31 @@ function JobsPageInner() {
   const handleRefresh = async () => {
     await Promise.all([refreshJobs(), refreshBatches()]);
   };
+  // Twitter pipelines
+  const [twitterPipelines, setTwitterPipelines] = useState<{ id: string; name: string; status: string; steps: unknown[]; createdAt: string; completedAt?: string }[]>([]);
+  const [twitterLoading, setTwitterLoading] = useState(false);
+  const [twitterFetched, setTwitterFetched] = useState(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useMemo(() => {
+    if (tab === 'twitter' && !twitterFetched && !twitterLoading) {
+      setTwitterLoading(true);
+      setTwitterFetched(true);
+      fetch('/api/twitter/pipelines')
+        .then((r) => r.json())
+        .then((data) => setTwitterPipelines(data.pipelines || []))
+        .catch(() => {})
+        .finally(() => setTwitterLoading(false));
+    }
+  }, [tab, twitterFetched, twitterLoading]);
+
   const itemCount = tab === 'single'
     ? filteredSingleJobs.length
     : tab === 'batch'
       ? filteredRegularBatches.length
-      : filteredMasterBatches.length;
-  const isTabLoading = (tab === 'single' && jobsLoading) || ((tab === 'batch' || tab === 'master') && batchesLoading);
+      : tab === 'twitter'
+        ? twitterPipelines.length
+        : filteredMasterBatches.length;
+  const isTabLoading = (tab === 'single' && jobsLoading) || ((tab === 'batch' || tab === 'master') && batchesLoading) || (tab === 'twitter' && twitterLoading);
 
   return (
     <PageTransition className="space-y-6">
@@ -180,7 +200,7 @@ function JobsPageInner() {
             </button>
             <button
               onClick={() => setTab('master')}
-              className={`px-3 py-1.5 text-xs font-medium transition-all rounded-r-lg ${
+              className={`px-3 py-1.5 text-xs font-medium transition-all ${
                 tab === 'master'
                   ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
                   : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--accent)]'
@@ -189,6 +209,19 @@ function JobsPageInner() {
               Master
               {filteredMasterBatches.some(b => b.status === 'processing' || b.status === 'pending') && (
                 <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
+              )}
+            </button>
+            <button
+              onClick={() => setTab('twitter')}
+              className={`px-3 py-1.5 text-xs font-medium transition-all rounded-r-lg ${
+                tab === 'twitter'
+                  ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--accent)]'
+              }`}
+            >
+              Twitter
+              {twitterPipelines.some(p => p.status === 'running') && (
+                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
               )}
             </button>
           </div>
@@ -226,6 +259,49 @@ function JobsPageInner() {
             <TemplateJobList jobs={filteredSingleJobs} />
           ) : tab === 'batch' ? (
             <PipelineBatchList batches={filteredRegularBatches} />
+          ) : tab === 'twitter' ? (
+            <div className="space-y-2">
+              {twitterPipelines.length === 0 ? (
+                <div className="py-16 text-center">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--bg-tertiary)]">
+                    <svg className="h-5 w-5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                    </svg>
+                  </div>
+                  <p className="text-sm font-medium text-[var(--text-primary)]">No Twitter pipelines yet</p>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">Create one from the Twitter page</p>
+                </div>
+              ) : (
+                twitterPipelines.map((pipeline) => (
+                  <div
+                    key={pipeline.id}
+                    className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 transition-all hover:shadow-md"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-tertiary)]">
+                        <svg className="h-4 w-4 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-[var(--text-primary)]">{pipeline.name}</p>
+                        <p className="text-[11px] text-[var(--text-muted)]">
+                          {(pipeline.steps as unknown[])?.length || 0} steps &middot; {new Date(pipeline.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      pipeline.status === 'running' ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400'
+                        : pipeline.status === 'completed' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400'
+                        : pipeline.status === 'failed' ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
+                        : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                    }`}>
+                      {pipeline.status}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
           ) : (
             <MasterBatchList batches={filteredMasterBatches} onRename={renameBatch} />
           )}
