@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MessageSquare, ListOrdered, Reply, Quote, Heart, ImageIcon, X } from 'lucide-react';
 import type { TwitterStepType } from '@/types';
 
@@ -19,12 +21,19 @@ interface TwitterStepPickerProps {
 }
 
 export default function TwitterStepPicker({ isOpen, onClose, onSelect }: TwitterStepPickerProps) {
-  if (!isOpen) return null;
+  const [mounted, setMounted] = useState(false);
 
-  return (
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!isOpen || !mounted) return null;
+
+  const content = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={onClose}
+      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
     >
       <div
         className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg-primary)] p-6 shadow-2xl"
@@ -50,7 +59,7 @@ export default function TwitterStepPicker({ isOpen, onClose, onSelect }: Twitter
                   onSelect(option.type);
                   onClose();
                 }}
-                className="group flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-left transition-all hover:border-[var(--text-muted)] hover:shadow-md"
+                className="group flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-3 text-left transition-all hover:border-[var(--text-muted)] hover:shadow-md"
               >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-tertiary)] transition-transform group-hover:scale-105">
                   <Icon className="h-4 w-4 text-[var(--text-muted)]" />
@@ -66,4 +75,6 @@ export default function TwitterStepPicker({ isOpen, onClose, onSelect }: Twitter
       </div>
     </div>
   );
+
+  return createPortal(content, document.body);
 }
