@@ -31,6 +31,9 @@ export type CachedStepState = {
 
 export type MasterPerModelActivePanel = 'upload' | 'model-images' | null;
 
+export type QueueModelStatus = 'queued' | 'generating' | 'done' | 'failed';
+export type QueueState = Record<string, { status: QueueModelStatus; position?: number }>;
+
 export const VEO_DURATIONS = ['4s', '6s', '8s'];
 
 export const VEO_ASPECTS = [

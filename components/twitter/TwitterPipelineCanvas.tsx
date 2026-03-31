@@ -266,11 +266,7 @@ export default function TwitterPipelineCanvas({
       </div>
 
       {/* Empty state */}
-      {steps.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          {/* Empty state is handled by the source → add step → output flow above */}
-        </div>
-      )}
+      {/* Empty state is handled by the source → add step → output flow above */}
     </div>
   );
 }

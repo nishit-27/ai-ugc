@@ -4,7 +4,7 @@ import VideoTrimmer from '@/components/templates/shared/VideoTrimmer';
 import VideoGenMasterFirstFrameCard from './VideoGenMasterFirstFrameCard';
 import type { Model, ModelImage, VideoGenConfig as VGC } from '@/types';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
-import type { ExtractedFrame, FirstFrameOption, ImageSource } from './types';
+import type { ExtractedFrame, FirstFrameOption, ImageSource, QueueState } from './types';
 import { VEO_ASPECTS, VEO_DURATIONS } from './types';
 
 type Props = {
@@ -29,6 +29,7 @@ type Props = {
   isMasterGeneratingAll: boolean;
   masterProgress: { done: number; total: number };
   masterPerModelResults: Record<string, FirstFrameOption[]>;
+  masterQueueState?: QueueState;
   firstFrameCardContent: React.ReactNode;
   masterPerModelContent: React.ReactNode;
   uploadedModelPreviewUrl: string | null;
@@ -69,6 +70,7 @@ export default function VideoGenMainColumn({
   isMasterGeneratingAll,
   masterProgress,
   masterPerModelResults,
+  masterQueueState,
   firstFrameCardContent,
   masterPerModelContent,
   uploadedModelPreviewUrl,
@@ -129,6 +131,7 @@ export default function VideoGenMainColumn({
           masterProgress={masterProgress}
           masterPerModelResults={masterPerModelResults}
           masterPerModelContent={masterPerModelContent}
+          masterQueueState={masterQueueState}
           isUploadingScene={isUploadingScene}
           setShowScenePicker={setShowScenePicker}
           setPreviewUrl={setPreviewUrl}

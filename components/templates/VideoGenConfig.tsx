@@ -13,7 +13,7 @@ import { extractFramesFromVideo, fetchGeneratedImages, generateFirstFrameRequest
 import { generateAllMasterFirstFrames, resolveModelImageDisplay, resolveModelImageUrl } from './video-gen/helpers';
 import type { GeneratedImage, VideoGenConfig as VGC } from '@/types';
 import type { MasterModel } from './NodeConfigPanel';
-import type { ExtractedFrame, FirstFrameInputMode, FirstFrameOption, ImageSource, MasterPerModelActivePanel } from './video-gen/types';
+import type { ExtractedFrame, FirstFrameInputMode, FirstFrameOption, ImageSource, MasterPerModelActivePanel, QueueState } from './video-gen/types';
 import type { ModelImage } from '@/types';
 
 export default function VideoGenConfig({
@@ -87,6 +87,7 @@ export default function VideoGenConfig({
   const [masterModelImagesLoading, setMasterModelImagesLoading] = useState<Set<string>>(new Set());
   const [masterUploadingModelId, setMasterUploadingModelId] = useState<string | null>(null);
   const [masterErrorsByModelId, setMasterErrorsByModelId] = useState<Record<string, string>>({});
+  const [masterQueueState, setMasterQueueState] = useState<QueueState>({});
 
   const clearFirstFrameOptions = () => { setFirstFrameOptionsRaw([]); setDismissedOptions(new Set()); };
   const setFirstFrameOptions = (options: FirstFrameOption[]) => { setFirstFrameOptionsRaw(options); setDismissedOptions(new Set()); };
@@ -333,6 +334,7 @@ export default function VideoGenConfig({
     setIsMasterGeneratingAll(true);
     setMasterErrorsByModelId({});
     setMasterGeneratingIds(new Set(masterModels.map((m) => m.modelId)));
+    setMasterQueueState({});
     await generateAllMasterFirstFrames({
       masterModels,
       generateForModel: masterGenerateForModel,
@@ -345,11 +347,13 @@ export default function VideoGenConfig({
         setMasterGeneratingIds((prev) => { const next = new Set(prev); next.delete(modelId); return next; });
       },
       onProgress: (done, total) => setMasterProgress({ done, total }),
+      onQueueStateChange: (state) => setMasterQueueState(state),
       frameImageUrl: config.extractedFrameUrl,
       resolution: config.firstFrameResolution || '1K',
       provider: config.firstFrameProvider || 'fal',
     });
     setMasterGeneratingIds(new Set());
+    setMasterQueueState({});
     setIsMasterGeneratingAll(false);
   };
 
@@ -558,6 +562,7 @@ export default function VideoGenConfig({
       masterModelImagesLoading={masterModelImagesLoading}
       masterUploadingModelId={masterUploadingModelId}
       masterErrorsByModelId={masterErrorsByModelId}
+      masterQueueState={masterQueueState}
       setPreviewUrl={setPreviewUrl}
       setMasterLibraryModelId={setMasterLibraryModelId}
       masterGenerateForModel={masterGenerateForModel}
@@ -601,6 +606,7 @@ export default function VideoGenConfig({
           isMasterGeneratingAll={isMasterGeneratingAll}
           masterProgress={masterProgress}
           masterPerModelResults={masterPerModelResults}
+          masterQueueState={masterQueueState}
           firstFrameCardContent={!masterMode ? firstFrameCardContent : null}
           masterPerModelContent={masterPerModelContent}
           uploadedModelPreviewUrl={uploadedModelPreviewUrl}

@@ -1,7 +1,7 @@
 import { Check, Sparkles, Upload, X } from 'lucide-react';
 import type { VideoGenConfig as VGC } from '@/types';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
-import type { ExtractedFrame, FirstFrameOption } from './types';
+import type { ExtractedFrame, FirstFrameOption, QueueState } from './types';
 
 type Props = {
   config: VGC;
@@ -17,6 +17,7 @@ type Props = {
   masterProgress: { done: number; total: number };
   masterPerModelResults: Record<string, FirstFrameOption[]>;
   masterPerModelContent: React.ReactNode;
+  masterQueueState?: QueueState;
   isUploadingScene: boolean;
   setShowScenePicker: (value: boolean) => void;
   setPreviewUrl: (url: string | null) => void;
@@ -40,6 +41,7 @@ export default function VideoGenMasterFirstFrameCard({
   masterProgress,
   masterPerModelResults,
   masterPerModelContent,
+  masterQueueState,
   isUploadingScene,
   setShowScenePicker,
   setPreviewUrl,
@@ -279,6 +281,34 @@ export default function VideoGenMasterFirstFrameCard({
                 `Generate First Frame for All (${masterModels.length})`
               )}
             </button>
+            {isMasterGeneratingAll && masterProgress.total > 0 && (() => {
+              const pct = Math.round((masterProgress.done / masterProgress.total) * 100);
+              const queueEntries = masterQueueState ? Object.values(masterQueueState) : [];
+              const generating = queueEntries.filter(e => e.status === 'generating').length;
+              const queued = queueEntries.filter(e => e.status === 'queued').length;
+              const done = queueEntries.filter(e => e.status === 'done').length;
+              const failed = queueEntries.filter(e => e.status === 'failed').length;
+              return (
+                <div className="space-y-1.5">
+                  <div className="h-1.5 w-full rounded-full bg-[var(--accent)] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-master transition-all duration-500 ease-out"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)]">
+                    <span className="flex items-center gap-1.5">
+                      {generating > 0 && <span className="flex items-center gap-0.5"><span className="h-1.5 w-1.5 rounded-full bg-master animate-pulse" />{generating} active</span>}
+                      {queued > 0 && <span className="flex items-center gap-0.5"><span className="h-1.5 w-1.5 rounded-full bg-[var(--text-muted)]" />{queued} queued</span>}
+                    </span>
+                    <span>
+                      {done > 0 && `${done} done`}
+                      {failed > 0 && <span className="text-red-500 ml-1">{failed} failed</span>}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
             </>
           )}
 

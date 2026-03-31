@@ -1,7 +1,7 @@
-import { AlertCircle, Expand, ImageIcon, Sparkles, Upload, User, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, Clock, Expand, ImageIcon, Sparkles, Upload, User, RefreshCw, X } from 'lucide-react';
 import type { GeneratedImage, ModelImage, VideoGenConfig as VGC } from '@/types';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
-import type { FirstFrameOption, MasterPerModelActivePanel } from './types';
+import type { FirstFrameOption, MasterPerModelActivePanel, QueueState } from './types';
 
 type Props = {
   masterMode?: boolean;
@@ -19,6 +19,7 @@ type Props = {
   masterModelImagesLoading: Set<string>;
   masterUploadingModelId: string | null;
   masterErrorsByModelId?: Record<string, string>;
+  masterQueueState?: QueueState;
   setPreviewUrl: (url: string | null) => void;
   setMasterLibraryModelId: (modelId: string | null) => void;
   masterGenerateForModel: (modelId: string, primaryGcsUrl: string) => Promise<FirstFrameOption[] | null>;
@@ -80,6 +81,7 @@ export default function VideoGenMasterPerModelPanel({
   masterModelImagesLoading,
   masterUploadingModelId,
   masterErrorsByModelId,
+  masterQueueState,
   setPreviewUrl,
   setMasterLibraryModelId,
   masterGenerateForModel,
@@ -109,9 +111,13 @@ export default function VideoGenMasterPerModelPanel({
         const isUploading = masterUploadingModelId === model.modelId;
         const hasResults = results.length > 0;
         const modelError = masterErrorsByModelId?.[model.modelId];
+        const queueEntry = masterQueueState?.[model.modelId];
+        const isQueued = queueEntry?.status === 'queued';
 
         return (
-          <div key={model.modelId} className="rounded-xl border border-[var(--border)] p-2.5 space-y-2">
+          <div key={model.modelId} className={`rounded-xl border p-2.5 space-y-2 transition-colors ${
+            isGenerating ? 'border-master/50 bg-master/5' : isQueued ? 'border-[var(--border)] opacity-70' : 'border-[var(--border)]'
+          }`}>
             <div className="flex items-center gap-2.5">
               <img
                 src={model.primaryImageUrl}
@@ -121,7 +127,7 @@ export default function VideoGenMasterPerModelPanel({
               />
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-[var(--text)] truncate">{model.modelName}</p>
-                {selected && (
+                {selected ? (
                   <button
                     onClick={() => handleMasterSelectForModel(model.modelId, '')}
                     className="flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400 font-medium hover:text-red-500 dark:hover:text-red-400 transition-colors group"
@@ -129,10 +135,22 @@ export default function VideoGenMasterPerModelPanel({
                     First frame selected
                     <X className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </button>
-                )}
+                ) : isQueued && queueEntry?.position ? (
+                  <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                    <Clock className="h-3 w-3" />
+                    Queue position #{queueEntry.position}
+                  </span>
+                ) : isGenerating ? (
+                  <span className="text-[10px] text-master font-medium">Generating...</span>
+                ) : null}
               </div>
               {isGenerating && <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-master animate-spin shrink-0" />}
-              {!isGenerating && (
+              {isQueued && (
+                <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-muted)] shrink-0">
+                  Queued
+                </span>
+              )}
+              {!isGenerating && !isQueued && (
                 <div className="flex items-center gap-1 shrink-0">
                   <ActionButton
                     icon={ImageIcon}

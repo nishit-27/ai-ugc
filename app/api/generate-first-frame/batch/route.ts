@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 
 export const maxDuration = 300;
 
+/** Max concurrent requests to avoid Gemini/FAL rate limits */
+const CONCURRENCY_LIMIT = 2;
+/** Delay between chunks in ms */
+const CHUNK_DELAY_MS = 1500;
+
 type ModelEntry = {
   modelImageUrl: string;
   modelId?: string;
@@ -39,54 +44,74 @@ export async function POST(req: Request) {
     // Forward cookies/auth from the original request
     const cookie = req.headers.get('cookie') || '';
 
-    // Fire ALL models in parallel — server-side, no browser connection limit
-    const results = await Promise.allSettled(
-      models.map(async (entry): Promise<ModelResult> => {
-        const res = await fetch(`${origin}/api/generate-first-frame`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(cookie ? { Cookie: cookie } : {}),
-          },
-          body: JSON.stringify({
-            modelImageUrl: entry.modelImageUrl,
-            frameImageUrl,
-            resolution,
-            modelId: entry.modelId,
-            provider,
-          }),
-        });
+    const modelResults: ModelResult[] = [];
 
-        const data = await res.json();
+    // Process in chunks to avoid rate limiting
+    const chunks: ModelEntry[][] = [];
+    for (let i = 0; i < models.length; i += CONCURRENCY_LIMIT) {
+      chunks.push(models.slice(i, i + CONCURRENCY_LIMIT));
+    }
 
-        if (!res.ok) {
+    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+      const chunk = chunks[chunkIdx];
+
+      const results = await Promise.allSettled(
+        chunk.map(async (entry): Promise<ModelResult> => {
+          const res = await fetch(`${origin}/api/generate-first-frame`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(cookie ? { Cookie: cookie } : {}),
+            },
+            body: JSON.stringify({
+              modelImageUrl: entry.modelImageUrl,
+              frameImageUrl,
+              resolution,
+              modelId: entry.modelId,
+              provider,
+            }),
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            return {
+              modelId: entry.modelId,
+              images: [],
+              error: data.error || `HTTP ${res.status}`,
+            };
+          }
+
           return {
             modelId: entry.modelId,
-            images: [],
-            error: data.error || `HTTP ${res.status}`,
+            images: data.images || [],
           };
+        }),
+      );
+
+      for (const settled of results) {
+        if (settled.status === 'fulfilled') {
+          modelResults.push(settled.value);
+        } else {
+          const entry = chunk[results.indexOf(settled)];
+          modelResults.push({
+            modelId: entry?.modelId,
+            images: [],
+            error: (settled.reason as Error)?.message || 'Unknown error',
+          });
         }
+      }
 
-        return {
-          modelId: entry.modelId,
-          images: data.images || [],
-        };
-      }),
-    );
-
-    const modelResults: ModelResult[] = results.map((settled, i) => {
-      if (settled.status === 'fulfilled') return settled.value;
-      return {
-        modelId: models[i].modelId,
-        images: [],
-        error: (settled.reason as Error)?.message || 'Unknown error',
-      };
-    });
+      // Delay between chunks (skip after last)
+      if (chunkIdx < chunks.length - 1) {
+        await new Promise((r) => setTimeout(r, CHUNK_DELAY_MS));
+      }
+    }
 
     const succeeded = modelResults.filter((r) => r.images.length > 0).length;
     const failed = modelResults.filter((r) => r.images.length === 0).length;
 
-    console.log(`[FirstFrame Batch] ${succeeded} succeeded, ${failed} failed out of ${models.length}`);
+    console.log(`[FirstFrame Batch] ${succeeded} succeeded, ${failed} failed out of ${models.length} (chunked: ${CONCURRENCY_LIMIT} concurrent, ${CHUNK_DELAY_MS}ms delay)`);
 
     return NextResponse.json({ results: modelResults });
   } catch (error) {
