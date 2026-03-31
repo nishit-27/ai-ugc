@@ -18,12 +18,14 @@ type Props = {
   masterPerModelResults: Record<string, FirstFrameOption[]>;
   masterPerModelContent: React.ReactNode;
   masterQueueState?: QueueState;
+  failedMasterCount: number;
   isUploadingScene: boolean;
   setShowScenePicker: (value: boolean) => void;
   setPreviewUrl: (url: string | null) => void;
   setMasterPerModelResults: (value: Record<string, FirstFrameOption[]>) => void;
   handleExtractFrames: () => Promise<void>;
   handleMasterGenerateAll: () => Promise<void>;
+  handleMasterRetryFailed: () => Promise<void>;
   handleSceneUpload: (file: File) => Promise<void>;
 };
 
@@ -42,12 +44,14 @@ export default function VideoGenMasterFirstFrameCard({
   masterPerModelResults,
   masterPerModelContent,
   masterQueueState,
+  failedMasterCount,
   isUploadingScene,
   setShowScenePicker,
   setPreviewUrl,
   setMasterPerModelResults,
   handleExtractFrames,
   handleMasterGenerateAll,
+  handleMasterRetryFailed,
   handleSceneUpload,
 }: Props) {
   return (
@@ -265,22 +269,33 @@ export default function VideoGenMasterFirstFrameCard({
               <option value="fal">FAL</option>
               <option value="gemini-pro">Gemini 3 Pro</option>
             </select>
-            <button
-              onClick={handleMasterGenerateAll}
-              disabled={isMasterGeneratingAll || !masterModels || masterModels.length === 0}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-master px-4 py-2.5 text-xs font-semibold text-white transition-all hover:bg-master/90 active:scale-[0.98] disabled:opacity-50"
-            >
-              {isMasterGeneratingAll ? (
-                <>
-                  <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                  Generating {masterProgress.done}/{masterProgress.total}
-                </>
-              ) : Object.keys(masterPerModelResults).length > 0 ? (
-                'Regenerate All First Frames'
-              ) : (
-                `Generate First Frame for All (${masterModels.length})`
+            <div className="flex items-center gap-2">
+              {failedMasterCount > 0 && !isMasterGeneratingAll && (
+                <button
+                  onClick={handleMasterRetryFailed}
+                  disabled={!masterModels || masterModels.length === 0}
+                  className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-500/15 disabled:opacity-50"
+                >
+                  Retry Failed ({failedMasterCount})
+                </button>
               )}
-            </button>
+              <button
+                onClick={handleMasterGenerateAll}
+                disabled={isMasterGeneratingAll || !masterModels || masterModels.length === 0}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-master px-4 py-2.5 text-xs font-semibold text-white transition-all hover:bg-master/90 active:scale-[0.98] disabled:opacity-50"
+              >
+                {isMasterGeneratingAll ? (
+                  <>
+                    <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                    Generating {masterProgress.done}/{masterProgress.total}
+                  </>
+                ) : Object.keys(masterPerModelResults).length > 0 ? (
+                  'Regenerate All First Frames'
+                ) : (
+                  `Generate First Frame for All (${masterModels.length})`
+                )}
+              </button>
+            </div>
             {isMasterGeneratingAll && masterProgress.total > 0 && (() => {
               const pct = Math.round((masterProgress.done / masterProgress.total) * 100);
               const queueEntries = masterQueueState ? Object.values(masterQueueState) : [];

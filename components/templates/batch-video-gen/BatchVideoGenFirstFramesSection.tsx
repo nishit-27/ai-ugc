@@ -25,7 +25,8 @@ type Props = {
   handleToggleFirstFrame: (enabled: boolean) => void;
   handleExtractFrames: () => Promise<void>;
   handleGenerateAll: () => Promise<void>;
-  generateFirstFrameForIndex: (index: number, images: BatchImageEntry[]) => Promise<FirstFrameOption[] | null>;
+  handleRetryFailed: () => Promise<void>;
+  generateFirstFrameForIndex: (index: number, images: BatchImageEntry[]) => Promise<FirstFrameOption[]>;
   handleSelectFirstFrameForIndex: (index: number, option: FirstFrameOption) => void;
   handleBrowseLibraryForIndex: (index: number) => Promise<void>;
   handleSelectLibraryForIndex: (index: number, img: GeneratedImage) => void;
@@ -52,12 +53,15 @@ export default function BatchVideoGenFirstFramesSection({
   handleToggleFirstFrame,
   handleExtractFrames,
   handleGenerateAll,
+  handleRetryFailed,
   generateFirstFrameForIndex,
   handleSelectFirstFrameForIndex,
   handleBrowseLibraryForIndex,
   handleSelectLibraryForIndex,
 }: Props) {
   if (config.images.length === 0) return null;
+
+  const failedCount = errorsByIndex.size;
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-3 space-y-3">
@@ -173,22 +177,33 @@ export default function BatchVideoGenFirstFramesSection({
                     );
                   })()}
                 </label>
-                <button
-                  onClick={handleGenerateAll}
-                  disabled={isGeneratingAll || !config.extractedFrameUrl}
-                  className="rounded-lg bg-[var(--primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--primary-foreground)] transition-colors hover:opacity-90 disabled:opacity-50"
-                >
-                  {isGeneratingAll ? (
-                    <span className="flex items-center gap-1.5">
-                      <span className="h-2.5 w-2.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                      {generateAllProgress.done}/{generateAllProgress.total}
-                    </span>
-                  ) : !config.extractedFrameUrl ? (
-                    'Pick scene first'
-                  ) : (
-                    'Generate All'
+                <div className="flex items-center gap-1.5">
+                  {failedCount > 0 && !isGeneratingAll && (
+                    <button
+                      onClick={handleRetryFailed}
+                      disabled={!config.extractedFrameUrl}
+                      className="rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-500/15 disabled:opacity-50"
+                    >
+                      Retry Failed ({failedCount})
+                    </button>
                   )}
-                </button>
+                  <button
+                    onClick={handleGenerateAll}
+                    disabled={isGeneratingAll || !config.extractedFrameUrl}
+                    className="rounded-lg bg-[var(--primary)] px-2.5 py-1 text-[11px] font-medium text-[var(--primary-foreground)] transition-colors hover:opacity-90 disabled:opacity-50"
+                  >
+                    {isGeneratingAll ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                        {generateAllProgress.done}/{generateAllProgress.total}
+                      </span>
+                    ) : !config.extractedFrameUrl ? (
+                      'Pick scene first'
+                    ) : (
+                      'Generate All'
+                    )}
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-2 max-h-80 overflow-y-auto">
@@ -220,15 +235,15 @@ export default function BatchVideoGenFirstFramesSection({
                           <div className="flex items-center gap-1 shrink-0">
                             {options.length === 0 ? (
                               <button
-                                onClick={() => generateFirstFrameForIndex(idx, config.images)}
+                                onClick={() => { void generateFirstFrameForIndex(idx, config.images).catch(() => undefined); }}
                                 disabled={isGenerating || isGeneratingAll || !config.extractedFrameUrl}
                                 className="rounded bg-[var(--primary)] px-2 py-0.5 text-[10px] font-medium text-[var(--primary-foreground)] transition-colors hover:opacity-90 disabled:opacity-50"
                               >
-                                Generate
+                                {errorsByIndex.has(idx) ? 'Retry' : 'Generate'}
                               </button>
                             ) : (
                               <button
-                                onClick={() => generateFirstFrameForIndex(idx, config.images)}
+                                onClick={() => { void generateFirstFrameForIndex(idx, config.images).catch(() => undefined); }}
                                 disabled={isGenerating || isGeneratingAll || !config.extractedFrameUrl}
                                 className="flex items-center gap-1 rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-50"
                               >

@@ -30,6 +30,7 @@ type Props = {
   masterProgress: { done: number; total: number };
   masterPerModelResults: Record<string, FirstFrameOption[]>;
   masterQueueState?: QueueState;
+  failedMasterCount: number;
   firstFrameCardContent: React.ReactNode;
   masterPerModelContent: React.ReactNode;
   uploadedModelPreviewUrl: string | null;
@@ -44,6 +45,7 @@ type Props = {
   handleDrop: (e: React.DragEvent) => void;
   handleExtractFrames: () => Promise<void>;
   handleMasterGenerateAll: () => Promise<void>;
+  handleMasterRetryFailed: () => Promise<void>;
   handleSceneUpload: (file: File) => Promise<void>;
   isUploadingScene: boolean;
 };
@@ -71,6 +73,7 @@ export default function VideoGenMainColumn({
   masterProgress,
   masterPerModelResults,
   masterQueueState,
+  failedMasterCount,
   firstFrameCardContent,
   masterPerModelContent,
   uploadedModelPreviewUrl,
@@ -85,6 +88,7 @@ export default function VideoGenMainColumn({
   handleDrop,
   handleExtractFrames,
   handleMasterGenerateAll,
+  handleMasterRetryFailed,
   handleSceneUpload,
   isUploadingScene,
 }: Props) {
@@ -132,12 +136,14 @@ export default function VideoGenMainColumn({
           masterPerModelResults={masterPerModelResults}
           masterPerModelContent={masterPerModelContent}
           masterQueueState={masterQueueState}
+          failedMasterCount={failedMasterCount}
           isUploadingScene={isUploadingScene}
           setShowScenePicker={setShowScenePicker}
           setPreviewUrl={setPreviewUrl}
           setMasterPerModelResults={setMasterPerModelResults}
           handleExtractFrames={handleExtractFrames}
           handleMasterGenerateAll={handleMasterGenerateAll}
+          handleMasterRetryFailed={handleMasterRetryFailed}
           handleSceneUpload={handleSceneUpload}
         />
       ) : (

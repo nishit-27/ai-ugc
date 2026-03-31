@@ -160,8 +160,8 @@ export default function VideoGenMasterPerModelPanel({
                     onClick={() => handleMasterBrowseLibrary(model.modelId)}
                   />
                   <ActionButton
-                    icon={hasResults ? RefreshCw : Sparkles}
-                    label={hasResults ? 'Redo' : 'Generate'}
+                    icon={hasResults || modelError ? RefreshCw : Sparkles}
+                    label={modelError ? 'Retry' : hasResults ? 'Redo' : 'Generate'}
                     isExpanded={isExpanded}
                     onClick={() => masterGenerateForModel(model.modelId, model.primaryGcsUrl)}
                     disabled={isMasterGeneratingAll}

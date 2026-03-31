@@ -331,13 +331,23 @@ export default function VideoGenConfig({
 
   const handleMasterGenerateAll = async () => {
     if (!masterModels || !config.extractedFrameUrl) return;
+    await runMasterGenerationForModels(masterModels);
+  };
+
+  const runMasterGenerationForModels = async (modelsToGenerate: MasterModel[]) => {
+    if (modelsToGenerate.length === 0 || !config.extractedFrameUrl) return;
     setIsMasterGeneratingAll(true);
-    setMasterErrorsByModelId({});
-    setMasterGeneratingIds(new Set(masterModels.map((m) => m.modelId)));
+    setMasterErrorsByModelId((prev) => {
+      const next = { ...prev };
+      for (const model of modelsToGenerate) {
+        delete next[model.modelId];
+      }
+      return next;
+    });
+    setMasterGeneratingIds(new Set(modelsToGenerate.map((m) => m.modelId)));
     setMasterQueueState({});
     await generateAllMasterFirstFrames({
-      masterModels,
-      generateForModel: masterGenerateForModel,
+      masterModels: modelsToGenerate,
       onModelResult: (modelId, images) => {
         setMasterPerModelResults((prev) => ({ ...prev, [modelId]: images }));
         setMasterGeneratingIds((prev) => { const next = new Set(prev); next.delete(modelId); return next; });
@@ -355,6 +365,12 @@ export default function VideoGenConfig({
     setMasterGeneratingIds(new Set());
     setMasterQueueState({});
     setIsMasterGeneratingAll(false);
+  };
+
+  const handleMasterRetryFailed = async () => {
+    if (!masterModels || !config.extractedFrameUrl) return;
+    const failedModels = masterModels.filter((model) => masterErrorsByModelId[model.modelId]);
+    await runMasterGenerationForModels(failedModels);
   };
 
   const handleMasterSelectForModel = (modelId: string, gcsUrl: string) => {
@@ -580,6 +596,7 @@ export default function VideoGenConfig({
   const rightColumnContent = masterMode ? masterPerModelContent : firstFrameCardContent;
   const hasRightColumn = isExpanded && rightColumnContent;
   const uploadedModelPreviewUrl = resolveFaceImageForDisplay();
+  const failedMasterCount = Object.keys(masterErrorsByModelId).length;
 
   return (
     <div className={hasRightColumn ? 'flex gap-6' : isExpanded ? 'mx-auto max-w-2xl' : ''}>
@@ -607,6 +624,7 @@ export default function VideoGenConfig({
           masterProgress={masterProgress}
           masterPerModelResults={masterPerModelResults}
           masterQueueState={masterQueueState}
+          failedMasterCount={failedMasterCount}
           firstFrameCardContent={!masterMode ? firstFrameCardContent : null}
           masterPerModelContent={masterPerModelContent}
           uploadedModelPreviewUrl={uploadedModelPreviewUrl}
@@ -623,6 +641,7 @@ export default function VideoGenConfig({
           handleDrop={handleDrop}
           handleExtractFrames={handleExtractFrames}
           handleMasterGenerateAll={handleMasterGenerateAll}
+          handleMasterRetryFailed={handleMasterRetryFailed}
           handleSceneUpload={handleSceneUpload}
           isUploadingScene={isUploadingScene}
         />

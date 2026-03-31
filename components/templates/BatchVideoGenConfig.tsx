@@ -6,6 +6,8 @@ import PreviewModal from '@/components/ui/PreviewModal';
 import { ensureSignedGeneratedImages } from '@/lib/generatedImagesClient';
 import BatchVideoGenFirstFramesSection from './batch-video-gen/BatchVideoGenFirstFramesSection';
 import BatchVideoGenMainColumn from './batch-video-gen/BatchVideoGenMainColumn';
+import { generateFirstFrameRequest } from './video-gen/api';
+import { runFirstFrameBatchQueue } from './video-gen/batchQueue';
 import type { BatchImageEntry, BatchVideoGenConfig as BVGC, GeneratedImage, ModelImage } from '@/types';
 import type { ExtractedFrame, FirstFrameOption, ImageSource } from './batch-video-gen/types';
 
@@ -58,6 +60,8 @@ export default function BatchVideoGenConfig({
   const [openLibraryIndex, setOpenLibraryIndex] = useState<number | null>(null);
   const [libraryLoadingIndex, setLibraryLoadingIndex] = useState<number | null>(null);
   const [libraryImagesByIndex, setLibraryImagesByIndex] = useState<Map<number, GeneratedImage[]>>(new Map());
+  const latestImagesRef = useRef(config.images);
+  latestImagesRef.current = config.images;
 
   const extractedFramesRef = useRef(extractedFrames);
   extractedFramesRef.current = extractedFrames;
@@ -215,42 +219,37 @@ export default function BatchVideoGenConfig({
     onChange({ ...config, images: config.images.filter((_, i) => i !== index) });
   };
 
-  const generateFirstFrameForIndex = async (index: number, images: BatchImageEntry[]): Promise<FirstFrameOption[] | null> => {
+  const generateFirstFrameForIndex = async (index: number, images: BatchImageEntry[]): Promise<FirstFrameOption[]> => {
     const entry = images[index];
     const modelImageUrl = resolveEntryImageUrl(entry);
     if (!modelImageUrl) {
       const errMsg = 'No image URL found for this entry. Please re-select or re-upload the image.';
       setErrorsByIndex((prev) => new Map(prev).set(index, errMsg));
-      return null;
+      throw new Error(errMsg);
     }
     if (!config.extractedFrameUrl) {
       const errMsg = 'No scene frame selected. Please pick a scene frame first.';
       setErrorsByIndex((prev) => new Map(prev).set(index, errMsg));
-      return null;
+      throw new Error(errMsg);
     }
 
     setGeneratingIndices((prev) => new Set(prev).add(index));
     setErrorsByIndex((prev) => { const next = new Map(prev); next.delete(index); return next; });
 
     try {
-      const res = await fetch('/api/generate-first-frame', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          modelImageUrl,
-          frameImageUrl: config.extractedFrameUrl,
-          resolution: config.firstFrameResolution || '1K',
-          modelId: config.modelId || null,
-          provider: config.firstFrameProvider || 'fal',
-        }),
+      const options = await generateFirstFrameRequest({
+        modelImageUrl,
+        frameImageUrl: config.extractedFrameUrl,
+        resolution: config.firstFrameResolution || '1K',
+        modelId: config.modelId || null,
+        provider: config.firstFrameProvider || 'fal',
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to generate');
-
-      const options: FirstFrameOption[] = data.images || [];
+      if (options.length === 0) {
+        throw new Error('No images returned');
+      }
       setFirstFrameResults((prev) => new Map(prev).set(index, options));
 
-      const newImages = [...images];
+      const newImages = [...latestImagesRef.current];
       if (!newImages[index].originalImageId && newImages[index].imageId) {
         newImages[index] = { ...newImages[index], originalImageId: newImages[index].imageId };
       }
@@ -258,13 +257,14 @@ export default function BatchVideoGenConfig({
         newImages[index] = { ...newImages[index], originalImageUrl: newImages[index].imageUrl };
       }
       newImages[index] = { ...newImages[index], generatedOptions: options.map((opt) => opt.gcsUrl) };
+      latestImagesRef.current = newImages;
       onChange({ ...config, images: newImages });
       return options;
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Generation failed';
       console.error(`Generate first frame for index ${index} failed:`, errMsg);
       setErrorsByIndex((prev) => new Map(prev).set(index, errMsg));
-      return null;
+      throw error instanceof Error ? error : new Error(errMsg);
     } finally {
       setGeneratingIndices((prev) => {
         const next = new Set(prev);
@@ -274,23 +274,33 @@ export default function BatchVideoGenConfig({
     }
   };
 
-  const handleGenerateAll = async () => {
-    if (!config.extractedFrameUrl) return;
+  const runBatchGenerationForIndices = async (indices: number[]) => {
+    if (!config.extractedFrameUrl || indices.length === 0) return;
     setIsGeneratingAll(true);
-
-    const total = config.images.length;
+    const images = [...config.images];
+    const total = indices.length;
     setGenerateAllProgress({ done: 0, total });
 
-    let done = 0;
-    const promises = config.images.map((_, idx) =>
-      generateFirstFrameForIndex(idx, config.images).then(() => {
-        done += 1;
-        setGenerateAllProgress({ done: Math.min(done, total), total });
-      }),
-    );
-    await Promise.all(promises);
+    try {
+      await runFirstFrameBatchQueue({
+        items: indices.map((index) => ({ index })),
+        getId: ({ index }) => String(index),
+        onProgress: (done, totalItems) => setGenerateAllProgress({ done, total: totalItems }),
+        worker: ({ index }) => generateFirstFrameForIndex(index, images).then(() => undefined),
+      });
+    } finally {
+      setIsGeneratingAll(false);
+    }
+  };
 
-    setIsGeneratingAll(false);
+  const handleGenerateAll = async () => {
+    await runBatchGenerationForIndices(config.images.map((_, index) => index));
+  };
+
+  const handleRetryFailed = async () => {
+    const failedIndices = Array.from(errorsByIndex.keys())
+      .filter((index) => index >= 0 && index < config.images.length);
+    await runBatchGenerationForIndices(failedIndices);
   };
 
   const handleSelectFirstFrameForIndex = (index: number, option: FirstFrameOption) => {
@@ -407,6 +417,7 @@ export default function BatchVideoGenConfig({
       handleToggleFirstFrame={handleToggleFirstFrame}
       handleExtractFrames={handleExtractFrames}
       handleGenerateAll={handleGenerateAll}
+      handleRetryFailed={handleRetryFailed}
       generateFirstFrameForIndex={generateFirstFrameForIndex}
       handleSelectFirstFrameForIndex={handleSelectFirstFrameForIndex}
       handleBrowseLibraryForIndex={handleBrowseLibraryForIndex}
