@@ -26,8 +26,8 @@ export async function POST(
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
 
-    if (job.status !== 'completed' && job.status !== 'failed') {
-      return NextResponse.json({ error: 'Can only regen steps on completed or failed jobs' }, { status: 400 });
+    if (!['queued', 'completed', 'failed', 'partial'].includes(job.status)) {
+      return NextResponse.json({ error: 'Can only regen steps on queued, completed, failed, or partial jobs' }, { status: 400 });
     }
 
     let body: { stepIndex?: number } = {};

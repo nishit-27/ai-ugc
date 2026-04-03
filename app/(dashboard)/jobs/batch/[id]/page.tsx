@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { PipelineBatch, TemplateJob } from '@/types';
 import { useToast } from '@/hooks/useToast';
-import { RefreshCw, Trash2, Loader2, CheckCircle2, XCircle, Clock, ArrowLeft, Layers } from 'lucide-react';
+import { RefreshCw, Trash2, Loader2, CheckCircle2, XCircle, Clock, ArrowLeft, Layers, AlertTriangle } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import ProgressBar from '@/components/ui/ProgressBar';
 import TemplateJobList from '@/components/templates/TemplateJobList';
@@ -20,6 +20,7 @@ export default function PipelineBatchDetailPage() {
   const [batch, setBatch] = useState<(PipelineBatch & { jobs?: TemplateJob[] }) | null>(_cache[id] || null);
   const [isLoading, setIsLoading] = useState(!_cache[id]);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isFailingProcessing, setIsFailingProcessing] = useState(false);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -76,6 +77,29 @@ export default function PipelineBatchDetailPage() {
   const progress = batch.totalJobs > 0 ? Math.round((batch.completedJobs / batch.totalJobs) * 100) : 0;
   const pending = batch.totalJobs - batch.completedJobs - batch.failedJobs;
   const childJobs: TemplateJob[] = batch.jobs || [];
+  const processingCount = childJobs.filter((job) => job.status === 'processing').length;
+
+  const handleFailProcessing = async () => {
+    if (processingCount === 0) return;
+    if (!confirm(`Mark ${processingCount} stuck processing job${processingCount > 1 ? 's' : ''} as failed? Use this only if they are clearly stuck. You can regenerate them individually afterward.`)) return;
+    setIsFailingProcessing(true);
+    try {
+      const res = await fetch(`/api/pipeline-batches/${batch.id}/fail-processing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update jobs');
+      }
+      showToast(`Marked ${data.failedCount} processing job${data.failedCount > 1 ? 's' : ''} as failed`, 'success');
+      await loadBatch();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to update jobs', 'error');
+    } finally {
+      setIsFailingProcessing(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -162,6 +186,16 @@ export default function PipelineBatchDetailPage() {
               {pending} pending
             </span>
           )}
+          {processingCount > 0 && (
+            <button
+              onClick={handleFailProcessing}
+              disabled={isFailingProcessing}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+            >
+              {isFailingProcessing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+              Fail {processingCount} stuck processing
+            </button>
+          )}
         </div>
         {isActive && (
           <div className="mt-3">
@@ -174,7 +208,7 @@ export default function PipelineBatchDetailPage() {
       {/* Child Jobs */}
       <div>
         <h2 className="mb-3 text-sm font-semibold text-[var(--text-muted)]">Pipeline Runs ({childJobs.length})</h2>
-        <TemplateJobList jobs={childJobs} />
+        <TemplateJobList jobs={childJobs} onJobsMutated={() => loadBatch()} />
       </div>
     </div>
   );

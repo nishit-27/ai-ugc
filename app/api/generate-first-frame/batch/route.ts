@@ -1,11 +1,38 @@
 import { NextResponse } from 'next/server';
+import { retry } from '@/lib/retry';
 
 export const maxDuration = 300;
 
-/** Max concurrent requests to avoid Gemini/FAL rate limits */
-const CONCURRENCY_LIMIT = 2;
-/** Delay between chunks in ms */
-const CHUNK_DELAY_MS = 1500;
+const CONCURRENCY_LIMIT = 20;
+const REQUEST_DELAY_MS = 200;
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableBatchError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return [
+    'http 408',
+    'http 425',
+    'http 429',
+    'http 500',
+    'http 502',
+    'http 503',
+    'http 504',
+    'fetch failed',
+    'rate limit',
+    'too many requests',
+    'temporarily unavailable',
+    'timeout',
+    'timed out',
+    'service unavailable',
+    'bad gateway',
+    'gateway timeout',
+  ].some((fragment) => normalized.includes(fragment));
+}
 
 type ModelEntry = {
   modelImageUrl: string;
@@ -19,7 +46,14 @@ type BatchRequest = {
   provider?: string;
 };
 
-type ImageResult = { url: string; gcsUrl: string };
+type ImageResult = {
+  url: string;
+  gcsUrl: string;
+  reviewStatus?: 'match' | 'mismatch' | 'unknown';
+  reviewLabel?: string | null;
+  reviewReason?: string | null;
+  reviewConfidence?: number | null;
+};
 type ModelResult = {
   modelId?: string;
   images: ImageResult[];
@@ -44,19 +78,34 @@ export async function POST(req: Request) {
     // Forward cookies/auth from the original request
     const cookie = req.headers.get('cookie') || '';
 
-    const modelResults: ModelResult[] = [];
+    const modelResults = new Array<ModelResult>(models.length);
+    let nextIndex = 0;
+    let lastLaunchAt = 0;
+    let launchGate = Promise.resolve();
 
-    // Process in chunks to avoid rate limiting
-    const chunks: ModelEntry[][] = [];
-    for (let i = 0; i < models.length; i += CONCURRENCY_LIMIT) {
-      chunks.push(models.slice(i, i + CONCURRENCY_LIMIT));
-    }
+    const waitForLaunchSlot = async () => {
+      const previousGate = launchGate;
+      let releaseCurrentGate = () => {};
+      launchGate = new Promise<void>((resolve) => {
+        releaseCurrentGate = resolve;
+      });
 
-    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
-      const chunk = chunks[chunkIdx];
+      await previousGate;
+      try {
+        const waitMs = Math.max(0, lastLaunchAt + REQUEST_DELAY_MS - Date.now());
+        if (waitMs > 0) {
+          await delay(waitMs);
+        }
+        lastLaunchAt = Date.now();
+      } finally {
+        releaseCurrentGate();
+      }
+    };
 
-      const results = await Promise.allSettled(
-        chunk.map(async (entry): Promise<ModelResult> => {
+    const processEntry = async (entry: ModelEntry): Promise<ModelResult> => {
+      return retry(
+        async () => {
+          await waitForLaunchSlot();
           const res = await fetch(`${origin}/api/generate-first-frame`, {
             method: 'POST',
             headers: {
@@ -75,10 +124,14 @@ export async function POST(req: Request) {
           const data = await res.json();
 
           if (!res.ok) {
+            const message = data.error || `HTTP ${res.status}`;
+            if (RETRYABLE_STATUS_CODES.has(res.status)) {
+              throw new Error(`HTTP ${res.status}: ${message}`);
+            }
             return {
               modelId: entry.modelId,
               images: [],
-              error: data.error || `HTTP ${res.status}`,
+              error: message,
             };
           }
 
@@ -86,32 +139,44 @@ export async function POST(req: Request) {
             modelId: entry.modelId,
             images: data.images || [],
           };
-        }),
+        },
+        {
+          retries: 2,
+          delaysMs: [1000, 2500],
+          shouldRetry: isRetryableBatchError,
+        },
       );
+    };
 
-      for (const settled of results) {
-        if (settled.status === 'fulfilled') {
-          modelResults.push(settled.value);
-        } else {
-          const entry = chunk[results.indexOf(settled)];
-          modelResults.push({
-            modelId: entry?.modelId,
+    const runWorker = async () => {
+      while (true) {
+        const currentIndex = nextIndex++;
+        if (currentIndex >= models.length) {
+          return;
+        }
+
+        const entry = models[currentIndex];
+
+        try {
+          modelResults[currentIndex] = await processEntry(entry);
+        } catch (error) {
+          modelResults[currentIndex] = {
+            modelId: entry.modelId,
             images: [],
-            error: (settled.reason as Error)?.message || 'Unknown error',
-          });
+            error: error instanceof Error ? error.message : 'Unknown error',
+          };
         }
       }
+    };
 
-      // Delay between chunks (skip after last)
-      if (chunkIdx < chunks.length - 1) {
-        await new Promise((r) => setTimeout(r, CHUNK_DELAY_MS));
-      }
-    }
+    await Promise.allSettled(
+      Array.from({ length: Math.min(CONCURRENCY_LIMIT, models.length) }, () => runWorker()),
+    );
 
     const succeeded = modelResults.filter((r) => r.images.length > 0).length;
     const failed = modelResults.filter((r) => r.images.length === 0).length;
 
-    console.log(`[FirstFrame Batch] ${succeeded} succeeded, ${failed} failed out of ${models.length} (chunked: ${CONCURRENCY_LIMIT} concurrent, ${CHUNK_DELAY_MS}ms delay)`);
+    console.log(`[FirstFrame Batch] ${succeeded} succeeded, ${failed} failed out of ${models.length} (paced: ${CONCURRENCY_LIMIT} concurrent, ${REQUEST_DELAY_MS}ms launch delay)`);
 
     return NextResponse.json({ results: modelResults });
   } catch (error) {

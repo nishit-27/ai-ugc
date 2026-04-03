@@ -15,6 +15,7 @@ import { config } from '@/lib/config';
 import { uploadVideoFromPath } from '@/lib/storage';
 import { downloadFile } from '@/lib/serverUtils';
 import { processStep, getStepLabel } from '@/lib/processTemplateJob';
+import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
 import type { MiniAppStep } from '@/types';
 import path from 'path';
 import fs from 'fs';
@@ -31,6 +32,43 @@ function getTempDir(): string {
   return dir;
 }
 
+function getMissingFalRecoveryError(kind: 'job' | 'template-job'): string {
+  if (kind === 'job') {
+    return 'Job timed out before its FAL request ID could be saved for recovery. Please retry the job.';
+  }
+  return 'Job timed out before its FAL request ID could be saved for recovery. Please regenerate this step.';
+}
+
+async function finalizeTemplateJobFromPersistedSteps(job: {
+  id: string;
+  currentStep: number;
+  totalSteps: number;
+  pipelineBatchId?: string;
+  stepResults?: { stepId: string; type: string; label: string; outputUrl: string; outputUrls?: string[]; isCarousel?: boolean }[];
+}): Promise<{ id: string; recovered: boolean; status: string } | null> {
+  if (!canFinalizeTemplateJobFromPersistedSteps(job.currentStep, job.totalSteps, job.stepResults)) {
+    return null;
+  }
+
+  const finalUrl = getFinalTemplateJobOutputUrl(job.stepResults);
+  if (!finalUrl) {
+    return null;
+  }
+
+  await updateTemplateJob(job.id, {
+    status: 'completed',
+    step: 'Done! (recovered)',
+    outputUrl: finalUrl,
+    completedAt: new Date(),
+  });
+
+  if (job.pipelineBatchId) {
+    await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
+  }
+
+  return { id: job.id, recovered: true, status: 'completed' };
+}
+
 /**
  * Try to recover a stuck regular job by checking FAL for its result.
  */
@@ -45,7 +83,7 @@ async function recoverJob(job: {
     await updateJob(job.id, {
       status: 'failed',
       step: 'Failed',
-      error: 'Job timed out and no FAL request ID was stored for recovery.',
+      error: getMissingFalRecoveryError('job'),
     });
     if (job.batchId) await updateBatchProgress(job.batchId).catch(() => {});
     return { id: job.id, recovered: false, status: 'failed_no_request_id' };
@@ -150,11 +188,16 @@ async function recoverTemplateJob(job: {
   stepResults?: { stepId: string; type: string; label: string; outputUrl: string }[];
   pipeline?: MiniAppStep[];
 }): Promise<{ id: string; recovered: boolean; status: string }> {
+  const finalizedJob = await finalizeTemplateJobFromPersistedSteps(job);
+  if (finalizedJob) {
+    return finalizedJob;
+  }
+
   if (!job.falRequestId || !job.falEndpoint) {
     await updateTemplateJob(job.id, {
       status: 'failed',
       step: 'Failed',
-      error: 'Job timed out and no FAL request ID was stored for recovery.',
+      error: getMissingFalRecoveryError('template-job'),
     });
     if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
     return { id: job.id, recovered: false, status: 'failed_no_request_id' };
@@ -253,7 +296,6 @@ async function recoverTemplateJob(job: {
           status: 'completed',
           step: 'Done! (recovered)',
           outputUrl: finalUrl,
-          stepResults,
           completedAt: new Date(),
         });
         if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});

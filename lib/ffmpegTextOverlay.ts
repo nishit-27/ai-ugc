@@ -362,7 +362,18 @@ export async function renderTextOverlayPng(
   const textH = mainBuf.height;
   let overlayX: number;
   if (position === 'custom' && customX !== undefined) {
-    overlayX = Math.round(videoWidth * customX / 100 - textW / 2);
+    const anchorX = Math.round(videoWidth * customX / 100);
+    switch (textAlign) {
+      case 'left':
+        overlayX = anchorX;
+        break;
+      case 'right':
+        overlayX = anchorX - textW;
+        break;
+      default:
+        overlayX = Math.round(anchorX - textW / 2);
+        break;
+    }
   } else {
     switch (textAlign) {
       case 'left':  overlayX = scaledPadL; break;
@@ -446,6 +457,9 @@ export async function renderTextOverlayPng(
   }
   const mainComp = await safeRawComposite(mainBuf.data, textW, textH, mainBuf.channels, overlayX, overlayY, videoWidth, videoHeight);
   if (mainComp) composites.push(mainComp);
+  if (composites.length === 0) {
+    throw new Error('Text overlay rendered fully off-canvas; adjust custom position, alignment, or text width.');
+  }
   const tmpDir = getTempDir();
   const pngPath = path.join(tmpDir, `overlay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.png`);
   await sharp({

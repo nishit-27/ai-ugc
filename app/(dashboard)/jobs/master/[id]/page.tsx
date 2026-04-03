@@ -37,6 +37,7 @@ export default function MasterBatchDetailPage() {
   const [batch, setBatch] = useState<(PipelineBatch & { jobs?: TemplateJob[] }) | null>(_cache[id] || null);
   const [isLoading, setIsLoading] = useState(!_cache[id]);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isFailingProcessing, setIsFailingProcessing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
   const [modalJob, setModalJob] = useState<TemplateJob | null>(null);
@@ -452,6 +453,7 @@ export default function MasterBatchDetailPage() {
   };
 
   const queuedCount = jobs.filter((j) => j.status === 'queued').length;
+  const processingCount = jobs.filter((j) => j.status === 'processing').length;
 
   const handleFailQueued = async () => {
     if (queuedCount === 0) return;
@@ -470,6 +472,29 @@ export default function MasterBatchDetailPage() {
       }
     } catch {
       showToast('Failed to update jobs', 'error');
+    }
+  };
+
+  const handleFailProcessing = async () => {
+    if (processingCount === 0) return;
+    if (!confirm(`Mark ${processingCount} stuck processing job${processingCount > 1 ? 's' : ''} as failed? Use this only if they are clearly stuck. You can regenerate them individually afterward.`)) return;
+    setIsFailingProcessing(true);
+    try {
+      const res = await fetch(`/api/pipeline-batches/${id}/fail-processing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Marked ${data.failedCount} processing job${data.failedCount > 1 ? 's' : ''} as failed`, 'success');
+        await loadBatch();
+      } else {
+        showToast(data.error || 'Failed to update jobs', 'error');
+      }
+    } catch {
+      showToast('Failed to update jobs', 'error');
+    } finally {
+      setIsFailingProcessing(false);
     }
   };
 
@@ -555,8 +580,9 @@ export default function MasterBatchDetailPage() {
         progress={progress}
         pending={pending}
         queuedCount={queuedCount}
+        processingCount={processingCount}
         isRefreshing={isRefreshing}
-        isDeleting={isDeleting}
+        isDeleting={isDeleting || isFailingProcessing}
         onRefresh={() => {
           setIsRefreshing(true);
           loadBatch();
@@ -564,6 +590,7 @@ export default function MasterBatchDetailPage() {
         onDelete={handleDeleteBatch}
         onEditConfig={() => setShowEditConfig(true)}
         onFailQueued={handleFailQueued}
+        onFailProcessing={handleFailProcessing}
       />
 
       <MasterBatchVideoGrid

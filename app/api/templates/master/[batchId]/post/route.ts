@@ -6,6 +6,7 @@ import { getApiKeyByIndex } from '@/lib/lateAccountPool';
 import { downloadToBuffer } from '@/lib/storage';
 import { isR2Url } from '@/lib/r2';
 import { config } from '@/lib/config';
+import { retry, isRetryableError } from '@/lib/retry';
 import path from 'path';
 import sharp from 'sharp';
 import type { MasterConfig } from '@/types';
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const inflightBatches = new Map<string, Set<string>>();
+const ACTIVE_POST_STATUSES = new Set(['pending', 'publishing', 'processing', 'in_progress', 'scheduled']);
 
 type PresignResponse = {
   uploadUrl: string;
@@ -56,6 +58,108 @@ type PostResult = {
   error?: string;
   platforms?: string[];
 };
+
+function shouldRetryResponse(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+async function fetchWithRetry(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  label: string,
+): Promise<Response> {
+  return retry(async () => {
+    const response = await fetch(input, init);
+    if (!response.ok && shouldRetryResponse(response.status)) {
+      throw new Error(`${label} failed with status ${response.status}`);
+    }
+    return response;
+  }, {
+    retries: 2,
+    delaysMs: [1500, 4000, 8000],
+    shouldRetry: (error) => isRetryableError(error) || (error instanceof Error && /status (408|429|5\d\d)\b/.test(error.message)),
+    onRetry: (error, attempt, delayMs) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[MasterPost] ${label} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
+    },
+  });
+}
+
+async function downloadMediaBuffer(url: string, label: string): Promise<Buffer> {
+  if (url.includes('storage.googleapis.com') || url.includes('storage.cloud.google.com') || isR2Url(url)) {
+    return retry(async () => Buffer.from(await downloadToBuffer(url)), {
+      retries: 2,
+      delaysMs: [1500, 4000, 8000],
+      onRetry: (error, attempt, delayMs) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[MasterPost] ${label} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
+      },
+    });
+  }
+
+  const response = await fetchWithRetry(url, { method: 'GET', cache: 'no-store' }, label);
+  if (!response.ok) {
+    throw new Error(`${label} failed: ${response.status} ${response.statusText}`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function uploadBufferToPresignedUrl(
+  uploadUrl: string,
+  buffer: Buffer,
+  contentType: string,
+  label: string,
+): Promise<void> {
+  await retry(async () => {
+    const uploadController = new AbortController();
+    const uploadTimeout = setTimeout(() => uploadController.abort(), 120000);
+
+    try {
+      const response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(buffer.length),
+        },
+        body: new Uint8Array(buffer),
+        signal: uploadController.signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (shouldRetryResponse(response.status)) {
+          throw new Error(`${label} failed with status ${response.status}: ${errorText}`);
+        }
+        throw new Error(`${label} failed: ${response.status} - ${errorText}`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`${label} timed out.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(uploadTimeout);
+    }
+  }, {
+    retries: 2,
+    delaysMs: [1500, 4000, 8000],
+    shouldRetry: (error) => isRetryableError(error) || (error instanceof Error && /status (408|429|5\d\d)\b/.test(error.message)),
+    onRetry: (error, attempt, delayMs) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[MasterPost] ${label} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
+    },
+  });
+}
+
+async function markActivePostsFailed(jobId: string, errorMessage: string): Promise<void> {
+  const existingPosts = await getPostsByJobIds([jobId]);
+  const activePosts = existingPosts.filter((post) => ACTIVE_POST_STATUSES.has((post.status || '').toLowerCase()));
+  await Promise.allSettled(activePosts.map((post) => updatePost(post.id, {
+    status: 'failed',
+    error: errorMessage,
+    lastCheckedAt: new Date(),
+  })));
+}
 
 export async function POST(
   request: NextRequest,
@@ -306,15 +410,7 @@ export async function POST(
         if (isCarousel) {
           // Download + process all carousel images in parallel
           const processedImages = await Promise.all(carouselUrls.map(async (url) => {
-            let buf: Buffer;
-            const isGcs = url.includes('storage.googleapis.com') || url.includes('storage.cloud.google.com');
-            if (isGcs || isR2Url(url)) {
-              buf = Buffer.from(await downloadToBuffer(url));
-            } else {
-              const response = await fetch(url);
-              if (!response.ok) throw new Error(`Failed to download carousel image: ${response.status}`);
-              buf = Buffer.from(await response.arrayBuffer());
-            }
+            let buf = await downloadMediaBuffer(url, `download carousel image for job ${jobId}`);
             let ext = path.extname(url.split('?')[0]) || '.jpg';
             // Convert WebP to JPEG (Instagram only supports JPG/PNG)
             if (ext.toLowerCase() === '.webp') {
@@ -347,17 +443,7 @@ export async function POST(
           }));
           carouselBuffers.push(...processedImages);
         } else {
-          const isGcsVideo = job.outputUrl.includes('storage.googleapis.com') || job.outputUrl.includes('storage.cloud.google.com');
-          if (isGcsVideo || isR2Url(job.outputUrl)) {
-            fileBuffer = Buffer.from(await downloadToBuffer(job.outputUrl));
-          } else {
-            const response = await fetch(job.outputUrl);
-            if (!response.ok) {
-              throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
-            }
-            const arrayBuffer = await response.arrayBuffer();
-            fileBuffer = Buffer.from(arrayBuffer);
-          }
+          fileBuffer = await downloadMediaBuffer(job.outputUrl, `download video for job ${jobId}`);
         }
 
         // Parse photoCoverIndex and autoAddMusic from carousel step config
@@ -390,16 +476,12 @@ export async function POST(
                   body: JSON.stringify({ filename: imgFilename, contentType }),
                   apiKey,
                 });
-
-                const uploadResponse = await fetch(presignData.uploadUrl, {
-                  method: 'PUT',
-                  headers: { 'Content-Type': contentType, 'Content-Length': String(buffer.length) },
-                  body: new Uint8Array(buffer),
-                });
-                if (!uploadResponse.ok) {
-                  const errorText = await uploadResponse.text();
-                  throw new Error(`Carousel image upload failed: ${uploadResponse.status} - ${errorText}`);
-                }
+                await uploadBufferToPresignedUrl(
+                  presignData.uploadUrl,
+                  buffer,
+                  contentType,
+                  `upload carousel image for job ${jobId}`,
+                );
                 return presignData.publicUrl;
               })
             );
@@ -411,32 +493,12 @@ export async function POST(
               body: JSON.stringify({ filename, contentType: 'video/mp4' }),
               apiKey,
             });
-
-            const uploadController = new AbortController();
-            const uploadTimeout = setTimeout(() => uploadController.abort(), 120000);
-
-            try {
-              const uploadResponse = await fetch(presignData.uploadUrl, {
-                method: 'PUT',
-                headers: {
-                  'Content-Type': 'video/mp4',
-                  'Content-Length': String(fileBuffer!.length),
-                },
-                body: new Uint8Array(fileBuffer!),
-                signal: uploadController.signal,
-              });
-              clearTimeout(uploadTimeout);
-              if (!uploadResponse.ok) {
-                const errorText = await uploadResponse.text();
-                throw new Error(`File upload to Late storage failed: ${uploadResponse.status} - ${errorText}`);
-              }
-            } catch (uploadErr) {
-              clearTimeout(uploadTimeout);
-              if (uploadErr instanceof Error && uploadErr.name === 'AbortError') {
-                throw new Error('Video upload timed out.');
-              }
-              throw uploadErr;
-            }
+            await uploadBufferToPresignedUrl(
+              presignData.uploadUrl,
+              fileBuffer!,
+              'video/mp4',
+              `upload video for job ${jobId}`,
+            );
             mediaItems = [{ type: 'video', url: presignData.publicUrl }];
           }
 
@@ -618,13 +680,29 @@ export async function POST(
         const errorMessage = jobError instanceof LateApiError
           ? `Late API ${jobError.status}: ${jobError.message}`
           : (jobError as Error).message;
+        const remotePostCreated = createdLatePostIds.length > 0;
 
         console.error(`[MasterPost] Job ${jobId} failed:`, errorMessage, jobError instanceof Error ? jobError.stack : '');
-        results.push({ jobId, status: 'failed', error: errorMessage });
+        if (remotePostCreated) {
+          try { await updateTemplateJobPostStatus(jobId, 'posted'); } catch {}
+          results.push({
+            jobId,
+            status: 'posted',
+            latePostId: createdLatePostIds[0],
+            error: `Remote post created, but local persistence partially failed: ${errorMessage}`,
+          });
+        } else {
+          results.push({ jobId, status: 'failed', error: errorMessage });
+          try {
+            await markActivePostsFailed(jobId, errorMessage);
+          } catch (persistErr) {
+            console.error(`[MasterPost] Failed to mark active posts as failed for ${jobId}:`, persistErr);
+          }
+        }
 
         if (jobIdempotencyAcquired && jobIdempotencyKey) {
           try {
-            if (createdLatePostIds.length > 0) {
+            if (remotePostCreated) {
               await completePostIdempotency({
                 key: jobIdempotencyKey,
                 latePostId: createdLatePostIds[0],

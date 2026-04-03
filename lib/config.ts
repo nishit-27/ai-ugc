@@ -4,6 +4,18 @@ function getAppUrl(): string | undefined {
   return undefined;
 }
 
+function parseBoundedPositiveInt(
+  value: string | undefined,
+  fallback: number,
+  { min = 1, max = Number.MAX_SAFE_INTEGER }: { min?: number; max?: number } = {},
+): number {
+  const parsed = Number.parseInt(value || '', 10);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    return fallback;
+  }
+  return Math.min(parsed, max);
+}
+
 export function getFalWebhookUrl(): string | undefined {
   const appUrl = getAppUrl();
   if (!appUrl) return undefined;
@@ -37,6 +49,26 @@ export const config = {
   GCS_BUCKET_NAME: process.env.GCS_BUCKET_NAME || 'runable-ai-ugc',
   defaultMaxSeconds: parseInt(process.env.MAX_VIDEO_SECONDS || '10', 10),
   defaultTimezone: process.env.DEFAULT_TIMEZONE || 'Asia/Kolkata',
+  pipelineBatchTriggerConcurrency: parseBoundedPositiveInt(
+    process.env.PIPELINE_BATCH_TRIGGER_CONCURRENCY,
+    12,
+    { min: 1, max: 50 },
+  ),
+  pipelineBatchTriggerRatePerSecond: parseBoundedPositiveInt(
+    process.env.PIPELINE_BATCH_TRIGGER_RATE_PER_SECOND,
+    10,
+    { min: 1, max: 50 },
+  ),
+  pipelineBatchTriggerRetryCount: parseBoundedPositiveInt(
+    process.env.PIPELINE_BATCH_TRIGGER_RETRY_COUNT,
+    2,
+    { min: 0, max: 5 },
+  ),
+  pipelineBatchTriggerRetryDelayMs: parseBoundedPositiveInt(
+    process.env.PIPELINE_BATCH_TRIGGER_RETRY_DELAY_MS,
+    1000,
+    { min: 100, max: 30000 },
+  ),
   prompt: `Replace the person in the input video with the person from the provided reference image, preserving the exact facial identity from the image.
 
 The final video must retain the original video's motion, timing, camera movement, lighting behavior, and background realism. The subject should move naturally and remain perfectly aligned with the original body motion, pose, and gestures from the video.

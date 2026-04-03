@@ -12,11 +12,16 @@ export type ExtractedFrame = {
 export type FirstFrameOption = {
   url: string;
   gcsUrl: string;
+  reviewStatus?: 'match' | 'mismatch' | 'unknown';
+  reviewLabel?: string | null;
+  reviewReason?: string | null;
+  reviewConfidence?: number | null;
 };
 
 export type CachedStepState = {
   extractedFrames: ExtractedFrame[];
   firstFrameOptions: FirstFrameOption[];
+  allowedMismatchUrls: string[];
   dismissedOptions: string[];
   imageSource: ImageSource;
   sceneDisplayUrl: string | null;

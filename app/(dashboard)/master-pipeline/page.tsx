@@ -7,6 +7,7 @@ import { usePresets } from '@/hooks/usePresets';
 import { useVideoUpload } from '@/hooks/useVideoUpload';
 import { useToast } from '@/hooks/useToast';
 import { useVariables } from '@/hooks/useVariables';
+import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
 import PipelineBuilder from '@/components/templates/PipelineBuilder';
 import NodeConfigPanel from '@/components/templates/NodeConfigPanel';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
@@ -29,10 +30,18 @@ type MasterDraft = {
   videoSource: 'tiktok' | 'upload' | 'library' | 'generate';
   tiktokUrl: string;
   videoUrl: string;
+  sourceTrimStart?: number;
+  sourceTrimEnd?: number;
   uploadedFilename: string;
   sourceDuration?: number;
   previewUrl?: string;
   libraryVideos?: Record<string, string>;
+  selectedModelIds?: string[];
+  masterCaption?: string;
+  publishMode?: 'now' | 'schedule' | 'queue' | 'draft';
+  scheduledFor?: string;
+  masterTimezone?: string;
+  variableValues?: Record<string, string>;
 };
 
 function loadDraft(): MasterDraft | null {
@@ -60,10 +69,12 @@ export default function MasterPipelinePage() {
   const [tiktokUrl, setTiktokUrl] = useState(() => draft.current?.tiktokUrl ?? '');
   const [libraryVideos, setLibraryVideos] = useState<Record<string, string>>(() => draft.current?.libraryVideos ?? {});
   const [videoUrl, setVideoUrl] = useState(() => draft.current?.videoUrl ?? '');
+  const [sourceTrimStart, setSourceTrimStart] = useState<number | undefined>(() => draft.current?.sourceTrimStart);
+  const [sourceTrimEnd, setSourceTrimEnd] = useState<number | undefined>(() => draft.current?.sourceTrimEnd);
   const [uploadedFilename, setUploadedFilename] = useState(() => draft.current?.uploadedFilename ?? '');
   const [sourceDuration, setSourceDuration] = useState<number | undefined>(() => draft.current?.sourceDuration);
   const [previewUrl, setPreviewUrl] = useState(() => draft.current?.previewUrl ?? '');
-  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
+  const [variableValues, setVariableValues] = useState<Record<string, string>>(() => draft.current?.variableValues ?? {});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRunConfirm, setShowRunConfirm] = useState(false);
   const [isResolvingPreview, setIsResolvingPreview] = useState(false);
@@ -72,11 +83,11 @@ export default function MasterPipelinePage() {
   // Master-specific state
   const [allModels, setAllModels] = useState<Model[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
-  const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
-  const [masterCaption, setMasterCaption] = useState('');
-  const [publishMode, setPublishMode] = useState<'now' | 'schedule' | 'queue' | 'draft'>('now');
-  const [scheduledFor, setScheduledFor] = useState('');
-  const [masterTimezone, setMasterTimezone] = useState('Asia/Kolkata');
+  const [selectedModelIds, setSelectedModelIds] = useState<string[]>(() => draft.current?.selectedModelIds ?? []);
+  const [masterCaption, setMasterCaption] = useState(() => draft.current?.masterCaption ?? '');
+  const [publishMode, setPublishMode] = useState<'now' | 'schedule' | 'queue' | 'draft'>(() => draft.current?.publishMode ?? 'now');
+  const [scheduledFor, setScheduledFor] = useState(() => draft.current?.scheduledFor ?? '');
+  const [masterTimezone, setMasterTimezone] = useState(() => draft.current?.masterTimezone ?? 'Asia/Kolkata');
   const [accountCounts, setAccountCounts] = useState<Record<string, number>>({});
   const [modelPrimaryImages, setModelPrimaryImages] = useState<Record<string, { signedUrl: string; gcsUrl: string }>>({});
   const runableIntegrationVariable = getRunableIntegrationVariable(variables);
@@ -137,10 +148,74 @@ export default function MasterPipelinePage() {
     .filter((m): m is MasterModel => m !== null);
 
   // Auto-save draft
+  const hasUnsavedChanges = (
+    steps.length > 0 ||
+    !!name.trim() ||
+    videoSource !== 'tiktok' ||
+    !!tiktokUrl.trim() ||
+    !!videoUrl ||
+    sourceTrimStart !== undefined ||
+    sourceTrimEnd !== undefined ||
+    !!uploadedFilename ||
+    !!previewUrl ||
+    Object.keys(libraryVideos).length > 0 ||
+    selectedModelIds.length > 0 ||
+    !!masterCaption.trim() ||
+    publishMode !== 'now' ||
+    !!scheduledFor ||
+    masterTimezone !== 'Asia/Kolkata' ||
+    Object.values(variableValues).some((value) => value !== '')
+  );
+  const { allowNextNavigation } = useUnsavedChangesWarning({
+    isDirty: hasUnsavedChanges,
+  });
+
   useEffect(() => {
-    const d: MasterDraft = { steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl, libraryVideos };
+    if (!hasUnsavedChanges) {
+      try { sessionStorage.removeItem(MASTER_DRAFT_KEY); } catch {}
+      return;
+    }
+
+    const d: MasterDraft = {
+      steps,
+      name,
+      videoSource,
+      tiktokUrl,
+      videoUrl,
+      sourceTrimStart,
+      sourceTrimEnd,
+      uploadedFilename,
+      sourceDuration,
+      previewUrl,
+      libraryVideos,
+      selectedModelIds,
+      masterCaption,
+      publishMode,
+      scheduledFor,
+      masterTimezone,
+      variableValues,
+    };
     try { sessionStorage.setItem(MASTER_DRAFT_KEY, JSON.stringify(d)); } catch {}
-  }, [steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl, libraryVideos]);
+  }, [
+    hasUnsavedChanges,
+    steps,
+    name,
+    videoSource,
+    tiktokUrl,
+    videoUrl,
+    sourceTrimStart,
+    sourceTrimEnd,
+    uploadedFilename,
+    sourceDuration,
+    previewUrl,
+    libraryVideos,
+    selectedModelIds,
+    masterCaption,
+    publishMode,
+    scheduledFor,
+    masterTimezone,
+    variableValues,
+  ]);
 
   // Prune libraryVideos when models are deselected
   useEffect(() => {
@@ -153,6 +228,22 @@ export default function MasterPipelinePage() {
       return prev;
     });
   }, [selectedModelIds]);
+
+  useEffect(() => {
+    if (videoSource !== 'library') {
+      if (sourceTrimStart !== undefined || sourceTrimEnd !== undefined) {
+        setSourceTrimStart(undefined);
+        setSourceTrimEnd(undefined);
+      }
+      return;
+    }
+
+    const hasAllSelectedLibraryVideos = selectedModelIds.length > 0 && selectedModelIds.every((id) => !!libraryVideos[id]);
+    if (!hasAllSelectedLibraryVideos && (sourceTrimStart !== undefined || sourceTrimEnd !== undefined)) {
+      setSourceTrimStart(undefined);
+      setSourceTrimEnd(undefined);
+    }
+  }, [libraryVideos, selectedModelIds, sourceTrimEnd, sourceTrimStart, videoSource]);
 
   // Resolve pasted URL
   useEffect(() => {
@@ -424,6 +515,8 @@ export default function MasterPipelinePage() {
           tiktokUrl: videoSource === 'tiktok' ? tiktokUrl : undefined,
           videoUrl: videoSource === 'upload' ? videoUrl : undefined,
           libraryVideos: videoSource === 'library' ? libraryVideos : undefined,
+          sourceTrimStart: videoSource === 'library' ? sourceTrimStart : undefined,
+          sourceTrimEnd: videoSource === 'library' ? sourceTrimEnd : undefined,
           modelIds: selectedModelIds,
           caption: masterCaption,
           scheduledFor: publishMode === 'schedule' ? scheduledFor : undefined,
@@ -455,6 +548,7 @@ export default function MasterPipelinePage() {
         }
       }
 
+      allowNextNavigation();
       try { sessionStorage.removeItem(MASTER_DRAFT_KEY); } catch {}
       showToast(`Master batch started with ${selectedModelIds.length} models!`, 'success');
       router.push('/jobs?tab=master');
@@ -554,6 +648,12 @@ export default function MasterPipelinePage() {
                     onLibraryVideoSelect: (modelId, gcsUrl) => setLibraryVideos((prev) => ({ ...prev, [modelId]: gcsUrl })),
                     onLibraryVideoRemove: (modelId) => setLibraryVideos((prev) => { const next = { ...prev }; delete next[modelId]; return next; }),
                     selectedModelIds,
+                    sourceTrimStart,
+                    sourceTrimEnd,
+                    onSourceTrimChange: (start, end) => {
+                      setSourceTrimStart(start);
+                      setSourceTrimEnd(end);
+                    },
                     variableValues,
                     onVariableValuesChange: setVariableValues,
                     onGeneratedVideo: (url: string) => {

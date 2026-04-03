@@ -17,6 +17,7 @@ import { config } from '@/lib/config';
 import { uploadVideoFromPath } from '@/lib/storage';
 import { downloadFile } from '@/lib/serverUtils';
 import { processStep, getStepLabel } from '@/lib/processTemplateJob';
+import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
 import type { MiniAppStep } from '@/types';
 import path from 'path';
 import fs from 'fs';
@@ -104,8 +105,30 @@ async function handleTemplateJob(
 
   const tempDir = getTempDir();
   const tempFiles: string[] = [];
+  const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
 
   try {
+    if (canFinalizeTemplateJobFromPersistedSteps(job.currentStep, enabledSteps.length, job.stepResults)) {
+      const persistedOutputUrl = getFinalTemplateJobOutputUrl(job.stepResults);
+      if (!persistedOutputUrl) {
+        throw new Error(`Template job ${job.id} has persisted step results but no final output URL`);
+      }
+
+      await updateTemplateJob(job.id, {
+        status: 'completed',
+        step: 'Done!',
+        outputUrl: persistedOutputUrl,
+        completedAt: new Date(),
+      });
+
+      if (job.pipelineBatchId) {
+        await updatePipelineBatchProgress(job.pipelineBatchId).catch((e: unknown) => {
+          console.error(`[Webhook] Failed to update pipeline batch progress for ${job.pipelineBatchId}:`, e);
+        });
+      }
+      return;
+    }
+
     // Download the FAL result
     let currentVideoPath = path.join(tempDir, `webhook-tpl-${job.id}.mp4`);
     await downloadFile(videoUrl, currentVideoPath);
@@ -114,7 +137,6 @@ async function handleTemplateJob(
     // Upload to GCS and record the step result
     const { url: stepUrl } = await uploadVideoFromPath(currentVideoPath, `template-${job.id}-step-${job.currentStep}.mp4`);
 
-    const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
     const currentStepDef = enabledSteps[job.currentStep];
     const stepLabel = currentStepDef ? getStepLabel(currentStepDef) : 'Video Generation';
 
@@ -174,7 +196,6 @@ async function handleTemplateJob(
       status: 'completed',
       step: 'Done!',
       outputUrl: finalUrl,
-      stepResults,
       completedAt: new Date(),
     });
 

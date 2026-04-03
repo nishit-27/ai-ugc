@@ -6,6 +6,7 @@ import { usePresets } from '@/hooks/usePresets';
 import { useVideoUpload } from '@/hooks/useVideoUpload';
 import { useToast } from '@/hooks/useToast';
 import { useVariables } from '@/hooks/useVariables';
+import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning';
 import PipelineBuilder from '@/components/templates/PipelineBuilder';
 import NodeConfigPanel from '@/components/templates/NodeConfigPanel';
 import Spinner from '@/components/ui/Spinner';
@@ -26,6 +27,7 @@ type PipelineDraft = {
   uploadedFilename: string;
   sourceDuration?: number;
   previewUrl?: string;
+  variableValues?: Record<string, string>;
 };
 function loadDraft(): PipelineDraft | null {
   try {
@@ -50,15 +52,43 @@ export default function TemplatesPage() {
   const [uploadedFilename, setUploadedFilename] = useState(() => draft.current?.uploadedFilename ?? '');
   const [sourceDuration, setSourceDuration] = useState<number | undefined>(() => draft.current?.sourceDuration);
   const [previewUrl, setPreviewUrl] = useState(() => draft.current?.previewUrl ?? '');
-  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
+  const [variableValues, setVariableValues] = useState<Record<string, string>>(() => draft.current?.variableValues ?? {});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRunConfirm, setShowRunConfirm] = useState(false);
   const [isResolvingPreview, setIsResolvingPreview] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Map<string, string>>(new Map());
+  const hasUnsavedChanges = (
+    steps.length > 0 ||
+    !!name.trim() ||
+    videoSource !== 'tiktok' ||
+    !!tiktokUrl.trim() ||
+    !!videoUrl ||
+    !!uploadedFilename ||
+    !!previewUrl ||
+    Object.values(variableValues).some((value) => value !== '')
+  );
+  const { allowNextNavigation } = useUnsavedChangesWarning({
+    isDirty: hasUnsavedChanges,
+  });
   useEffect(() => {
-    const d: PipelineDraft = { steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl };
+    if (!hasUnsavedChanges) {
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch {}
+      return;
+    }
+
+    const d: PipelineDraft = {
+      steps,
+      name,
+      videoSource,
+      tiktokUrl,
+      videoUrl,
+      uploadedFilename,
+      sourceDuration,
+      previewUrl,
+      variableValues,
+    };
     try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {}
-  }, [steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl]);
+  }, [hasUnsavedChanges, steps, name, videoSource, tiktokUrl, videoUrl, uploadedFilename, sourceDuration, previewUrl, variableValues]);
   useEffect(() => {
     if (videoSource !== 'tiktok' || !tiktokUrl.trim()) {
       if (videoSource === 'tiktok') setPreviewUrl('');
@@ -355,6 +385,7 @@ export default function TemplatesPage() {
           sessionStorage.setItem('ai-ugc-new-job', JSON.stringify(data));
         } catch {}
       }
+      allowNextNavigation();
       try { sessionStorage.removeItem(DRAFT_KEY); } catch {}
       showToast(isBatch ? `Batch started with ${data.totalJobs} pipeline runs!` : 'Pipeline started!', 'success');
       router.push(isBatch ? '/jobs?tab=batch' : '/jobs');

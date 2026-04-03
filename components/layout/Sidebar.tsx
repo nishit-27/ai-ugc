@@ -21,7 +21,7 @@ import {
 import ThemeToggle from '@/components/ui/ThemeToggle';
 
 const createItems = [
-  { href: '/templates', label: 'Pipelines', icon: LayoutTemplate },
+  // { href: '/templates', label: 'Pipelines', icon: LayoutTemplate },
   { href: '/master-pipeline', label: 'Master Pipeline', icon: Crown },
   { href: '/compose', label: 'Compose', icon: LayoutGrid },
   { href: '/twitter', label: 'Twitter', icon: Twitter },

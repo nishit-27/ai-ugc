@@ -311,6 +311,8 @@ export type TemplateJob = {
   videoSource: 'tiktok' | 'upload' | 'library';
   tiktokUrl?: string;
   videoUrl?: string;
+  sourceTrimStart?: number;
+  sourceTrimEnd?: number;
   outputUrl?: string;
   signedUrl?: string;
   stepResults?: StepResult[];
@@ -326,6 +328,11 @@ export type TemplateJob = {
   createdBy?: string;
   createdAt: string;
   completedAt?: string;
+};
+
+export type SourceTrimConfig = {
+  sourceTrimStart?: number;
+  sourceTrimEnd?: number;
 };
 
 export type PipelineBatch = {

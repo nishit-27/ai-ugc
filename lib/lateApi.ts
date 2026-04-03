@@ -1,8 +1,9 @@
 import { config } from './config';
+import { isRetryableError } from './retry';
 
 const LATE_API_TIMEOUT = 30000;
-const MAX_RETRIES = 1;
-const RETRY_DELAYS = [2000];
+const MAX_RETRIES = 2;
+const RETRY_DELAYS = [1500, 4000];
 
 export class LateApiError extends Error {
   status: number;
@@ -123,7 +124,7 @@ export async function lateApiRequest<T = unknown>(
         throw lastError;
       }
 
-      if (attempt < retries) {
+      if (attempt < retries && isRetryableError(error)) {
         lastError = error as Error;
         continue;
       }

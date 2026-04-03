@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Download, Check, Loader2, AlertCircle, ChevronLeft, ChevronRight, Play, Trash2 } from 'lucide-react';
+import { Send, Download, Check, Loader2, AlertCircle, ChevronLeft, ChevronRight, Play, Trash2, RotateCcw } from 'lucide-react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import type { TemplateJob, StepResult } from '@/types';
@@ -11,6 +11,7 @@ import StatusBadge from '@/components/ui/StatusBadge';
 import ProgressBar from '@/components/ui/ProgressBar';
 import Modal from '@/components/ui/Modal';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
+import { useToast } from '@/hooks/useToast';
 
 gsap.registerPlugin(useGSAP);
 
@@ -32,13 +33,23 @@ function useResolvedUrls() {
 
 const PER_PAGE = 16;
 
-export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]; loading?: boolean }) {
+export default function TemplateJobList({
+  jobs,
+  loading,
+  onJobsMutated,
+}: {
+  jobs: TemplateJob[];
+  loading?: boolean;
+  onJobsMutated?: () => Promise<void> | void;
+}) {
   const router = useRouter();
+  const { showToast } = useToast();
   const [selectedJob, setSelectedJob] = useState<TemplateJob | null>(null);
   const [page, setPage] = useState(1);
   const [loadedById, setLoadedById] = useState<Record<string, true>>({});
   const [deletingQueuedIds, setDeletingQueuedIds] = useState<Record<string, true>>({});
   const [hiddenJobIds, setHiddenJobIds] = useState<Record<string, true>>({});
+  const [regenBusyJobId, setRegenBusyJobId] = useState<string | null>(null);
   // null = show final output, string = stepId to show
   const [viewingStepId, setViewingStepId] = useState<string | null>(null);
   const { getSignedUrl } = useResolvedUrls();
@@ -103,6 +114,30 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
       });
     }
   }, [selectedJob]);
+
+  const handleRegenStep = useCallback(async (jobId: string, stepIndex: number) => {
+    setRegenBusyJobId(jobId);
+    try {
+      const res = await fetch(`/api/templates/${jobId}/regen-step`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepIndex }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to regenerate step');
+      }
+      showToast(`Re-running from step ${stepIndex + 1}...`, 'success');
+      setViewingStepId(null);
+      setModalJob(null);
+      setSelectedJob(null);
+      await onJobsMutated?.();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to regenerate step', 'error');
+    } finally {
+      setRegenBusyJobId(null);
+    }
+  }, [onJobsMutated, showToast]);
 
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -313,6 +348,7 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
           const isActive = liveJob.status === 'queued' || liveJob.status === 'processing';
           const isFailed = liveJob.status === 'failed';
           const isCompleted = liveJob.status === 'completed';
+          const isQueued = liveJob.status === 'queued';
           const enabledSteps = liveJob.pipeline.filter((s) => s.enabled);
           const completedSteps = isCompleted
             ? enabledSteps.length
@@ -322,6 +358,8 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
             : 0;
           const finalVideoSrc = liveJob.signedUrl || getSignedUrl(liveJob) || liveJob.outputUrl;
           const stepResults: StepResult[] = liveJob.stepResults || [];
+          const completedStepIds = new Set(stepResults.map((r) => r.stepId));
+          const regenBusy = regenBusyJobId === liveJob.id;
 
           // Determine which video to show
           let activeVideoSrc: string | undefined;
@@ -408,41 +446,62 @@ export default function TemplateJobList({ jobs, loading }: { jobs: TemplateJob[]
                 <div className="space-y-1">
                   <div className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Pipeline Steps</div>
                   <div className="flex flex-col gap-1">
-                    {liveJob.pipeline.map((step, i) => {
-                      if (!step.enabled) return null;
+                    {enabledSteps.map((step, i) => {
                       let st: 'done' | 'active' | 'pending' = 'pending';
                       if (i < liveJob.currentStep || isCompleted) st = 'done';
                       else if (i === liveJob.currentStep && liveJob.status === 'processing') st = 'active';
 
                       const hasResult = stepResults.some((r) => r.stepId === step.id);
                       const isViewing = viewingStepId === step.id;
+                      const hasPriorResults = i === 0 || enabledSteps.slice(0, i).every((prevStep) => completedStepIds.has(prevStep.id));
+                      const canRegen = !regenBusy && liveJob.status !== 'processing' && (isCompleted || isFailed || isQueued) && hasPriorResults;
 
                       return (
-                        <button
+                        <div
                           key={step.id}
-                          onClick={() => hasResult ? setViewingStepId(isViewing ? null : step.id) : undefined}
-                          disabled={!hasResult}
                           className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] transition-all ${
                             isViewing
                               ? 'bg-[var(--primary)] text-white shadow-sm'
                               : hasResult
-                                ? 'bg-[var(--accent)] text-[var(--text)] hover:bg-[var(--primary)]/10 cursor-pointer'
-                                : 'bg-[var(--accent)] text-[var(--text-muted)] opacity-60 cursor-default'
+                                ? 'bg-[var(--accent)] text-[var(--text)]'
+                                : 'bg-[var(--accent)] text-[var(--text-muted)] opacity-80'
                           }`}
                         >
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
-                            style={{
-                              backgroundColor: isViewing ? 'rgba(255,255,255,0.2)' : st === 'done' ? 'rgba(34,197,94,0.15)' : st === 'active' ? 'var(--accent)' : 'rgba(0,0,0,0.05)',
-                              color: isViewing ? 'white' : st === 'done' ? '#22c55e' : st === 'active' ? 'var(--primary)' : 'var(--text-muted)',
-                            }}
+                          <button
+                            type="button"
+                            onClick={() => hasResult ? setViewingStepId(isViewing ? null : step.id) : undefined}
+                            disabled={!hasResult}
+                            className={`flex min-w-0 flex-1 items-center gap-2 text-left ${hasResult ? 'cursor-pointer' : 'cursor-default'}`}
                           >
-                            {st === 'done' ? <Check className="h-3 w-3" /> : st === 'active' ? <Loader2 className="h-3 w-3 animate-spin" /> : i + 1}
-                          </span>
-                          <span className="flex-1 capitalize truncate">{step.type.replace(/-/g, ' ')}</span>
-                          {hasResult && (
-                            <Play className={`h-3 w-3 shrink-0 ${isViewing ? 'text-white' : 'text-[var(--text-muted)]'}`} />
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
+                              style={{
+                                backgroundColor: isViewing ? 'rgba(255,255,255,0.2)' : st === 'done' ? 'rgba(34,197,94,0.15)' : st === 'active' ? 'var(--accent)' : 'rgba(0,0,0,0.05)',
+                                color: isViewing ? 'white' : st === 'done' ? '#22c55e' : st === 'active' ? 'var(--primary)' : 'var(--text-muted)',
+                              }}
+                            >
+                              {st === 'done' ? <Check className="h-3 w-3" /> : st === 'active' ? <Loader2 className="h-3 w-3 animate-spin" /> : i + 1}
+                            </span>
+                            <span className="flex-1 capitalize truncate">{step.type.replace(/-/g, ' ')}</span>
+                            {hasResult && (
+                              <Play className={`h-3 w-3 shrink-0 ${isViewing ? 'text-white' : 'text-[var(--text-muted)]'}`} />
+                            )}
+                          </button>
+                          {canRegen && (
+                            <button
+                              type="button"
+                              onClick={() => handleRegenStep(liveJob.id, i)}
+                              disabled={regenBusy}
+                              title={`Re-run from step ${i + 1}`}
+                              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${
+                                isViewing
+                                  ? 'bg-white/15 text-white hover:bg-white/25'
+                                  : 'bg-black/5 text-[var(--text-muted)] hover:bg-amber-100 hover:text-amber-600'
+                              } disabled:opacity-50`}
+                            >
+                              {regenBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                            </button>
                           )}
-                        </button>
+                        </div>
                       );
                     })}
 

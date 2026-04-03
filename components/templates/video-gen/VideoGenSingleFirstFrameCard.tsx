@@ -22,6 +22,7 @@ type Props = {
   sourceVideoUrl?: string;
   extractedFrames: ExtractedFrame[];
   firstFrameOptions: FirstFrameOption[];
+  allowedMismatchUrls: Set<string>;
   dismissedOptions: Set<string>;
   isGeneratingFirstFrame: boolean;
   sceneDisplayUrl: string | null;
@@ -37,6 +38,7 @@ type Props = {
   onBrowseLibrary: () => Promise<void>;
   onSelectLibraryImage: (img: GeneratedImage) => void;
   onSelectFirstFrame: (option: FirstFrameOption) => void;
+  onAllowMismatch: (option: FirstFrameOption) => void;
   onSelectSceneFrame: (gcsUrl: string) => void;
   onClearSceneFrame: () => void;
   onExtractFrames: () => Promise<void>;
@@ -66,6 +68,7 @@ export default function VideoGenSingleFirstFrameCard({
   sourceVideoUrl,
   extractedFrames,
   firstFrameOptions,
+  allowedMismatchUrls,
   dismissedOptions,
   isGeneratingFirstFrame,
   sceneDisplayUrl,
@@ -81,6 +84,7 @@ export default function VideoGenSingleFirstFrameCard({
   onBrowseLibrary,
   onSelectLibraryImage,
   onSelectFirstFrame,
+  onAllowMismatch,
   onSelectSceneFrame,
   onClearSceneFrame,
   onExtractFrames,
@@ -436,30 +440,61 @@ export default function VideoGenSingleFirstFrameCard({
                   {firstFrameOptions.map((opt, i) => {
                     if (dismissedOptions.has(opt.gcsUrl)) return null;
                     const isSelected = config.imageUrl === opt.gcsUrl;
+                    const isAllowedMismatch = opt.reviewStatus === 'mismatch' && allowedMismatchUrls.has(opt.gcsUrl);
+                    const hasMatchBadge = (!!opt.reviewLabel && opt.reviewStatus !== 'unknown') || isAllowedMismatch;
+                    const isMatch = opt.reviewStatus === 'match';
+                    const isMismatch = opt.reviewStatus === 'mismatch';
                     return (
-                      <button
-                        key={i}
-                        onClick={() => onSelectFirstFrame(opt)}
-                        className={`group relative w-full max-w-[200px] mx-auto block aspect-[3/4] overflow-hidden rounded-2xl border-2 transition-all duration-150 ${
-                          isSelected ? 'border-[var(--primary)]' : 'border-transparent hover:opacity-90'
-                        }`}
-                      >
-                        <img src={opt.url} alt="Generated first frame" className="h-full w-full object-cover" />
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPreviewUrl(opt.url);
-                          }}
-                          className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
+                      <div key={i} className="space-y-2">
+                        <button
+                          onClick={() => onSelectFirstFrame(opt)}
+                          className={`group relative w-full max-w-[200px] mx-auto block aspect-[3/4] overflow-hidden rounded-2xl border-2 transition-all duration-150 ${
+                            isSelected
+                              ? isMatch
+                                ? 'border-green-500'
+                                : isAllowedMismatch
+                                  ? 'border-amber-500'
+                                  : isMismatch
+                                    ? 'border-red-500'
+                                    : 'border-[var(--primary)]'
+                              : 'border-transparent hover:opacity-90'
+                          }`}
+                          title={opt.reviewReason || undefined}
                         >
-                          <Expand className="h-2.5 w-2.5" />
-                        </div>
-                        {isSelected && (
-                          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-[var(--primary)]/90 to-transparent py-1 text-center">
-                            <span className="text-[10px] font-semibold text-[var(--primary-foreground)]">Selected</span>
+                          <img src={opt.url} alt="Generated first frame" className="h-full w-full object-cover" />
+                          {hasMatchBadge && (
+                            <div
+                              className={`absolute left-2 top-2 z-10 rounded-full px-2 py-1 text-[9px] font-semibold text-white shadow-sm ${
+                                isMatch ? 'bg-green-600/95' : isAllowedMismatch ? 'bg-amber-500/95' : 'bg-red-600/95'
+                              }`}
+                            >
+                              {isAllowedMismatch ? 'Allowed' : opt.reviewLabel}
+                            </div>
+                          )}
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPreviewUrl(opt.url);
+                            }}
+                            className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
+                          >
+                            <Expand className="h-2.5 w-2.5" />
                           </div>
+                          {isSelected && (
+                            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-[var(--primary)]/90 to-transparent py-1 text-center">
+                              <span className="text-[10px] font-semibold text-[var(--primary-foreground)]">Selected</span>
+                            </div>
+                          )}
+                        </button>
+                        {isSelected && isMismatch && !isAllowedMismatch && (
+                          <button
+                            onClick={() => onAllowMismatch(opt)}
+                            className="mx-auto flex items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[10px] font-semibold text-amber-600 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
+                          >
+                            Allow And Use This
+                          </button>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>

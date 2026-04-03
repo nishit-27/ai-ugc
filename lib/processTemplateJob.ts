@@ -13,7 +13,10 @@ import { config, getFalWebhookUrl } from '@/lib/config';
 import { getVideoDownloadUrl } from '@/lib/processJob';
 import { uploadBuffer } from '@/lib/upload-via-presigned.js';
 import { addTextOverlayToImage } from '@/lib/imageTextOverlay';
-import type { MiniAppStep, VideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, ComposeConfig, CarouselConfig } from '@/types';
+import { RateLimiter } from '@/lib/rateLimiter';
+import { isRetryableError, retry } from '@/lib/retry';
+import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
+import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, ComposeConfig, CarouselConfig } from '@/types';
 
 /**
  * Semaphore for limiting concurrent local ffmpeg/sharp operations.
@@ -42,11 +45,124 @@ class Semaphore {
 }
 
 const localProcessingSemaphore = new Semaphore(5);
+type LoadedTemplateJob = NonNullable<Awaited<ReturnType<typeof getTemplateJob>>>;
+
+async function withTemplateJobRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  return retry(fn, {
+    retries: 3,
+    delaysMs: [1000, 3000, 7000],
+    onRetry: (error, attempt, delayMs) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[TemplateRetry] ${label} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
+    },
+  });
+}
 
 function getTempDir(): string {
   const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function firstStepNeedsInputVideo(step: MiniAppStep | undefined): boolean {
+  if (!step) return false;
+  if (step.type === 'video-generation') {
+    return (step.config as VideoGenConfig).mode !== 'subtle-animation';
+  }
+  if (step.type === 'batch-video-generation') {
+    return (step.config as BatchVideoGenConfig).mode !== 'subtle-animation';
+  }
+  return step.type !== 'compose' && step.type !== 'carousel';
+}
+
+function pipelineReferencesSourceVideo(steps: MiniAppStep[]): boolean {
+  return steps.some((step) => {
+    if (!step.enabled || step.type !== 'compose') {
+      return false;
+    }
+    const cfg = step.config as ComposeConfig;
+    return Array.isArray(cfg.layers) && cfg.layers.some((layer) =>
+      layer.source.type === 'step-output' && layer.source.stepId === '__video-source'
+    );
+  });
+}
+
+async function persistTemplateFalRequest(
+  jobId: string,
+  step: string,
+  falRequestId: string,
+  falEndpoint: string,
+): Promise<void> {
+  const updatedJob = await updateTemplateJob(jobId, {
+    step,
+    falRequestId,
+    falEndpoint,
+  });
+
+  if (updatedJob?.falRequestId !== falRequestId || updatedJob?.falEndpoint !== falEndpoint) {
+    throw new Error(`Submitted FAL request ${falRequestId} but failed to persist its recovery metadata.`);
+  }
+}
+
+async function prepareSourceVideo(
+  job: LoadedTemplateJob,
+  jobId: string,
+  enabledSteps: MiniAppStep[],
+  tempDir: string,
+  tempFiles: string[],
+): Promise<{ initialVideoPath: string; sourceVideoPath: string | null }> {
+  if (job.videoSource !== 'upload' || !job.videoUrl) {
+    return { initialVideoPath: '', sourceVideoPath: null };
+  }
+
+  const firstStep = enabledSteps[0];
+  const shouldUseAsInitialVideo = firstStepNeedsInputVideo(firstStep);
+  const shouldPrepareSource =
+    shouldUseAsInitialVideo ||
+    pipelineReferencesSourceVideo(enabledSteps) ||
+    (typeof job.sourceTrimStart === 'number' && typeof job.sourceTrimEnd === 'number');
+
+  if (!shouldPrepareSource) {
+    return { initialVideoPath: '', sourceVideoPath: null };
+  }
+
+  try {
+    await updateTemplateJob(jobId, { step: 'Downloading video...' });
+  } catch {}
+
+  const downloadedSourcePath = path.join(tempDir, `tpl-input-${jobId}-${Date.now()}.mp4`);
+  await downloadToLocal(job.videoUrl, downloadedSourcePath);
+  tempFiles.push(downloadedSourcePath);
+
+  let preparedSourcePath = downloadedSourcePath;
+  if (
+    typeof job.sourceTrimStart === 'number' &&
+    typeof job.sourceTrimEnd === 'number'
+  ) {
+    const inputDuration = getVideoDuration(downloadedSourcePath);
+    const trimStart = Math.max(0, Math.min(job.sourceTrimStart, Math.max(0, inputDuration - 0.05)));
+    const trimEnd = Math.min(inputDuration, Math.max(job.sourceTrimEnd, trimStart + 0.05));
+
+    if (trimEnd <= trimStart + 0.05) {
+      throw new Error('Invalid source trim range');
+    }
+
+    const shouldTrimSource = trimStart > 0.05 || trimEnd < inputDuration - 0.05;
+    if (shouldTrimSource) {
+      try {
+        await updateTemplateJob(jobId, { step: 'Applying source trim...' });
+      } catch {}
+      const trimmedSourcePath = path.join(tempDir, `tpl-source-trim-${jobId}-${Date.now()}.mp4`);
+      trimVideoRange(downloadedSourcePath, trimmedSourcePath, trimStart, trimEnd);
+      tempFiles.push(trimmedSourcePath);
+      preparedSourcePath = trimmedSourcePath;
+    }
+  }
+
+  return {
+    initialVideoPath: shouldUseAsInitialVideo ? preparedSourcePath : '',
+    sourceVideoPath: preparedSourcePath,
+  };
 }
 /**
  * Download a file (from GCS or HTTP) to a local path.
@@ -148,15 +264,12 @@ export async function processStep(
           },
           webhookUrl: getFalWebhookUrl(),
         });
-        try {
-          await updateTemplateJob(jobId, {
-            step: `Step ${stepIndex + 1}: Veo 3.1 — generating...`,
-            falRequestId: request_id,
-            falEndpoint,
-          });
-        } catch (e) {
-          console.error(`[Template] Non-fatal: failed to save FAL request info for ${jobId}:`, e instanceof Error ? e.message : e);
-        }
+        await persistTemplateFalRequest(
+          jobId,
+          `Step ${stepIndex + 1}: Veo 3.1 — generating...`,
+          request_id,
+          falEndpoint,
+        );
         console.log(`[FAL] Template ${jobId} step ${stepIndex}: submitted Veo 3.1, request_id=${request_id}`);
         await fal.queue.subscribeToStatus(falEndpoint, {
           requestId: request_id,
@@ -206,15 +319,12 @@ export async function processStep(
           },
           webhookUrl: getFalWebhookUrl(),
         });
-        try {
-          await updateTemplateJob(jobId, {
-            step: `Step ${stepIndex + 1}: Motion Control — processing...`,
-            falRequestId: request_id,
-            falEndpoint,
-          });
-        } catch (e) {
-          console.error(`[Template] Non-fatal: failed to save FAL request info for ${jobId}:`, e instanceof Error ? e.message : e);
-        }
+        await persistTemplateFalRequest(
+          jobId,
+          `Step ${stepIndex + 1}: Motion Control — processing...`,
+          request_id,
+          falEndpoint,
+        );
         console.log(`[FAL] Template ${jobId} step ${stepIndex}: submitted Motion Control, request_id=${request_id}`);
         await fal.queue.subscribeToStatus(falEndpoint, {
           requestId: request_id,
@@ -420,13 +530,16 @@ export async function processStep(
  * If fromStepIndex is provided, reuses prior step results and resumes from that step.
  */
 export async function processTemplateJob(jobId: string, fromStepIndex?: number): Promise<void> {
-  const job = await getTemplateJob(jobId);
-  if (!job) return;
+  let job: Awaited<ReturnType<typeof getTemplateJob>> | null = null;
+  let completionOutputUrl: string | null = null;
   const tempDir = getTempDir();
   const tempFiles: string[] = [];
   const inlineMusicTrackPaths: string[] = []; // BG music tracks downloaded for inline application
   const resuming = typeof fromStepIndex === 'number' && fromStepIndex > 0;
   try {
+    job = await withTemplateJobRetry(`load job ${jobId}`, () => getTemplateJob(jobId));
+    if (!job) return;
+
     try {
       await updateTemplateJob(jobId, { status: 'processing', step: resuming ? `Resuming from step ${fromStepIndex + 1}...` : 'Starting pipeline...' });
     } catch (statusErr) {
@@ -434,6 +547,28 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
     }
 
     const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
+    if (canFinalizeTemplateJobFromPersistedSteps(job.currentStep, enabledSteps.length, job.stepResults)) {
+      const persistedOutputUrl = getFinalTemplateJobOutputUrl(job.stepResults);
+      if (!persistedOutputUrl) {
+        throw new Error(`Job ${jobId} has all step results but no final output URL`);
+      }
+
+      await updateTemplateJob(jobId, {
+        status: 'completed',
+        step: 'Done!',
+        outputUrl: persistedOutputUrl,
+        completedAt: job.completedAt ?? new Date(),
+      });
+
+      if (job.pipelineBatchId) {
+        try {
+          await updatePipelineBatchProgress(job.pipelineBatchId);
+        } catch (e) {
+          console.error('Failed to update pipeline batch progress:', e);
+        }
+      }
+      return;
+    }
 
     // ── Resume support: restore prior results and download the input video ──
     let currentVideoPath: string = '';
@@ -487,6 +622,10 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
           }
         }
       }
+      const { sourceVideoPath } = await prepareSourceVideo(job, jobId, enabledSteps, tempDir, tempFiles);
+      if (sourceVideoPath) {
+        stepOutputs.set('__video-source', sourceVideoPath);
+      }
       console.log(`[Template] Resuming job ${jobId} from step ${fromStepIndex}, restored ${stepResults.length} prior results`);
     } else {
       // ── Normal full processing ──
@@ -512,17 +651,19 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       }
 
       const firstStep = enabledSteps[0];
+      const { initialVideoPath, sourceVideoPath } = await prepareSourceVideo(job, jobId, enabledSteps, tempDir, tempFiles);
+      if (sourceVideoPath) {
+        stepOutputs.set('__video-source', sourceVideoPath);
+      }
+
       if (firstStep?.type === 'video-generation' && (firstStep.config as VideoGenConfig).mode === 'subtle-animation') {
         currentVideoPath = '';
       } else if (firstStep?.type === 'compose') {
         currentVideoPath = '';
       } else if (firstStep?.type === 'carousel') {
         currentVideoPath = '';
-      } else if (job.videoSource === 'upload' && job.videoUrl) {
-        try { await updateTemplateJob(jobId, { step: 'Downloading video...' }); } catch {}
-        currentVideoPath = path.join(tempDir, `tpl-input-${jobId}-${Date.now()}.mp4`);
-        await downloadToLocal(job.videoUrl, currentVideoPath);
-        tempFiles.push(currentVideoPath);
+      } else if (initialVideoPath) {
+        currentVideoPath = initialVideoPath;
       } else {
         throw new Error('No video source provided');
       }
@@ -638,26 +779,13 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
     } else {
       finalUrl = (await uploadVideoFromPath(currentVideoPath, `template-${jobId}.mp4`)).url;
     }
-    // Completion update — retry once since the video is already processed
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await updateTemplateJob(jobId, {
-          status: 'completed',
-          step: 'Done!',
-          outputUrl: finalUrl,
-          stepResults,
-          completedAt: new Date(),
-        });
-        break;
-      } catch (completionErr) {
-        if (attempt === 0) {
-          console.error(`[Template] Completion update failed (retrying): ${completionErr instanceof Error ? completionErr.message : completionErr}`);
-          await new Promise((r) => setTimeout(r, 1000));
-        } else {
-          throw completionErr;
-        }
-      }
-    }
+    completionOutputUrl = finalUrl;
+    await updateTemplateJob(jobId, {
+      status: 'completed',
+      step: 'Done!',
+      outputUrl: finalUrl,
+      completedAt: new Date(),
+    });
     if (job.pipelineBatchId) {
       try {
         await updatePipelineBatchProgress(job.pipelineBatchId);
@@ -669,6 +797,26 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
     const errMsg = error instanceof Error ? error.message : String(error);
     const errCause = error instanceof Error && error.cause ? ` | cause: ${error.cause instanceof Error ? error.cause.message : String(error.cause)}` : '';
     console.error(`[Template] Job ${jobId} failed: ${errMsg}${errCause}`);
+    if (completionOutputUrl) {
+      try {
+        await updateTemplateJob(jobId, {
+          status: 'completed',
+          step: 'Done!',
+          outputUrl: completionOutputUrl,
+          completedAt: new Date(),
+        });
+        if (job?.pipelineBatchId) {
+          try {
+            await updatePipelineBatchProgress(job.pipelineBatchId);
+          } catch (e) {
+            console.error('Failed to update pipeline batch progress:', e);
+          }
+        }
+        return;
+      } catch (finalizeErr) {
+        console.error(`[Template] Fallback completion failed for ${jobId}:`, finalizeErr);
+      }
+    }
     try {
       await updateTemplateJob(jobId, {
         status: 'failed',
@@ -679,7 +827,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       console.error(`[Template] Failed to mark job ${jobId} as failed:`, updateErr);
     }
     try {
-      const failedJob = await getTemplateJob(jobId);
+      const failedJob = job ?? await withTemplateJobRetry(`reload failed job ${jobId}`, () => getTemplateJob(jobId));
       if (failedJob?.pipelineBatchId) {
         try {
           await updatePipelineBatchProgress(failedJob.pipelineBatchId);
@@ -735,18 +883,92 @@ function getInternalBaseUrl(): string {
  * Each call creates a separate serverless invocation with its own timeout,
  * preventing queue starvation when processing large batches.
  */
-async function triggerJobProcessing(jobId: string, baseUrl: string): Promise<void> {
+async function triggerJobProcessing(jobId: string, baseUrl: string): Promise<boolean> {
   try {
-    const res = await fetch(`${baseUrl}/api/templates/${jobId}/process`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    await retry(async () => {
+      const res = await fetch(`${baseUrl}/api/templates/${jobId}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        return;
+      }
+
+      const statusText = `${res.status} ${res.statusText}`.trim();
+      const bodyText = (await res.text().catch(() => '')).slice(0, 300);
+      const details = bodyText ? ` ${bodyText}` : '';
+
+      if (res.status === 408 || res.status === 409 || res.status === 425 || res.status === 429 || res.status >= 500) {
+        if (res.status === 429) {
+          throw new Error(`Too many requests triggering job ${jobId}: ${statusText}${details}`);
+        }
+        throw new Error(`Service unavailable triggering job ${jobId}: ${statusText}${details}`);
+      }
+
+      throw new Error(`Non-retryable trigger failure for job ${jobId}: ${statusText}${details}`);
+    }, {
+      retries: config.pipelineBatchTriggerRetryCount,
+      delaysMs: Array.from(
+        { length: Math.max(config.pipelineBatchTriggerRetryCount, 1) },
+        (_, attempt) => config.pipelineBatchTriggerRetryDelayMs * (attempt + 1),
+      ),
+      shouldRetry: (error) => isRetryableError(error),
+      onRetry: (error, attempt, delayMs) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[PipelineBatch] Trigger retry for ${jobId} (attempt ${attempt}) in ${delayMs}ms: ${message}`);
+      },
     });
-    if (!res.ok) {
-      console.error(`[PipelineBatch] Failed to trigger job ${jobId}: ${res.status} ${res.statusText}`);
-    }
+    return true;
   } catch (err) {
     console.error(`[PipelineBatch] Error triggering job ${jobId}:`, err);
+    return false;
   }
+}
+
+async function triggerJobsWithThrottle(jobIds: string[], baseUrl: string): Promise<{ succeeded: number; failed: number }> {
+  if (jobIds.length === 0) return { succeeded: 0, failed: 0 };
+
+  const concurrency = Math.min(config.pipelineBatchTriggerConcurrency, jobIds.length);
+  const launchRatePerSecond = config.pipelineBatchTriggerRatePerSecond;
+  const launchLimiter = new RateLimiter(launchRatePerSecond);
+  let nextIndex = 0;
+  let triggeredCount = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  console.log(
+    `[PipelineBatch] Triggering ${jobIds.length} jobs with concurrency=${concurrency}, ` +
+    `launchRate=${launchRatePerSecond}/s`
+  );
+
+  const workers = Array.from({ length: concurrency }, (_, workerIndex) => (async () => {
+    while (true) {
+      const currentIndex = nextIndex++;
+      if (currentIndex >= jobIds.length) {
+        return;
+      }
+
+      const jobId = jobIds[currentIndex];
+      await launchLimiter.acquire();
+      const ok = await triggerJobProcessing(jobId, baseUrl);
+      triggeredCount++;
+      if (ok) succeeded++;
+      else failed++;
+
+      if (
+        triggeredCount === jobIds.length ||
+        triggeredCount % Math.max(5, Math.ceil(launchRatePerSecond)) === 0
+      ) {
+        console.log(
+          `[PipelineBatch] Triggered ${triggeredCount}/${jobIds.length} jobs ` +
+          `(worker ${workerIndex + 1}, latest job ${jobId})`
+        );
+      }
+    }
+  })());
+
+  await Promise.allSettled(workers);
+  return { succeeded, failed };
 }
 
 /**
@@ -755,11 +977,12 @@ async function triggerJobProcessing(jobId: string, baseUrl: string): Promise<voi
  *
  * Each job is triggered as a separate serverless invocation (via POST to
  * /api/templates/[id]/process) so each gets its own 5-minute timeout.
- * Jobs are staggered in chunks to avoid overwhelming the FAL API.
+ * Launches are paced with a rate limiter and bounded concurrency so large
+ * batches start quickly without sending an uncontrolled spike of requests.
  *
  * This replaces the old approach of processing all jobs in the same
  * function, which caused queue starvation when the function timed out
- * after only 1-2 chunks of 5.
+ * after only a few child jobs were launched.
  */
 export async function processPipelineBatch(
   childJobIds: string[],
@@ -791,29 +1014,9 @@ export async function processPipelineBatch(
     }
 
     const baseUrl = getInternalBaseUrl();
-    const CHUNK_SIZE = 5;
-    const CHUNK_DELAY_MS = 2000; // 2s between chunks to stagger FAL submissions
+    const { succeeded, failed } = await triggerJobsWithThrottle(childJobIds, baseUrl);
 
-    console.log(`[PipelineBatch] Triggering ${childJobIds.length} jobs via internal API (base: ${baseUrl})`);
-
-    for (let i = 0; i < childJobIds.length; i += CHUNK_SIZE) {
-      const chunk = childJobIds.slice(i, i + CHUNK_SIZE);
-      const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
-      const totalChunks = Math.ceil(childJobIds.length / CHUNK_SIZE);
-      console.log(`[PipelineBatch] Triggering chunk ${chunkNum}/${totalChunks} (jobs ${i + 1}-${i + chunk.length} of ${childJobIds.length})`);
-
-      // Fire all jobs in this chunk concurrently — each gets its own serverless invocation
-      await Promise.allSettled(
-        chunk.map((id) => triggerJobProcessing(id, baseUrl))
-      );
-
-      // Small delay between chunks to stagger FAL API submissions
-      if (i + CHUNK_SIZE < childJobIds.length) {
-        await new Promise((resolve) => setTimeout(resolve, CHUNK_DELAY_MS));
-      }
-    }
-
-    console.log(`[PipelineBatch] All ${childJobIds.length} jobs triggered successfully`);
+    console.log(`[PipelineBatch] Trigger summary: ${succeeded} succeeded, ${failed} failed out of ${childJobIds.length}`);
   } finally {
     if (sharedVideoPath) {
       try { fs.unlinkSync(sharedVideoPath); } catch {}

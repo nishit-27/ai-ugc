@@ -13,12 +13,14 @@ type Props = {
   progress: number;
   pending: number;
   queuedCount: number;
+  processingCount: number;
   isRefreshing: boolean;
   isDeleting: boolean;
   onRefresh: () => void;
   onDelete: () => void;
   onEditConfig?: () => void;
   onFailQueued?: () => void;
+  onFailProcessing?: () => void;
 };
 
 export default function MasterBatchHeader({
@@ -28,12 +30,14 @@ export default function MasterBatchHeader({
   progress,
   pending,
   queuedCount,
+  processingCount,
   isRefreshing,
   isDeleting,
   onRefresh,
   onDelete,
   onEditConfig,
   onFailQueued,
+  onFailProcessing,
 }: Props) {
   return (
     <>
@@ -129,6 +133,15 @@ export default function MasterBatchHeader({
             >
               <AlertTriangle className="h-3.5 w-3.5" />
               Fail {queuedCount} stuck
+            </button>
+          )}
+          {processingCount > 0 && onFailProcessing && (
+            <button
+              onClick={onFailProcessing}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-100 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Fail {processingCount} stuck processing
             </button>
           )}
         </div>

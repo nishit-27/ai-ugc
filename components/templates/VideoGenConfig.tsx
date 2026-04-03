@@ -38,6 +38,7 @@ export default function VideoGenConfig({
   const { models, modelImages, imagesLoading, loadModelImages } = useModels();
   const fileRef = useRef<HTMLInputElement>(null);
   const sceneFileRef = useRef<HTMLInputElement>(null);
+  const configRef = useRef(config);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   const cached = stepId ? videoGenStepCache.get(stepId) : undefined;
@@ -56,6 +57,9 @@ export default function VideoGenConfig({
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [firstFrameOptions, setFirstFrameOptionsRaw] = useState<FirstFrameOption[]>(() => cached?.firstFrameOptions ?? []);
+  const [allowedMismatchUrls, setAllowedMismatchUrls] = useState<Set<string>>(
+    () => new Set(cached?.allowedMismatchUrls ?? []),
+  );
   const [dismissedOptions, setDismissedOptions] = useState<Set<string>>(() => new Set(cached?.dismissedOptions ?? []));
   const [isGeneratingFirstFrame, setIsGeneratingFirstFrame] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -89,13 +93,30 @@ export default function VideoGenConfig({
   const [masterErrorsByModelId, setMasterErrorsByModelId] = useState<Record<string, string>>({});
   const [masterQueueState, setMasterQueueState] = useState<QueueState>({});
 
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
   const clearFirstFrameOptions = () => { setFirstFrameOptionsRaw([]); setDismissedOptions(new Set()); };
   const setFirstFrameOptions = (options: FirstFrameOption[]) => { setFirstFrameOptionsRaw(options); setDismissedOptions(new Set()); };
+  const allowMismatchUrl = (url: string) => {
+    setAllowedMismatchUrls((prev) => {
+      const next = new Set(prev);
+      next.add(url);
+      return next;
+    });
+  };
+  const updateConfig = (updater: (current: VGC) => VGC) => {
+    const next = updater(configRef.current);
+    configRef.current = next;
+    onChange(next);
+  };
 
   useVideoGenStepCache({
     stepId,
     extractedFrames,
     firstFrameOptions,
+    allowedMismatchUrls,
     dismissedOptions,
     imageSource,
     sceneDisplayUrl,
@@ -205,15 +226,17 @@ export default function VideoGenConfig({
     clearFirstFrameOptions();
 
     try {
-      setFirstFrameOptions(
-        await generateFirstFrameRequest({
-          modelImageUrl,
-          frameImageUrl: config.extractedFrameUrl,
-          resolution: config.firstFrameResolution || '1K',
-          modelId: config.modelId || null,
-          provider: config.firstFrameProvider || 'fal',
-        }),
-      );
+      const options = await generateFirstFrameRequest({
+        modelImageUrl,
+        frameImageUrl: config.extractedFrameUrl,
+        resolution: config.firstFrameResolution || '1K',
+        modelId: config.modelId || null,
+        provider: config.firstFrameProvider || 'fal',
+      });
+      setFirstFrameOptions(options);
+      if (options[0]?.gcsUrl) {
+        updateConfig((current) => ({ ...current, imageUrl: options[0].gcsUrl, firstFrameEnabled: true }));
+      }
     } catch (error: unknown) {
       setGenerateError(error instanceof Error ? error.message : 'Failed to generate first frame');
     } finally {
@@ -222,6 +245,12 @@ export default function VideoGenConfig({
   };
 
   const handleSelectFirstFrame = (option: FirstFrameOption) => {
+    setFirstFrameInputMode('generate');
+    onChange({ ...config, imageUrl: option.gcsUrl });
+  };
+
+  const handleAllowSingleMismatch = (option: FirstFrameOption) => {
+    allowMismatchUrl(option.gcsUrl);
     setFirstFrameInputMode('generate');
     onChange({ ...config, imageUrl: option.gcsUrl });
   };
@@ -318,6 +347,15 @@ export default function VideoGenConfig({
         provider: config.firstFrameProvider || 'fal',
       });
       setMasterPerModelResults((prev) => ({ ...prev, [modelId]: options }));
+      if (options[0]?.gcsUrl) {
+        updateConfig((current) => ({
+          ...current,
+          masterFirstFrames: {
+            ...(current.masterFirstFrames || {}),
+            [modelId]: options[0].gcsUrl,
+          },
+        }));
+      }
       return options;
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Generation failed';
@@ -351,6 +389,15 @@ export default function VideoGenConfig({
       onModelResult: (modelId, images) => {
         setMasterPerModelResults((prev) => ({ ...prev, [modelId]: images }));
         setMasterGeneratingIds((prev) => { const next = new Set(prev); next.delete(modelId); return next; });
+        if (images[0]?.gcsUrl) {
+          updateConfig((current) => ({
+            ...current,
+            masterFirstFrames: {
+              ...(current.masterFirstFrames || {}),
+              [modelId]: images[0].gcsUrl,
+            },
+          }));
+        }
       },
       onModelError: (modelId, error) => {
         setMasterErrorsByModelId((prev) => ({ ...prev, [modelId]: error }));
@@ -362,7 +409,6 @@ export default function VideoGenConfig({
       resolution: config.firstFrameResolution || '1K',
       provider: config.firstFrameProvider || 'fal',
     });
-    setMasterGeneratingIds(new Set());
     setMasterQueueState({});
     setIsMasterGeneratingAll(false);
   };
@@ -374,13 +420,20 @@ export default function VideoGenConfig({
   };
 
   const handleMasterSelectForModel = (modelId: string, gcsUrl: string) => {
-    const updated = { ...(config.masterFirstFrames || {}) };
-    if (gcsUrl) {
-      updated[modelId] = gcsUrl;
-    } else {
-      delete updated[modelId];
-    }
-    onChange({ ...config, masterFirstFrames: updated });
+    updateConfig((current) => {
+      const updated = { ...(current.masterFirstFrames || {}) };
+      if (gcsUrl) {
+        updated[modelId] = gcsUrl;
+      } else {
+        delete updated[modelId];
+      }
+      return { ...current, masterFirstFrames: updated };
+    });
+  };
+
+  const handleMasterAllowMismatchForModel = (modelId: string, option: FirstFrameOption) => {
+    allowMismatchUrl(option.gcsUrl);
+    handleMasterSelectForModel(modelId, option.gcsUrl);
   };
 
   const [masterLibraryPage, setMasterLibraryPage] = useState(1);
@@ -527,6 +580,7 @@ export default function VideoGenConfig({
       sourceVideoUrl={sourceVideoUrl}
       extractedFrames={extractedFrames}
       firstFrameOptions={firstFrameOptions}
+      allowedMismatchUrls={allowedMismatchUrls}
       dismissedOptions={dismissedOptions}
       isGeneratingFirstFrame={isGeneratingFirstFrame}
       sceneDisplayUrl={sceneDisplayUrl}
@@ -542,6 +596,7 @@ export default function VideoGenConfig({
       onBrowseLibrary={handleBrowseLibrary}
       onSelectLibraryImage={handleSelectLibraryImage}
       onSelectFirstFrame={handleSelectFirstFrame}
+      onAllowMismatch={handleAllowSingleMismatch}
       onSelectSceneFrame={(gcsUrl) => {
         onChange({ ...config, extractedFrameUrl: gcsUrl });
         clearFirstFrameOptions();
@@ -568,6 +623,7 @@ export default function VideoGenConfig({
       config={config}
       isExpanded={isExpanded}
       masterPerModelResults={masterPerModelResults}
+      allowedMismatchUrls={allowedMismatchUrls}
       masterGeneratingIds={masterGeneratingIds}
       masterLibraryModelId={masterLibraryModelId}
       masterLibraryImages={masterLibraryImages}
@@ -584,6 +640,7 @@ export default function VideoGenConfig({
       masterGenerateForModel={masterGenerateForModel}
       handleMasterBrowseLibrary={handleMasterBrowseLibrary}
       handleMasterSelectForModel={handleMasterSelectForModel}
+      handleMasterAllowMismatchForModel={handleMasterAllowMismatchForModel}
       handleMasterTogglePanel={handleMasterTogglePanel}
       handleMasterUploadForModel={handleMasterUploadForModel}
       handleMasterFetchModelImages={handleMasterFetchModelImages}

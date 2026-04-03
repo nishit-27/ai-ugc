@@ -134,6 +134,8 @@ export const templateJobs = pgTable('template_jobs', {
   videoSource: text('video_source').notNull().default('tiktok'),
   tiktokUrl: text('tiktok_url'),
   videoUrl: text('video_url'),
+  sourceTrimStart: real('source_trim_start'),
+  sourceTrimEnd: real('source_trim_end'),
   outputUrl: text('output_url'),
   stepResults: jsonb('step_results'),
   error: text('error'),

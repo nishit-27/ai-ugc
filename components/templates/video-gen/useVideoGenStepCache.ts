@@ -35,6 +35,7 @@ type Params = {
   stepId?: string;
   extractedFrames: ExtractedFrame[];
   firstFrameOptions: FirstFrameOption[];
+  allowedMismatchUrls: Set<string>;
   dismissedOptions: Set<string>;
   imageSource: ImageSource;
   sceneDisplayUrl: string | null;
@@ -51,6 +52,7 @@ export function useVideoGenStepCache({
   stepId,
   extractedFrames,
   firstFrameOptions,
+  allowedMismatchUrls,
   dismissedOptions,
   imageSource,
   sceneDisplayUrl,
@@ -67,6 +69,7 @@ export function useVideoGenStepCache({
     const state: CachedStepState = {
       extractedFrames,
       firstFrameOptions,
+      allowedMismatchUrls: Array.from(allowedMismatchUrls),
       dismissedOptions: Array.from(dismissedOptions),
       imageSource,
       sceneDisplayUrl,
@@ -84,6 +87,7 @@ export function useVideoGenStepCache({
     stepId,
     extractedFrames,
     firstFrameOptions,
+    allowedMismatchUrls,
     dismissedOptions,
     imageSource,
     sceneDisplayUrl,

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fal } from '@fal-ai/client';
+import OpenAI from 'openai';
 import sharp from 'sharp';
 import { config } from '@/lib/config';
 import { uploadImage } from '@/lib/storage.js';
@@ -13,6 +14,7 @@ import { generateImageWithReferences } from '@/lib/gemini-image';
 export const maxDuration = 300;
 
 const FAL_MODEL = 'fal-ai/nano-banana-pro/edit';
+const openai = config.OPENAI_API_KEY ? new OpenAI({ apiKey: config.OPENAI_API_KEY }) : null;
 
 const PROMPT =
   'Replace the person in the second image with the person from the first image. ' +
@@ -34,6 +36,89 @@ async function fetchWithRetry(url: string, retries = 3): Promise<ArrayBuffer> {
     }
   }
   throw new Error('fetch failed after retries');
+}
+
+type FirstFrameFaceReview = {
+  reviewStatus: 'match' | 'mismatch' | 'unknown';
+  reviewLabel: string | null;
+  reviewReason: string | null;
+  reviewConfidence: number | null;
+};
+
+function defaultFaceReview(): FirstFrameFaceReview {
+  return {
+    reviewStatus: 'unknown',
+    reviewLabel: null,
+    reviewReason: null,
+    reviewConfidence: null,
+  };
+}
+
+async function reviewGeneratedFirstFrameFaceMatch(
+  modelImageBuffer: Buffer,
+  generatedImageBuffer: Buffer,
+): Promise<FirstFrameFaceReview> {
+  if (!openai) {
+    return defaultFaceReview();
+  }
+
+  try {
+    const response = await openai.responses.create({
+      model: 'gpt-4o-mini',
+      input: [
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'input_text' as const,
+              text:
+                'Compare the main face identity in image 1 and image 2. ' +
+                'Ignore pose, background, lighting, crop, and expression changes. ' +
+                'Decide whether the faces look like the same person. ' +
+                'Respond with ONLY valid JSON in this exact format: ' +
+                '{"facesMatch": <boolean>, "confidence": <number 0-100>, "reason": "<short reason>"}',
+            },
+            {
+              type: 'input_image' as const,
+              image_url: `data:image/jpeg;base64,${modelImageBuffer.toString('base64')}`,
+              detail: 'low' as const,
+            },
+            {
+              type: 'input_image' as const,
+              image_url: `data:image/jpeg;base64,${generatedImageBuffer.toString('base64')}`,
+              detail: 'low' as const,
+            },
+          ],
+        },
+      ],
+    });
+
+    const text = response.output_text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return defaultFaceReview();
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      facesMatch?: boolean;
+      confidence?: number;
+      reason?: string;
+    };
+
+    if (typeof parsed.facesMatch !== 'boolean') {
+      return defaultFaceReview();
+    }
+
+    return {
+      reviewStatus: parsed.facesMatch ? 'match' : 'mismatch',
+      reviewLabel: parsed.facesMatch ? 'OK Selected' : "Faces Don't Match",
+      reviewReason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : null,
+      reviewConfidence: typeof parsed.confidence === 'number' ? parsed.confidence : null,
+    };
+  } catch (error) {
+    console.error('[FirstFrame] OpenAI face match review failed:', error);
+    return defaultFaceReview();
+  }
 }
 
 export async function POST(req: Request) {
@@ -230,6 +315,7 @@ export async function POST(req: Request) {
     await updateGenerationRequest(genReq.id, { status: 'success', cost: imageCost });
 
     const compressed = await sharp(resultBuf).jpeg({ quality: 85 }).toBuffer();
+    const faceReview = await reviewGeneratedFirstFrameFaceMatch(modelJpeg, compressed);
     const uploaded = await uploadImage(compressed, `first-frame-${Date.now()}.jpg`);
 
     try {
@@ -247,7 +333,14 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({
-      images: [{ url: uploaded.url, gcsUrl: uploaded.url }],
+      images: [{
+        url: uploaded.url,
+        gcsUrl: uploaded.url,
+        reviewStatus: faceReview.reviewStatus,
+        reviewLabel: faceReview.reviewLabel,
+        reviewReason: faceReview.reviewReason,
+        reviewConfidence: faceReview.reviewConfidence,
+      }],
     });
   } catch (error: unknown) {
     console.error('Generate first frame error:', error);

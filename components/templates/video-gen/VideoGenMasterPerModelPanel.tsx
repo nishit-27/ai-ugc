@@ -9,6 +9,7 @@ type Props = {
   config: VGC;
   isExpanded?: boolean;
   masterPerModelResults: Record<string, FirstFrameOption[]>;
+  allowedMismatchUrls: Set<string>;
   masterGeneratingIds: Set<string>;
   masterLibraryModelId: string | null;
   masterLibraryImages: GeneratedImage[];
@@ -25,6 +26,7 @@ type Props = {
   masterGenerateForModel: (modelId: string, primaryGcsUrl: string) => Promise<FirstFrameOption[] | null>;
   handleMasterBrowseLibrary: (modelId: string) => Promise<void>;
   handleMasterSelectForModel: (modelId: string, gcsUrl: string) => void;
+  handleMasterAllowMismatchForModel: (modelId: string, option: FirstFrameOption) => void;
   handleMasterTogglePanel: (modelId: string, panel: 'upload' | 'model-images') => void;
   handleMasterUploadForModel: (modelId: string, file: File) => Promise<void>;
   handleMasterFetchModelImages: (modelId: string) => Promise<void>;
@@ -71,6 +73,7 @@ export default function VideoGenMasterPerModelPanel({
   config,
   isExpanded,
   masterPerModelResults,
+  allowedMismatchUrls,
   masterGeneratingIds,
   masterLibraryModelId,
   masterLibraryImages,
@@ -87,6 +90,7 @@ export default function VideoGenMasterPerModelPanel({
   masterGenerateForModel,
   handleMasterBrowseLibrary,
   handleMasterSelectForModel,
+  handleMasterAllowMismatchForModel,
   handleMasterTogglePanel,
   handleMasterUploadForModel,
   handleMasterFetchModelImages,
@@ -103,6 +107,10 @@ export default function VideoGenMasterPerModelPanel({
       {masterModels.map((model) => {
         const results = masterPerModelResults[model.modelId] || [];
         const selected = config.masterFirstFrames?.[model.modelId];
+        const selectedGeneratedResult = results.find((opt) => opt.gcsUrl === selected);
+        const isSelectedMismatchAllowed = !!selectedGeneratedResult
+          && selectedGeneratedResult.reviewStatus === 'mismatch'
+          && allowedMismatchUrls.has(selectedGeneratedResult.gcsUrl);
         const isGenerating = masterGeneratingIds.has(model.modelId);
         const activePanel = masterActivePanelByModel[model.modelId] ?? null;
         const isLibraryOpen = masterLibraryModelId === model.modelId;
@@ -113,7 +121,6 @@ export default function VideoGenMasterPerModelPanel({
         const modelError = masterErrorsByModelId?.[model.modelId];
         const queueEntry = masterQueueState?.[model.modelId];
         const isQueued = queueEntry?.status === 'queued';
-
         return (
           <div key={model.modelId} className={`rounded-xl border p-2.5 space-y-2 transition-colors ${
             isGenerating ? 'border-master/50 bg-master/5' : isQueued ? 'border-[var(--border)] opacity-70' : 'border-[var(--border)]'
@@ -130,9 +137,18 @@ export default function VideoGenMasterPerModelPanel({
                 {selected ? (
                   <button
                     onClick={() => handleMasterSelectForModel(model.modelId, '')}
-                    className="flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400 font-medium hover:text-red-500 dark:hover:text-red-400 transition-colors group"
+                    className={`flex items-center gap-1 text-[10px] font-medium transition-colors group hover:text-red-500 dark:hover:text-red-400 ${
+                      isSelectedMismatchAllowed
+                        ? 'text-amber-600 dark:text-amber-300'
+                        : selectedGeneratedResult?.reviewStatus === 'mismatch'
+                        ? 'text-red-600 dark:text-red-400'
+                        : selectedGeneratedResult?.reviewStatus === 'match'
+                          ? 'text-green-600 dark:text-green-400'
+                          : 'text-green-600 dark:text-green-400'
+                    }`}
+                    title={selectedGeneratedResult?.reviewReason || undefined}
                   >
-                    First frame selected
+                    {isSelectedMismatchAllowed ? 'Allowed by you' : selectedGeneratedResult?.reviewLabel || 'First frame selected'}
                     <X className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </button>
                 ) : isQueued && queueEntry?.position ? (
@@ -164,7 +180,7 @@ export default function VideoGenMasterPerModelPanel({
                     label={modelError ? 'Retry' : hasResults ? 'Redo' : 'Generate'}
                     isExpanded={isExpanded}
                     onClick={() => masterGenerateForModel(model.modelId, model.primaryGcsUrl)}
-                    disabled={isMasterGeneratingAll}
+                    disabled={isGenerating}
                   />
                   <ActionButton
                     icon={Upload}
@@ -189,10 +205,29 @@ export default function VideoGenMasterPerModelPanel({
 
             {/* Error display */}
             {modelError && (
-              <div className="flex items-start gap-1.5 rounded-lg bg-red-500/10 px-2.5 py-2">
+              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 px-2.5 py-2">
                 <AlertCircle className="h-3 w-3 text-red-500 shrink-0 mt-0.5" />
-                <p className="text-[10px] text-red-500 leading-tight">{modelError}</p>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="text-[10px] text-red-500 leading-tight">{modelError}</p>
+                  <button
+                    onClick={() => masterGenerateForModel(model.modelId, model.primaryGcsUrl)}
+                    disabled={isGenerating}
+                    className="inline-flex items-center gap-1 rounded-md border border-red-500/30 px-2 py-1 text-[10px] font-medium text-red-500 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Retry now
+                  </button>
+                </div>
               </div>
+            )}
+
+            {selectedGeneratedResult?.reviewStatus === 'mismatch' && !isSelectedMismatchAllowed && (
+              <button
+                onClick={() => handleMasterAllowMismatchForModel(model.modelId, selectedGeneratedResult)}
+                className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-600 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
+              >
+                Allow And Select
+              </button>
             )}
 
             {/* Generated results grid */}
@@ -200,15 +235,37 @@ export default function VideoGenMasterPerModelPanel({
               <div className="grid grid-cols-3 gap-2">
                 {results.map((opt, index) => {
                   const isSelected = selected === opt.gcsUrl;
+                  const isAllowedMismatch = opt.reviewStatus === 'mismatch' && allowedMismatchUrls.has(opt.gcsUrl);
+                  const hasMatchBadge = (!!opt.reviewLabel && opt.reviewStatus !== 'unknown') || isAllowedMismatch;
+                  const isMatch = opt.reviewStatus === 'match';
+                  const isMismatch = opt.reviewStatus === 'mismatch';
                   return (
                     <button
                       key={index}
                       onClick={() => handleMasterSelectForModel(model.modelId, opt.gcsUrl)}
                       className={`group relative aspect-[3/4] overflow-hidden rounded-xl border-2 transition-all duration-150 ${
-                        isSelected ? 'border-master shadow-md' : 'border-[var(--border)] hover:border-master-muted'
+                        isSelected
+                          ? isMatch
+                            ? 'border-green-500 shadow-md'
+                            : isAllowedMismatch
+                              ? 'border-amber-500 shadow-md'
+                              : isMismatch
+                              ? 'border-red-500 shadow-md'
+                              : 'border-master shadow-md'
+                          : 'border-[var(--border)] hover:border-master-muted'
                       }`}
+                      title={opt.reviewReason || undefined}
                     >
                       <img src={opt.url} alt={`Option ${String.fromCharCode(65 + index)}`} className="h-full w-full object-cover" />
+                        {hasMatchBadge && (
+                          <div
+                            className={`absolute left-1.5 top-1.5 z-10 rounded-full px-1.5 py-0.5 text-[8px] font-semibold text-white shadow-sm ${
+                            isMatch ? 'bg-green-600/95' : isAllowedMismatch ? 'bg-amber-500/95' : 'bg-red-600/95'
+                          }`}
+                          >
+                          {isAllowedMismatch ? 'Allowed' : opt.reviewLabel}
+                          </div>
+                        )}
                       <div
                         onClick={(e) => {
                           e.stopPropagation();

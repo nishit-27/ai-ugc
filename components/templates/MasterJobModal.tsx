@@ -71,7 +71,8 @@ export default function MasterJobModal({
   const videoUrl = job.signedUrl || job.outputUrl;
   const isCompleted = job.status === 'completed';
   const isFailed = job.status === 'failed';
-  const isProcessing = job.status === 'processing' || job.status === 'queued';
+  const isQueued = job.status === 'queued';
+  const isProcessing = job.status === 'processing' || isQueued;
   const isBusy = posting || regenerating;
 
   // Carousel detection
@@ -257,7 +258,8 @@ export default function MasterJobModal({
                   const stepResult = stepResultMap.get(step.id);
                   const hasResult = isDone && stepResult;
                   const isViewing = viewingStepId === step.id;
-                  const canRegen = (isCompleted || isFailed) && !isBusy && onRegenStep;
+                  const hasPriorResults = i === 0 || enabledSteps.slice(0, i).every((prevStep) => completedStepIds.has(prevStep.id));
+                  const canRegen = (isCompleted || isFailed || isQueued) && !isBusy && job.status !== 'processing' && !!onRegenStep && hasPriorResults;
 
                   return (
                     <div
@@ -293,7 +295,7 @@ export default function MasterJobModal({
                         </span>
                       </div>
                       {/* Step action buttons — always visible */}
-                      {(hasResult || (canRegen && (isDone || isStepFailed))) && (
+                      {(hasResult || canRegen) && (
                         <div className="flex items-center gap-1">
                           {hasResult && (
                             <button
@@ -321,7 +323,7 @@ export default function MasterJobModal({
                               <Download className="h-3 w-3" />
                             </a>
                           )}
-                          {canRegen && (isDone || isStepFailed) && (
+                          {canRegen && (
                             <button
                               onClick={() => onRegenStep(i)}
                               disabled={isBusy}

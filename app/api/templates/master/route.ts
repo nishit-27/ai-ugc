@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
   try {
     await initDatabase();
     const body = await request.json();
-    const { name, pipeline, videoSource, tiktokUrl, videoUrl, libraryVideos, modelIds, caption, scheduledFor, timezone, publishMode } = body;
+    const { name, pipeline, videoSource, tiktokUrl, videoUrl, libraryVideos, sourceTrimStart, sourceTrimEnd, modelIds, caption, scheduledFor, timezone, publishMode } = body;
 
     const session = await auth();
     const createdBy = session?.user?.name?.split(' ')[0] || null;
@@ -256,6 +256,8 @@ export async function POST(request: NextRequest) {
         videoSource: jobVideoSource,
         tiktokUrl: jobTiktokUrl,
         videoUrl: jobVideoUrl,
+        sourceTrimStart: typeof sourceTrimStart === 'number' ? sourceTrimStart : undefined,
+        sourceTrimEnd: typeof sourceTrimEnd === 'number' ? sourceTrimEnd : undefined,
         pipelineBatchId: batch.id,
         modelId: model.id,
         createdBy,

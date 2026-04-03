@@ -14,6 +14,7 @@ import TextOverlayPreview from './TextOverlayPreview';
 import ComposeStepConfig from './ComposeStepConfig';
 import CarouselStepConfig from './CarouselStepConfig';
 import LibraryVideoSelector from './LibraryVideoSelector';
+import LibraryVideoTrimPanel from './LibraryVideoTrimPanel';
 import VariableTagging from './VariableTagging';
 
 const nodeMeta: Record<MiniAppType, { label: string; icon: typeof Video; iconBg: string; iconColor: string }> = {
@@ -44,6 +45,9 @@ type SourceConfig = {
   onLibraryVideoSelect?: (modelId: string, gcsUrl: string) => void;
   onLibraryVideoRemove?: (modelId: string) => void;
   selectedModelIds?: string[];
+  sourceTrimStart?: number;
+  sourceTrimEnd?: number;
+  onSourceTrimChange?: (start?: number, end?: number) => void;
   // Variable tagging
   variableValues?: Record<string, string>;
   onVariableValuesChange?: (values: Record<string, string>) => void;
@@ -129,13 +133,23 @@ export default function NodeConfigPanel({
           {sourceConfig.videoSource === 'generate' ? (
             <GenerateVideoInline onGenerated={sourceConfig.onGeneratedVideo} />
           ) : sourceConfig.videoSource === 'library' && masterMode ? (
-            <LibraryVideoSelector
-              masterModels={masterModels || []}
-              selectedModelIds={sourceConfig.selectedModelIds || []}
-              libraryVideos={sourceConfig.libraryVideos || {}}
-              onSelect={sourceConfig.onLibraryVideoSelect || (() => {})}
-              onRemove={sourceConfig.onLibraryVideoRemove || (() => {})}
-            />
+            <div className="space-y-3">
+              <LibraryVideoSelector
+                masterModels={masterModels || []}
+                selectedModelIds={sourceConfig.selectedModelIds || []}
+                libraryVideos={sourceConfig.libraryVideos || {}}
+                onSelect={sourceConfig.onLibraryVideoSelect || (() => {})}
+                onRemove={sourceConfig.onLibraryVideoRemove || (() => {})}
+              />
+              <LibraryVideoTrimPanel
+                masterModels={masterModels || []}
+                selectedModelIds={sourceConfig.selectedModelIds || []}
+                libraryVideos={sourceConfig.libraryVideos || {}}
+                trimStart={sourceConfig.sourceTrimStart}
+                trimEnd={sourceConfig.sourceTrimEnd}
+                onTrimChange={sourceConfig.onSourceTrimChange}
+              />
+            </div>
           ) : sourceConfig.videoSource === 'tiktok' ? (
             <div className="space-y-3">
               <div>
@@ -286,8 +300,8 @@ export default function NodeConfigPanel({
               </div>
             </div>
           )}
-          {step.type === 'video-generation' && <VideoGenConfig key={step.id} config={step.config as VGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={resolvedSourceVideoUrl} stepId={step.id} masterMode={masterMode} masterModels={masterModels} isExpanded={isExpanded} />}
-          {step.type === 'batch-video-generation' && <BatchVideoGenConfig key={step.id} config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceDuration} sourceVideoUrl={resolvedSourceVideoUrl} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
+          {step.type === 'video-generation' && <VideoGenConfig key={step.id} config={step.config as VGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceConfig.videoSource === 'library' ? undefined : sourceDuration} sourceVideoUrl={resolvedSourceVideoUrl} stepId={step.id} masterMode={masterMode} masterModels={masterModels} isExpanded={isExpanded} />}
+          {step.type === 'batch-video-generation' && <BatchVideoGenConfig key={step.id} config={step.config as BVGC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} sourceDuration={sourceConfig.videoSource === 'library' ? undefined : sourceDuration} sourceVideoUrl={resolvedSourceVideoUrl} stepId={step.id} masterMode={masterMode} isExpanded={isExpanded} />}
           {step.type === 'bg-music' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><BgMusicConfig config={step.config as BMC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
           {step.type === 'attach-video' && <div className={isExpanded ? 'mx-auto max-w-2xl' : ''}><AttachVideoConfig config={step.config as AVC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} /></div>}
           {step.type === 'compose' && <ComposeStepConfig config={step.config as CC} onChange={(c) => onUpdateStep(step.id, { ...step, config: c })} steps={steps} currentStepId={step.id} isExpanded={isExpanded} masterModels={masterModels} libraryVideos={sourceConfig.videoSource === 'library' ? sourceConfig.libraryVideos : undefined} />}

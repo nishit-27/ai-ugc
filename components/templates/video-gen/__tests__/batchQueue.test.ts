@@ -12,6 +12,7 @@ describe('runFirstFrameBatchQueue', () => {
     await runFirstFrameBatchQueue({
       items: ['a', 'b', 'c', 'd', 'e'],
       getId: (item) => item,
+      concurrency: 2,
       delayMs: 0,
       onProgress: (done, total) => progress.push([done, total]),
       onQueueStateChange: (state) => {
