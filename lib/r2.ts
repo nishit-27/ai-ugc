@@ -2,6 +2,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, Head
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import { readFile, writeFile } from 'fs/promises';
+import { isRetryableError, retry } from './retry';
 
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
@@ -101,14 +102,25 @@ export async function compressImage(buffer: Buffer, originalExt: string): Promis
 // ---------------------------------------------------------------------------
 
 async function putObject(key: string, body: Buffer | Uint8Array, contentType: string, cacheControl = 'public, max-age=31536000'): Promise<string> {
-  await getClient().send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: key,
-      Body: body,
-      ContentType: contentType,
-      CacheControl: cacheControl,
-    }),
+  await retry(
+    () => getClient().send(
+      new PutObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+        CacheControl: cacheControl,
+      }),
+    ),
+    {
+      retries: 3,
+      delaysMs: [1000, 3000, 7000],
+      shouldRetry: isRetryableError,
+      onRetry: (error, attempt, delayMs) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[R2] putObject ${key} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
+      },
+    },
   );
   return getR2PublicUrl(key);
 }
@@ -204,8 +216,15 @@ export async function createPresignedUploadUrl(objectPath: string, contentType =
 /** Check if object exists and return metadata */
 export async function getVideoObjectMetadata(objectPath: string): Promise<{ objectPath: string; gcsUrl: string; size: number; contentType: string } | null> {
   try {
-    const resp = await getClient().send(
-      new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectPath }),
+    const resp = await retry(
+      () => getClient().send(
+        new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectPath }),
+      ),
+      {
+        retries: 3,
+        delaysMs: [1000, 3000, 7000],
+        shouldRetry: isRetryableError,
+      },
     );
     return {
       objectPath,
@@ -225,15 +244,25 @@ export async function getVideoObjectMetadata(objectPath: string): Promise<{ obje
 /** Download object to buffer */
 export async function downloadToBuffer(url: string): Promise<Buffer> {
   const key = r2KeyFromUrl(url);
-  const resp = await getClient().send(
-    new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }),
-  );
-  const chunks: Uint8Array[] = [];
-  // @ts-expect-error Body is a readable stream
-  for await (const chunk of resp.Body) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
+  return retry(async () => {
+    const resp = await getClient().send(
+      new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }),
+    );
+    const chunks: Uint8Array[] = [];
+    // @ts-expect-error Body is a readable stream
+    for await (const chunk of resp.Body) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }, {
+    retries: 3,
+    delaysMs: [1000, 3000, 7000],
+    shouldRetry: isRetryableError,
+    onRetry: (error, attempt, delayMs) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[R2] download ${key} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
+    },
+  });
 }
 
 /** Download object to local path */

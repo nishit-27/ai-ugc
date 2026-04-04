@@ -6,6 +6,7 @@ import os from 'os'
 import path from 'path'
 import ffmpegPath from 'ffmpeg-static'
 import ffprobePath from '@ffprobe-installer/ffprobe'
+import { isRetryableError, retry } from './retry'
 
 const FFMPEG = ffmpegPath || 'ffmpeg'
 const FFPROBE = (typeof ffprobePath === 'string' ? ffprobePath : (ffprobePath as { path: string }).path) || 'ffprobe'
@@ -168,7 +169,7 @@ export function trimVideoRange(
 
 /** Download a file from a URL to a local path */
 export function downloadFile(url: string, destPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return retry(() => new Promise<void>((resolve, reject) => {
     fs.mkdirSync(path.dirname(destPath), { recursive: true })
     const client = url.startsWith('https') ? https : http
     const file = fs.createWriteStream(destPath)
@@ -190,5 +191,15 @@ export function downloadFile(url: string, destPath: string): Promise<void> {
       try { fs.unlinkSync(destPath) } catch {}
       reject(err)
     })
+  }), {
+    retries: 3,
+    delaysMs: [1000, 3000, 7000],
+    shouldRetry: (error) =>
+      isRetryableError(error) ||
+      (error instanceof Error && /status (408|429|5\d\d)\b/.test(error.message)),
+    onRetry: (error, attempt, delayMs) => {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`[Download] ${url} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`)
+    },
   })
 }

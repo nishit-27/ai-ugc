@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import type { PipelineBatch, TemplateJob, MasterConfig } from '@/types';
 import { useToast } from '@/hooks/useToast';
@@ -31,13 +31,11 @@ async function signUrls(urls: string[]): Promise<Record<string, string>> {
 
 export default function MasterBatchDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
   const { showToast } = useToast();
 
   const [batch, setBatch] = useState<(PipelineBatch & { jobs?: TemplateJob[] }) | null>(_cache[id] || null);
   const [isLoading, setIsLoading] = useState(!_cache[id]);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isFailingProcessing, setIsFailingProcessing] = useState(false);
+  const [, setIsFailingProcessing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
   const [modalJob, setModalJob] = useState<TemplateJob | null>(null);
@@ -498,19 +496,6 @@ export default function MasterBatchDetailPage() {
     }
   };
 
-  const handleDeleteBatch = async () => {
-    if (!batch) return;
-    if (!confirm('Delete this master batch?')) return;
-    setIsDeleting(true);
-    try {
-      await fetch(`/api/pipeline-batches/${batch.id}`, { method: 'DELETE' });
-      showToast('Batch deleted', 'success');
-      router.push('/jobs?tab=master');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
   const handleApproveAll = async () => {
     if (selectableJobs.length === 0 || posting) return;
     if (!confirm(`Approve all ${selectableJobs.length} videos?`)) return;
@@ -582,12 +567,10 @@ export default function MasterBatchDetailPage() {
         queuedCount={queuedCount}
         processingCount={processingCount}
         isRefreshing={isRefreshing}
-        isDeleting={isDeleting || isFailingProcessing}
         onRefresh={() => {
           setIsRefreshing(true);
           loadBatch();
         }}
-        onDelete={handleDeleteBatch}
         onEditConfig={() => setShowEditConfig(true)}
         onFailQueued={handleFailQueued}
         onFailProcessing={handleFailProcessing}

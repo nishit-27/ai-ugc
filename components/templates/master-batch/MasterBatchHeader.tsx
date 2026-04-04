@@ -2,9 +2,8 @@
 
 import Link from 'next/link';
 import type { MasterConfig, PipelineBatch } from '@/types';
-import { ArrowLeft, CheckCircle2, Clock, Crown, Pencil, RefreshCw, Trash2, XCircle, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Crown, Pencil, RefreshCw, XCircle, AlertTriangle } from 'lucide-react';
 import ProgressBar from '@/components/ui/ProgressBar';
-import Spinner from '@/components/ui/Spinner';
 
 type Props = {
   batch: PipelineBatch;
@@ -15,9 +14,7 @@ type Props = {
   queuedCount: number;
   processingCount: number;
   isRefreshing: boolean;
-  isDeleting: boolean;
   onRefresh: () => void;
-  onDelete: () => void;
   onEditConfig?: () => void;
   onFailQueued?: () => void;
   onFailProcessing?: () => void;
@@ -32,9 +29,7 @@ export default function MasterBatchHeader({
   queuedCount,
   processingCount,
   isRefreshing,
-  isDeleting,
   onRefresh,
-  onDelete,
   onEditConfig,
   onFailQueued,
   onFailProcessing,
@@ -70,13 +65,6 @@ export default function MasterBatchHeader({
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            onClick={onDelete}
-            disabled={isDeleting}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-300 text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/30"
-          >
-            {isDeleting ? <Spinner className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
           </button>
         </div>
       </div>

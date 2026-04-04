@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ['@google-cloud/storage', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner', 'sharp', 'ffmpeg-static', '@ffprobe-installer/ffprobe'],
+  turbopack: {
+    root: process.cwd(),
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '*.r2.dev' },

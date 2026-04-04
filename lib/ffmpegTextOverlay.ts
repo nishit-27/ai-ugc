@@ -1,10 +1,10 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import sharp from 'sharp';
 import ffmpegPath from 'ffmpeg-static';
 import ffprobePath from '@ffprobe-installer/ffprobe';
+import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 const FFPROBE_PATH = typeof ffprobePath === 'string' ? ffprobePath : (ffprobePath as { path: string }).path;
 import type { TextOverlayConfig } from '@/types';
 const FFMPEG = ffmpegPath || 'ffmpeg';
@@ -90,11 +90,6 @@ function getBundledFont(fontFamily?: string, italic = false): string {
     `Font file "${filename}" not found in any of: ${FONT_DIRS.join(', ')}. ` +
     `Ensure lib/fonts/ is included in outputFileTracingIncludes in next.config.ts.`
   );
-}
-function getTempDir(): string {
-  const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
 }
 /**
  * Word-wrap text to fit within a max character width per line.
@@ -279,6 +274,7 @@ export async function renderTextOverlayPng(
   videoWidth: number,
   videoHeight: number,
   config: TextOverlayConfig,
+  tempDir: string,
 ): Promise<string> {
   const {
     text, position, textAlign = 'center', fontSize = 48, fontColor = '#FFFFFF', bgColor,
@@ -460,8 +456,8 @@ export async function renderTextOverlayPng(
   if (composites.length === 0) {
     throw new Error('Text overlay rendered fully off-canvas; adjust custom position, alignment, or text width.');
   }
-  const tmpDir = getTempDir();
-  const pngPath = path.join(tmpDir, `overlay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.png`);
+  fs.mkdirSync(tempDir, { recursive: true });
+  const pngPath = path.join(tempDir, `overlay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.png`);
   await sharp({
     create: { width: videoWidth, height: videoHeight, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
   })
@@ -477,11 +473,13 @@ export async function renderTextOverlayPng(
 export async function addTextOverlay(
   inputPath: string,
   outputPath: string,
-  config: TextOverlayConfig
+  config: TextOverlayConfig,
+  tempDir?: string,
 ): Promise<void> {
   const { startTime, duration, entireVideo } = config;
   const { width, height } = probeVideoSize(inputPath);
-  const overlayPng = await renderTextOverlayPng(width, height, config);
+  const overlayWorkspace = tempDir || createTempWorkspace('text-overlay');
+  const overlayPng = await renderTextOverlayPng(width, height, config, overlayWorkspace);
   try {
     let enableExpr = '';
     if (!entireVideo && (startTime !== undefined || duration !== undefined)) {
@@ -504,5 +502,8 @@ export async function addTextOverlay(
     ], { maxBuffer: 50 * 1024 * 1024 });
   } finally {
     try { fs.unlinkSync(overlayPng); } catch {}
+    if (!tempDir) {
+      cleanupTempWorkspace(overlayWorkspace);
+    }
   }
 }

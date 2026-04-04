@@ -15,7 +15,7 @@ import {
 import { config } from '@/lib/config';
 import { uploadVideoFromPath } from '@/lib/storage';
 import { downloadFile } from '@/lib/serverUtils';
-import { processStep, getStepLabel } from '@/lib/processTemplateJob';
+import { getStepLabel, processTemplateJob } from '@/lib/processTemplateJob';
 import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
 import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import type { MiniAppStep } from '@/types';
@@ -98,8 +98,8 @@ async function handleTemplateJob(
   }
 
   const tempDir = createTempWorkspace(`webhook-template-${job.id}`);
-  const tempFiles: string[] = [];
   const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
+  const currentVideoPath = path.join(tempDir, `webhook-tpl-${job.id}.mp4`);
 
   try {
     if (canFinalizeTemplateJobFromPersistedSteps(job.currentStep, enabledSteps.length, job.stepResults)) {
@@ -124,9 +124,7 @@ async function handleTemplateJob(
     }
 
     // Download the FAL result
-    let currentVideoPath = path.join(tempDir, `webhook-tpl-${job.id}.mp4`);
     await downloadFile(videoUrl, currentVideoPath);
-    tempFiles.push(currentVideoPath);
 
     // Upload to GCS and record the step result
     const { url: stepUrl } = await uploadVideoFromPath(currentVideoPath, `template-${job.id}-step-${job.currentStep}.mp4`);
@@ -149,40 +147,11 @@ async function handleTemplateJob(
       stepResults,
     });
 
-    // Continue processing remaining pipeline steps
-    const remainingSteps = enabledSteps.slice(job.currentStep + 1);
-
-    if (remainingSteps.length > 0) {
-      console.log(`[Webhook] Continuing pipeline for ${job.id}: ${remainingSteps.length} steps remaining`);
-      const stepOutputs = new Map<string, string>();
-
-      for (let i = 0; i < remainingSteps.length; i++) {
-        const step = remainingSteps[i];
-        const globalIdx = job.currentStep + 1 + i;
-        const label = getStepLabel(step);
-
-        await updateTemplateJob(job.id, {
-          currentStep: globalIdx,
-          step: `Step ${globalIdx + 1}/${enabledSteps.length}: ${label}`,
-        });
-
-        const result = await processStep(step, currentVideoPath, job.id, globalIdx, tempDir, stepOutputs);
-        const newVideoPath = Array.isArray(result) ? result[0] : result;
-        stepOutputs.set(step.id, newVideoPath);
-        if (Array.isArray(result)) tempFiles.push(...result); else tempFiles.push(newVideoPath);
-
-        const { url: newStepUrl } = await uploadVideoFromPath(newVideoPath, `template-${job.id}-step-${globalIdx}.mp4`);
-        stepResults.push({ stepId: step.id, type: step.type, label, outputUrl: newStepUrl });
-
-        // Persist after each step so progress survives if a later FAL step times out
-        await updateTemplateJob(job.id, {
-          currentStep: globalIdx + 1,
-          step: `Step ${globalIdx + 1}/${enabledSteps.length}: ${label} — done`,
-          stepResults,
-        });
-
-        currentVideoPath = newVideoPath;
-      }
+    const nextStepIndex = job.currentStep + 1;
+    if (nextStepIndex < enabledSteps.length) {
+      console.log(`[Webhook] Continuing pipeline for ${job.id} from step ${nextStepIndex + 1}/${enabledSteps.length}`);
+      await processTemplateJob(job.id, nextStepIndex);
+      return;
     }
 
     const finalUrl = stepResults[stepResults.length - 1].outputUrl;
@@ -213,9 +182,7 @@ async function handleTemplateJob(
       await updatePipelineBatchProgress(failedJob.pipelineBatchId).catch(() => {});
     }
   } finally {
-    for (const f of tempFiles) {
-      try { fs.unlinkSync(f); } catch {}
-    }
+    try { fs.unlinkSync(currentVideoPath); } catch {}
     cleanupTempWorkspace(tempDir);
   }
 }

@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import type { PipelineBatch, TemplateJob } from '@/types';
 import { useToast } from '@/hooks/useToast';
-import { RefreshCw, Trash2, Loader2, CheckCircle2, XCircle, Clock, ArrowLeft, Layers, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Loader2, CheckCircle2, XCircle, Clock, ArrowLeft, Layers, AlertTriangle } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import ProgressBar from '@/components/ui/ProgressBar';
 import TemplateJobList from '@/components/templates/TemplateJobList';
@@ -14,12 +14,10 @@ const _cache: Record<string, PipelineBatch & { jobs?: TemplateJob[] }> = {};
 
 export default function PipelineBatchDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
   const { showToast } = useToast();
 
   const [batch, setBatch] = useState<(PipelineBatch & { jobs?: TemplateJob[] }) | null>(_cache[id] || null);
   const [isLoading, setIsLoading] = useState(!_cache[id]);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [isFailingProcessing, setIsFailingProcessing] = useState(false);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -142,23 +140,6 @@ export default function PipelineBatchDetailPage() {
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)] disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            onClick={async () => {
-              if (!confirm('Delete this batch? Child job records will be preserved.')) return;
-              setIsDeleting(true);
-              try {
-                await fetch(`/api/pipeline-batches/${batch.id}`, { method: 'DELETE' });
-                showToast('Batch deleted', 'success');
-                router.push('/jobs?tab=batch');
-              } finally {
-                setIsDeleting(false);
-              }
-            }}
-            disabled={isDeleting}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-300 text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/30"
-          >
-            {isDeleting ? <Spinner className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
           </button>
         </div>
       </div>

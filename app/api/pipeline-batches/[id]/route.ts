@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   ensureDatabaseReady,
   getPipelineBatch,
-  deletePipelineBatch,
   getTemplateJobsByBatchId,
   initDatabase,
   updatePipelineBatch,
@@ -74,17 +73,6 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    await initDatabase();
-    const { id } = await params;
-    await deletePipelineBatch(id);
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    console.error('Delete pipeline batch error:', err);
-    return NextResponse.json({ error: 'Failed to delete pipeline batch' }, { status: 500 });
-  }
+export async function DELETE() {
+  return NextResponse.json({ error: 'Batch deletion is disabled' }, { status: 405 });
 }

@@ -14,6 +14,7 @@ import { uploadBuffer } from '@/lib/upload-via-presigned.js';
 import { addTextOverlayToImage } from '@/lib/imageTextOverlay';
 import { RateLimiter } from '@/lib/rateLimiter';
 import { isRetryableError, retry } from '@/lib/retry';
+import { buildStepOutputReferenceCounts, getStepOutputReferencesForStep, SOURCE_VIDEO_STEP_ID } from '@/lib/templateStepReferences';
 import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
 import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, ComposeConfig, CarouselConfig } from '@/types';
@@ -58,6 +59,18 @@ async function withTemplateJobRetry<T>(label: string, fn: () => Promise<T>): Pro
   });
 }
 
+async function withExternalRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  return retry(fn, {
+    retries: 3,
+    delaysMs: [1000, 3000, 7000],
+    shouldRetry: isRetryableError,
+    onRetry: (error, attempt, delayMs) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[TemplateExternal] ${label} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
+    },
+  });
+}
+
 function firstStepNeedsInputVideo(step: MiniAppStep | undefined): boolean {
   if (!step) return false;
   if (step.type === 'video-generation') {
@@ -76,9 +89,52 @@ function pipelineReferencesSourceVideo(steps: MiniAppStep[]): boolean {
     }
     const cfg = step.config as ComposeConfig;
     return Array.isArray(cfg.layers) && cfg.layers.some((layer) =>
-      layer.source.type === 'step-output' && layer.source.stepId === '__video-source'
+      layer.source.type === 'step-output' && layer.source.stepId === SOURCE_VIDEO_STEP_ID
     );
   });
+}
+
+function releaseStepOutputIfUnused(
+  stepId: string | null,
+  stepOutputs: Map<string, string>,
+  remainingReferenceCounts: Map<string, number>,
+  protectedPaths: Set<string>,
+): void {
+  if (!stepId || (remainingReferenceCounts.get(stepId) ?? 0) > 0) {
+    return;
+  }
+
+  const localPath = stepOutputs.get(stepId);
+  if (!localPath || protectedPaths.has(localPath)) {
+    return;
+  }
+
+  stepOutputs.delete(stepId);
+  try {
+    fs.unlinkSync(localPath);
+  } catch {}
+}
+
+function consumeStepOutputReferences(
+  step: MiniAppStep,
+  stepOutputs: Map<string, string>,
+  remainingReferenceCounts: Map<string, number>,
+  protectedPaths: Set<string>,
+): void {
+  for (const stepId of getStepOutputReferencesForStep(step)) {
+    const remainingCount = remainingReferenceCounts.get(stepId);
+    if (remainingCount === undefined) {
+      continue;
+    }
+
+    if (remainingCount <= 1) {
+      remainingReferenceCounts.delete(stepId);
+    } else {
+      remainingReferenceCounts.set(stepId, remainingCount - 1);
+    }
+
+    releaseStepOutputIfUnused(stepId, stepOutputs, remainingReferenceCounts, protectedPaths);
+  }
 }
 
 async function persistTemplateFalRequest(
@@ -265,15 +321,16 @@ export async function processStep(
           falEndpoint,
         );
         console.log(`[FAL] Template ${jobId} step ${stepIndex}: submitted Veo 3.1, request_id=${request_id}`);
-        await fal.queue.subscribeToStatus(falEndpoint, {
+        await withExternalRetry(`subscribe Veo status for ${jobId}`, () => fal.queue.subscribeToStatus(falEndpoint, {
           requestId: request_id,
           logs: true,
-        });
-        const result = await fal.queue.result(falEndpoint, { requestId: request_id });
+        }));
+        const result = await withExternalRetry(`fetch Veo result for ${jobId}`, () => fal.queue.result(falEndpoint, { requestId: request_id }));
         const videoData = (result.data as { video?: { url?: string } })?.video ?? (result as { video?: { url?: string } }).video;
         if (!videoData?.url) throw new Error('No video URL from Veo 3.1 image-to-video');
+        const videoUrl = videoData.url;
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
-        await downloadFile(videoData.url, outputPath);
+        await withExternalRetry(`download Veo output for ${jobId}`, () => downloadFile(videoUrl, outputPath));
         if (cfg.generateAudio === false) {
           const silentPath = path.join(tempDir, `tpl-step-${stepIndex}-silent-${jobId}-${Date.now()}.mp4`);
           stripAudio(outputPath, silentPath);
@@ -320,15 +377,16 @@ export async function processStep(
           falEndpoint,
         );
         console.log(`[FAL] Template ${jobId} step ${stepIndex}: submitted Motion Control, request_id=${request_id}`);
-        await fal.queue.subscribeToStatus(falEndpoint, {
+        await withExternalRetry(`subscribe motion-control status for ${jobId}`, () => fal.queue.subscribeToStatus(falEndpoint, {
           requestId: request_id,
           logs: true,
-        });
-        const result = await fal.queue.result(falEndpoint, { requestId: request_id });
+        }));
+        const result = await withExternalRetry(`fetch motion-control result for ${jobId}`, () => fal.queue.result(falEndpoint, { requestId: request_id }));
         const videoData = (result.data as { video?: { url?: string } })?.video ?? (result as { video?: { url?: string } }).video;
         if (!videoData?.url) throw new Error('No video URL from motion-control');
+        const videoUrl = videoData.url;
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
-        await downloadFile(videoData.url, outputPath);
+        await withExternalRetry(`download motion-control output for ${jobId}`, () => downloadFile(videoUrl, outputPath));
 
         // Track video generation cost
         try {
@@ -376,7 +434,7 @@ export async function processStep(
           return outputPaths;
         }
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
-        await addTextOverlay(currentVideoPath, outputPath, cfg);
+        await addTextOverlay(currentVideoPath, outputPath, cfg, tempDir);
         return outputPath;
       } finally {
         localProcessingSemaphore.release();
@@ -535,7 +593,16 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
     if (!job) return;
 
     try {
-      await updateTemplateJob(jobId, { status: 'processing', step: resuming ? `Resuming from step ${fromStepIndex + 1}...` : 'Starting pipeline...' });
+      await updateTemplateJob(jobId, {
+        status: 'processing',
+        step: resuming ? `Resuming from step ${fromStepIndex + 1}...` : 'Starting pipeline...',
+        error: null,
+        outputUrl: null,
+        completedAt: null,
+        falRequestId: null,
+        falEndpoint: null,
+        ...(resuming ? {} : { currentStep: 0, stepResults: null }),
+      });
     } catch (statusErr) {
       console.error(`[Template] Non-fatal: failed to set processing status for ${jobId}:`, statusErr instanceof Error ? statusErr.message : statusErr);
     }
@@ -566,7 +633,9 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
 
     // ── Resume support: restore prior results and download the input video ──
     let currentVideoPath: string = '';
+    let currentVideoStepId: string | null = null;
     const stepOutputs = new Map<string, string>();
+    const remainingStepReferenceCounts = buildStepOutputReferenceCounts(enabledSteps.slice(fromStepIndex ?? 0));
     const stepResults: { stepId: string; type: string; label: string; outputUrl: string; outputUrls?: string[]; isCarousel?: boolean }[] = [];
     let carouselImagePaths: string[] | null = null;
 
@@ -597,6 +666,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
           currentVideoPath = path.join(tempDir, `tpl-resume-${jobId}-${Date.now()}.mp4`);
           await downloadToLocal(prevResult.outputUrl, currentVideoPath);
           tempFiles.push(currentVideoPath);
+          currentVideoStepId = prevResult.stepId;
         }
 
         // Pre-populate stepOutputs so attach-video/compose can reference prior steps
@@ -618,7 +688,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       }
       const { sourceVideoPath } = await prepareSourceVideo(job, jobId, enabledSteps, tempDir, tempFiles);
       if (sourceVideoPath) {
-        stepOutputs.set('__video-source', sourceVideoPath);
+        stepOutputs.set(SOURCE_VIDEO_STEP_ID, sourceVideoPath);
       }
       console.log(`[Template] Resuming job ${jobId} from step ${fromStepIndex}, restored ${stepResults.length} prior results`);
     } else {
@@ -647,7 +717,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       const firstStep = enabledSteps[0];
       const { initialVideoPath, sourceVideoPath } = await prepareSourceVideo(job, jobId, enabledSteps, tempDir, tempFiles);
       if (sourceVideoPath) {
-        stepOutputs.set('__video-source', sourceVideoPath);
+        stepOutputs.set(SOURCE_VIDEO_STEP_ID, sourceVideoPath);
       }
 
       if (firstStep?.type === 'video-generation' && (firstStep.config as VideoGenConfig).mode === 'subtle-animation') {
@@ -658,6 +728,9 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
         currentVideoPath = '';
       } else if (initialVideoPath) {
         currentVideoPath = initialVideoPath;
+        if (sourceVideoPath && initialVideoPath === sourceVideoPath) {
+          currentVideoStepId = SOURCE_VIDEO_STEP_ID;
+        }
       } else {
         throw new Error('No video source provided');
       }
@@ -709,6 +782,8 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
         console.error(`[Template] Non-fatal: failed to update progress for step ${i}:`, progressErr instanceof Error ? progressErr.message : progressErr);
       }
       const inlineMusic = inlineMusicMap.get(step.id);
+      const previousVideoPath = currentVideoPath;
+      const previousVideoStepId = currentVideoStepId;
       const result = await processStep(step, currentVideoPath, jobId, i, tempDir, stepOutputs, inlineMusic, carouselImagePaths);
 
       if (Array.isArray(result)) {
@@ -733,6 +808,10 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
           outputUrls: uploadedUrls,
           isCarousel: true,
         });
+
+        const protectedPaths = new Set<string>(carouselImagePaths || []);
+        consumeStepOutputReferences(step, stepOutputs, remainingStepReferenceCounts, protectedPaths);
+        releaseStepOutputIfUnused(previousVideoStepId, stepOutputs, remainingStepReferenceCounts, protectedPaths);
       } else {
         let newVideoPath = result;
         if (inlineMusic && step.type !== 'attach-video') {
@@ -747,11 +826,15 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
           `template-${jobId}-step-${i}.mp4`
         );
         stepResults.push({ stepId: step.id, type: step.type, label: stepLabel, outputUrl: stepUrl });
-        if (currentVideoPath && i > 0) {
-          try { fs.unlinkSync(currentVideoPath); } catch {}
-        }
         currentVideoPath = newVideoPath;
+        currentVideoStepId = step.id;
         tempFiles.push(newVideoPath);
+
+        const protectedPaths = new Set<string>([currentVideoPath]);
+        consumeStepOutputReferences(step, stepOutputs, remainingStepReferenceCounts, protectedPaths);
+        if (previousVideoPath && previousVideoPath !== currentVideoPath) {
+          releaseStepOutputIfUnused(previousVideoStepId, stepOutputs, remainingStepReferenceCounts, protectedPaths);
+        }
       }
       try {
         await updateTemplateJob(jobId, {

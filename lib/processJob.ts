@@ -14,7 +14,20 @@ import { getFalWebhookUrl } from './config';
 import { uploadBuffer } from './upload-via-presigned.js';
 import { getVideoDownloadUrl } from './videoDownload';
 import { cleanupTempWorkspace, createTempWorkspace } from './tempWorkspace';
+import { isRetryableError, retry } from './retry';
 export { getVideoDownloadUrl } from './videoDownload';
+
+async function withExternalRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  return retry(fn, {
+    retries: 3,
+    delaysMs: [1000, 3000, 7000],
+    shouldRetry: isRetryableError,
+    onRetry: (error, attempt, delayMs) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[ProcessJob] ${label} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
+    },
+  });
+}
 
 /**
  * Prepare uploaded video for FAL.
@@ -139,6 +152,16 @@ export async function processJob(
   const tempDir = createTempWorkspace(`job-${jobId}`);
 
   try {
+    await updateJob(jobId, {
+      status: 'processing',
+      step: 'Starting...',
+      error: null,
+      outputUrl: null,
+      completedAt: null,
+      falRequestId: null,
+      falEndpoint: null,
+    });
+
     // Resolve social URL once — download, store in GCS, update DB
     // All subsequent processing (and recovery/webhook) uses the stable GCS URL
     if (job.tiktokUrl && job.videoSource !== 'upload') {
@@ -203,7 +226,7 @@ export async function processJob(
     console.log(`[FAL] Job ${jobId}: submitted to FAL, request_id=${request_id}`);
 
     // Wait for FAL to finish processing (polls status until COMPLETED)
-    await fal.queue.subscribeToStatus(falEndpoint, {
+    await withExternalRetry(`subscribe status for ${jobId}`, () => fal.queue.subscribeToStatus(falEndpoint, {
       requestId: request_id,
       logs: true,
       onQueueUpdate: async (update) => {
@@ -214,22 +237,23 @@ export async function processJob(
           await updateJob(jobId, { step: 'AI is generating your video...' });
         }
       },
-    });
+    }));
 
     // Now fetch the completed result
-    const result = await fal.queue.result(falEndpoint, { requestId: request_id });
+    const result = await withExternalRetry(`fetch result for ${jobId}`, () => fal.queue.result(falEndpoint, { requestId: request_id }));
 
     const videoData = (result.data as { video?: { url?: string } })?.video ?? (result as { video?: { url?: string } }).video;
     if (!videoData?.url) {
       throw new Error('No video URL in API response');
     }
+    const videoUrl = videoData.url;
 
     await updateJob(jobId, { step: 'Downloading and uploading result...' });
 
     const tempOutputPath = path.join(tempDir, `result-${jobId}.mp4`);
 
     try {
-      await downloadFile(videoData.url, tempOutputPath);
+      await withExternalRetry(`download output for ${jobId}`, () => downloadFile(videoUrl, tempOutputPath));
 
       const { filename, url } = await uploadVideoFromPath(tempOutputPath, `result-${jobId}.mp4`);
 
@@ -290,6 +314,16 @@ export async function processJobWithImage(
   const tempDir = createTempWorkspace(`job-${jobId}`);
 
   try {
+    await updateJob(jobId, {
+      status: 'processing',
+      step: 'Starting...',
+      error: null,
+      outputUrl: null,
+      completedAt: null,
+      falRequestId: null,
+      falEndpoint: null,
+    });
+
     // Resolve social URL once — download, store in GCS, update DB
     if (job.tiktokUrl && job.videoSource !== 'upload') {
       await updateJob(jobId, { step: 'Fetching video...' });
@@ -350,7 +384,7 @@ export async function processJobWithImage(
     console.log(`[FAL] Job ${jobId} (batch): submitted to FAL, request_id=${request_id}`);
 
     // Wait for FAL to finish processing
-    await fal.queue.subscribeToStatus(falEndpoint, {
+    await withExternalRetry(`subscribe batch status for ${jobId}`, () => fal.queue.subscribeToStatus(falEndpoint, {
       requestId: request_id,
       logs: true,
       onQueueUpdate: async (update) => {
@@ -361,22 +395,23 @@ export async function processJobWithImage(
           await updateJob(jobId, { step: 'AI is generating your video...' });
         }
       },
-    });
+    }));
 
     // Now fetch the completed result
-    const result = await fal.queue.result(falEndpoint, { requestId: request_id });
+    const result = await withExternalRetry(`fetch batch result for ${jobId}`, () => fal.queue.result(falEndpoint, { requestId: request_id }));
 
     const videoData = (result.data as { video?: { url?: string } })?.video ?? (result as { video?: { url?: string } }).video;
     if (!videoData?.url) {
       throw new Error('No video URL in API response');
     }
+    const videoUrl = videoData.url;
 
     await updateJob(jobId, { step: 'Downloading and uploading result...' });
 
     const tempOutputPath = path.join(tempDir, `result-${jobId}.mp4`);
 
     try {
-      await downloadFile(videoData.url, tempOutputPath);
+      await withExternalRetry(`download batch output for ${jobId}`, () => downloadFile(videoUrl, tempOutputPath));
 
       const { filename, url } = await uploadVideoFromPath(tempOutputPath, `result-${jobId}.mp4`);
 

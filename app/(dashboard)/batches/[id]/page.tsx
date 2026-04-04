@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import Link from 'next/link';
 import type { Batch } from '@/types';
 import { useToast } from '@/hooks/useToast';
 import { downloadVideo } from '@/lib/domUtils';
-import { ChevronLeft, ChevronRight, RefreshCw, Trash2, Download, Send, Loader2, AlertCircle, CheckCircle2, XCircle, Clock, ArrowLeft, Layers } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, Download, Send, Loader2, AlertCircle, CheckCircle2, XCircle, Clock, ArrowLeft, Layers } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import StatusBadge from '@/components/ui/StatusBadge';
 import ProgressBar from '@/components/ui/ProgressBar';
@@ -14,6 +15,7 @@ import Modal from '@/components/ui/Modal';
 
 const PER_PAGE = 16;
 const _cache: Record<string, Batch> = {};
+const passthroughImageLoader = ({ src }: { src: string }) => src;
 
 export default function BatchDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -22,7 +24,6 @@ export default function BatchDetailPage() {
 
   const [batch, setBatch] = useState<Batch | null>(_cache[id] || null);
   const [isLoading, setIsLoading] = useState(!_cache[id]);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [selectedJob, setSelectedJob] = useState<NonNullable<Batch['jobs']>[number] | null>(null);
   const [page, setPage] = useState(1);
 
@@ -54,7 +55,7 @@ export default function BatchDetailPage() {
     if (!_cache[id]) loadBatch(true);
   }, [id, loadBatch]);
 
-  const jobs = batch?.jobs || [];
+  const jobs = useMemo(() => batch?.jobs || [], [batch?.jobs]);
   const totalPages = Math.max(1, Math.ceil(jobs.length / PER_PAGE));
   const safePage = Math.min(page, totalPages);
   const paginatedJobs = useMemo(
@@ -109,10 +110,14 @@ export default function BatchDetailPage() {
               {batch.name?.[0]?.toUpperCase() || 'B'}
             </div>
             {batch.model?.avatarUrl && (
-              <img
+              <Image
+                loader={passthroughImageLoader}
                 src={batch.model.avatarUrl}
                 alt=""
-                className="absolute inset-0 h-full w-full rounded-xl object-cover z-10"
+                fill
+                unoptimized
+                sizes="48px"
+                className="absolute inset-0 z-10 h-full w-full rounded-xl object-cover"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
             )}
@@ -138,23 +143,6 @@ export default function BatchDetailPage() {
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:bg-[var(--accent)]"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={async () => {
-              if (!confirm('Delete this batch? Completed videos will be preserved.')) return;
-              setIsDeleting(true);
-              try {
-                await fetch(`/api/batches/${batch.id}`, { method: 'DELETE' });
-                showToast('Batch deleted', 'success');
-                router.push('/batches');
-              } finally {
-                setIsDeleting(false);
-              }
-            }}
-            disabled={isDeleting}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-300 text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/30"
-          >
-            {isDeleting ? <Spinner className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
           </button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import fs from 'fs';
 import { renderTextOverlayPng } from './ffmpegTextOverlay';
+import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import type { TextOverlayConfig } from '@/types';
 
 /**
@@ -16,13 +17,15 @@ export async function addTextOverlayToImage(
   const meta = await sharp(inputPath).metadata();
   const width = meta.width || 1080;
   const height = meta.height || 1920;
+  const tempDir = createTempWorkspace('image-text-overlay');
 
-  const overlayPng = await renderTextOverlayPng(width, height, config);
+  const overlayPng = await renderTextOverlayPng(width, height, config, tempDir);
   try {
     await sharp(inputPath)
       .composite([{ input: overlayPng }])
       .toFile(outputPath);
   } finally {
     try { fs.unlinkSync(overlayPng); } catch {}
+    cleanupTempWorkspace(tempDir);
   }
 }
