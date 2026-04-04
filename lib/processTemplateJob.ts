@@ -1,6 +1,5 @@
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import { fal } from '@fal-ai/client';
 import { getTemplateJob, updateTemplateJob, getModelImage, updatePipelineBatchProgress } from '@/lib/db';
 import { createGenerationRequest } from '@/lib/db-generation-requests';
@@ -16,6 +15,7 @@ import { addTextOverlayToImage } from '@/lib/imageTextOverlay';
 import { RateLimiter } from '@/lib/rateLimiter';
 import { isRetryableError, retry } from '@/lib/retry';
 import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
+import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import type { MiniAppStep, VideoGenConfig, BatchVideoGenConfig, TextOverlayConfig, BgMusicConfig, AttachVideoConfig, ComposeConfig, CarouselConfig } from '@/types';
 
 /**
@@ -56,12 +56,6 @@ async function withTemplateJobRetry<T>(label: string, fn: () => Promise<T>): Pro
       console.warn(`[TemplateRetry] ${label} failed (attempt ${attempt}), retrying in ${delayMs}ms: ${message}`);
     },
   });
-}
-
-function getTempDir(): string {
-  const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
 }
 
 function firstStepNeedsInputVideo(step: MiniAppStep | undefined): boolean {
@@ -178,7 +172,7 @@ async function downloadToLocal(url: string, destPath: string): Promise<void> {
 /**
  * Upload an image to FAL-accessible presigned URL.
  */
-async function uploadImageToFal(imageUrl: string, jobId: string): Promise<string> {
+async function uploadImageToFal(imageUrl: string, jobId: string, tempDir: string): Promise<string> {
   if (imageUrl.startsWith('https://fal.media') || imageUrl.startsWith('https://v3.fal.media')) {
     return imageUrl;
   }
@@ -189,7 +183,7 @@ async function uploadImageToFal(imageUrl: string, jobId: string): Promise<string
     const extMatch = imageUrl.match(/\.(\w+)(\?|$)/);
     if (extMatch) ext = '.' + extMatch[1];
   } else {
-    const tempPath = path.join(getTempDir(), `img-${jobId}-${Date.now()}.png`);
+    const tempPath = path.join(tempDir, `img-${jobId}-${Date.now()}.png`);
     try {
       await downloadFile(imageUrl, tempPath);
       buffer = fs.readFileSync(tempPath);
@@ -206,10 +200,10 @@ async function uploadImageToFal(imageUrl: string, jobId: string): Promise<string
 async function applyInlineMusic(
   videoPath: string,
   music: { config: BgMusicConfig; trackPath: string },
+  tempDir: string,
   stepIndex: number,
   jobId?: string,
 ): Promise<string> {
-  const tempDir = getTempDir();
   const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-music-${jobId || 'x'}-${Date.now()}.mp4`);
   let effectiveAudioMode: 'replace' | 'mix' = 'mix';
   if (music.config.audioModePerStep) {
@@ -230,11 +224,11 @@ export async function processStep(
   currentVideoPath: string,
   jobId: string,
   stepIndex: number,
+  tempDir: string,
   stepOutputs: Map<string, string>,
   inlineMusic?: { config: BgMusicConfig; trackPath: string },
   carouselImagePaths?: string[] | null,
 ): Promise<string | string[]> {
-  const tempDir = getTempDir();
   switch (step.type) {
     case 'video-generation': {
       const cfg = step.config as VideoGenConfig;
@@ -249,7 +243,7 @@ export async function processStep(
         if (img) imageUrl = img.gcsUrl;
       }
       if (!imageUrl) throw new Error('Model image is required for video generation');
-      const falImageUrl = await uploadImageToFal(imageUrl, jobId);
+      const falImageUrl = await uploadImageToFal(imageUrl, jobId, tempDir);
       if (cfg.mode === 'subtle-animation') {
         const veo = config.veoSettings;
         const falEndpoint = 'fal-ai/veo3.1/image-to-video';
@@ -441,7 +435,7 @@ export async function processStep(
         }
         let musicedClipPath: string | undefined;
         if (inlineMusic) {
-          musicedClipPath = await applyInlineMusic(attachPath, inlineMusic, stepIndex, jobId);
+          musicedClipPath = await applyInlineMusic(attachPath, inlineMusic, tempDir, stepIndex, jobId);
           attachPath = musicedClipPath;
         }
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
@@ -532,7 +526,7 @@ export async function processStep(
 export async function processTemplateJob(jobId: string, fromStepIndex?: number): Promise<void> {
   let job: Awaited<ReturnType<typeof getTemplateJob>> | null = null;
   let completionOutputUrl: string | null = null;
-  const tempDir = getTempDir();
+  const tempDir = createTempWorkspace(`template-${jobId}`);
   const tempFiles: string[] = [];
   const inlineMusicTrackPaths: string[] = []; // BG music tracks downloaded for inline application
   const resuming = typeof fromStepIndex === 'number' && fromStepIndex > 0;
@@ -715,7 +709,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
         console.error(`[Template] Non-fatal: failed to update progress for step ${i}:`, progressErr instanceof Error ? progressErr.message : progressErr);
       }
       const inlineMusic = inlineMusicMap.get(step.id);
-      const result = await processStep(step, currentVideoPath, jobId, i, stepOutputs, inlineMusic, carouselImagePaths);
+      const result = await processStep(step, currentVideoPath, jobId, i, tempDir, stepOutputs, inlineMusic, carouselImagePaths);
 
       if (Array.isArray(result)) {
         // Carousel result: array of local image paths
@@ -742,7 +736,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       } else {
         let newVideoPath = result;
         if (inlineMusic && step.type !== 'attach-video') {
-          const musicedPath = await applyInlineMusic(newVideoPath, inlineMusic, i, jobId);
+          const musicedPath = await applyInlineMusic(newVideoPath, inlineMusic, tempDir, i, jobId);
           try { fs.unlinkSync(newVideoPath); } catch {}
           newVideoPath = musicedPath;
           tempFiles.push(musicedPath);
@@ -845,6 +839,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
     for (const f of inlineMusicTrackPaths) {
       try { fs.unlinkSync(f); } catch {}
     }
+    cleanupTempWorkspace(tempDir);
   }
 }
 export function getStepLabel(step: MiniAppStep): string {
@@ -989,7 +984,7 @@ export async function processPipelineBatch(
   tiktokUrl: string | null,
   videoUrl: string | null,
 ): Promise<void> {
-  const tempDir = getTempDir();
+  const tempDir = createTempWorkspace(`pipeline-batch-${childJobIds[0] || 'shared'}`);
   let sharedVideoPath: string | null = null;
   try {
     if (!videoUrl && tiktokUrl) {
@@ -1021,5 +1016,6 @@ export async function processPipelineBatch(
     if (sharedVideoPath) {
       try { fs.unlinkSync(sharedVideoPath); } catch {}
     }
+    cleanupTempWorkspace(tempDir);
   }
 }

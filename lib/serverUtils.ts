@@ -169,12 +169,13 @@ export function trimVideoRange(
 /** Download a file from a URL to a local path */
 export function downloadFile(url: string, destPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    fs.mkdirSync(path.dirname(destPath), { recursive: true })
     const client = url.startsWith('https') ? https : http
     const file = fs.createWriteStream(destPath)
     client.get(url, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         file.close()
-        fs.unlinkSync(destPath)
+        try { fs.unlinkSync(destPath) } catch {}
         return downloadFile(res.headers.location, destPath).then(resolve, reject)
       }
       if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
@@ -184,9 +185,9 @@ export function downloadFile(url: string, destPath: string): Promise<void> {
       }
       res.pipe(file)
       file.on('finish', () => { file.close(); resolve() })
-      file.on('error', (err) => { fs.unlinkSync(destPath); reject(err) })
+      file.on('error', (err) => { try { fs.unlinkSync(destPath) } catch {}; reject(err) })
     }).on('error', (err) => {
-      fs.unlinkSync(destPath)
+      try { fs.unlinkSync(destPath) } catch {}
       reject(err)
     })
   })

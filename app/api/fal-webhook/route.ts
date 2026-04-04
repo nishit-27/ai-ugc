@@ -5,7 +5,6 @@ import {
   initDatabase,
   getJobByFalRequestId,
   getTemplateJobByFalRequestId,
-  getJob,
   getTemplateJob,
   updateJob,
   updateTemplateJob,
@@ -18,19 +17,13 @@ import { uploadVideoFromPath } from '@/lib/storage';
 import { downloadFile } from '@/lib/serverUtils';
 import { processStep, getStepLabel } from '@/lib/processTemplateJob';
 import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
+import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import type { MiniAppStep } from '@/types';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
-
-function getTempDir(): string {
-  const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
 
 /**
  * Handle a completed regular job from the webhook payload.
@@ -44,7 +37,7 @@ async function handleRegularJob(
     return;
   }
 
-  const tempDir = getTempDir();
+  const tempDir = createTempWorkspace(`webhook-job-${job.id}`);
   const tempPath = path.join(tempDir, `webhook-${job.id}.mp4`);
 
   try {
@@ -79,6 +72,7 @@ async function handleRegularJob(
     }
   } finally {
     try { fs.unlinkSync(tempPath); } catch {}
+    cleanupTempWorkspace(tempDir);
   }
 }
 
@@ -103,7 +97,7 @@ async function handleTemplateJob(
     return;
   }
 
-  const tempDir = getTempDir();
+  const tempDir = createTempWorkspace(`webhook-template-${job.id}`);
   const tempFiles: string[] = [];
   const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
 
@@ -172,7 +166,7 @@ async function handleTemplateJob(
           step: `Step ${globalIdx + 1}/${enabledSteps.length}: ${label}`,
         });
 
-        const result = await processStep(step, currentVideoPath, job.id, globalIdx, stepOutputs);
+        const result = await processStep(step, currentVideoPath, job.id, globalIdx, tempDir, stepOutputs);
         const newVideoPath = Array.isArray(result) ? result[0] : result;
         stepOutputs.set(step.id, newVideoPath);
         if (Array.isArray(result)) tempFiles.push(...result); else tempFiles.push(newVideoPath);
@@ -222,6 +216,7 @@ async function handleTemplateJob(
     for (const f of tempFiles) {
       try { fs.unlinkSync(f); } catch {}
     }
+    cleanupTempWorkspace(tempDir);
   }
 }
 

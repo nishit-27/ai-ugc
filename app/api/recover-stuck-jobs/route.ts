@@ -16,21 +16,15 @@ import { uploadVideoFromPath } from '@/lib/storage';
 import { downloadFile } from '@/lib/serverUtils';
 import { processStep, getStepLabel } from '@/lib/processTemplateJob';
 import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
+import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import type { MiniAppStep } from '@/types';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120; // 2 min — recovery downloads + re-uploads videos
 
 const STUCK_THRESHOLD_MINUTES = 5; // 5 minutes (webhook handles fast path)
-
-function getTempDir(): string {
-  const dir = path.join(os.tmpdir(), 'ai-ugc-temp');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
 
 function getMissingFalRecoveryError(kind: 'job' | 'template-job'): string {
   if (kind === 'job') {
@@ -118,7 +112,7 @@ async function recoverJob(job: {
       }
 
       // Download and upload the result
-      const tempDir = getTempDir();
+      const tempDir = createTempWorkspace(`recover-job-${job.id}`);
       const tempPath = path.join(tempDir, `recover-${job.id}.mp4`);
       try {
         await downloadFile(videoData.url, tempPath);
@@ -145,6 +139,7 @@ async function recoverJob(job: {
         return { id: job.id, recovered: true, status: 'completed' };
       } finally {
         try { fs.unlinkSync(tempPath); } catch {}
+        cleanupTempWorkspace(tempDir);
       }
     } else if (falStatus === 'IN_QUEUE' || falStatus === 'IN_PROGRESS') {
       // FAL is still working — update the step message but leave job as processing
@@ -230,7 +225,7 @@ async function recoverTemplateJob(job: {
       }
 
       // Download FAL result and continue pipeline
-      const tempDir = getTempDir();
+      const tempDir = createTempWorkspace(`recover-template-${job.id}`);
       const tempFiles: string[] = [];
       let currentVideoPath = path.join(tempDir, `recover-tpl-${job.id}.mp4`);
       try {
@@ -272,7 +267,7 @@ async function recoverTemplateJob(job: {
               step: `Step ${globalIdx + 1}/${enabledSteps.length}: ${stepLabel} (recovering)`,
             });
 
-            const result = await processStep(step, currentVideoPath, job.id, globalIdx, stepOutputs);
+            const result = await processStep(step, currentVideoPath, job.id, globalIdx, tempDir, stepOutputs);
             const newVideoPath = Array.isArray(result) ? result[0] : result;
             stepOutputs.set(step.id, newVideoPath);
             if (Array.isArray(result)) tempFiles.push(...result); else tempFiles.push(newVideoPath);
@@ -304,6 +299,7 @@ async function recoverTemplateJob(job: {
         for (const f of tempFiles) {
           try { fs.unlinkSync(f); } catch {}
         }
+        cleanupTempWorkspace(tempDir);
       }
     } else if (falStatus === 'IN_QUEUE' || falStatus === 'IN_PROGRESS') {
       await updateTemplateJob(job.id, {

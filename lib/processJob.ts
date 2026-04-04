@@ -1,6 +1,5 @@
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import { fal } from '@fal-ai/client';
 import { getJob, updateJob, createMediaFile, updateBatchProgress } from './db';
 import { uploadVideoFromPath, downloadToBuffer as gcsDownloadToBuffer } from './storage';
@@ -14,6 +13,7 @@ import {
 import { getFalWebhookUrl } from './config';
 import { uploadBuffer } from './upload-via-presigned.js';
 import { getVideoDownloadUrl } from './videoDownload';
+import { cleanupTempWorkspace, createTempWorkspace } from './tempWorkspace';
 export { getVideoDownloadUrl } from './videoDownload';
 
 /**
@@ -23,11 +23,9 @@ export { getVideoDownloadUrl } from './videoDownload';
 async function prepareUploadedVideoForFal(
   gcsUrl: string,
   maxSeconds: number,
-  jobId: string
+  jobId: string,
+  tempDir: string,
 ): Promise<string> {
-  const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
-  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-
   const base = path.join(tempDir, `uploaded-${jobId}-${Date.now()}`);
   const downloaded = `${base}-full.mp4`;
   const trimmed = `${base}-trimmed.mp4`;
@@ -65,7 +63,8 @@ async function prepareUploadedVideoForFal(
  */
 async function getImageBufferAndExt(
   imageUrl: string,
-  jobId: string
+  jobId: string,
+  tempDir: string,
 ): Promise<{ buffer: Buffer; ext: string }> {
   // 1) Local file path (e.g. uploads/xxx.png or absolute path)
   if (!imageUrl.startsWith('http')) {
@@ -101,8 +100,6 @@ async function getImageBufferAndExt(
   }
 
   // 3) Any http(s) URL – download to temp then read (same as batch-motion-control flow)
-  const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
-  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
   const ext = getExtensionFromUrl(imageUrl);
   const tempPath = path.join(tempDir, `image-${jobId}-${Date.now()}${ext}`);
   try {
@@ -120,12 +117,12 @@ async function getImageBufferAndExt(
  * Upload image so FAL can use it. Returns a URL (presigned/signed) like batch-motion-control.
  * Always re-uploads to our presigned bucket so FAL gets a single, reliable link.
  */
-async function uploadImageToFal(imageUrl: string, jobId: string): Promise<string> {
+async function uploadImageToFal(imageUrl: string, jobId: string, tempDir: string): Promise<string> {
   if (imageUrl.startsWith('https://fal.media') || imageUrl.startsWith('https://v3.fal.media')) {
     return imageUrl;
   }
 
-  const { buffer, ext } = await getImageBufferAndExt(imageUrl, jobId);
+  const { buffer, ext } = await getImageBufferAndExt(imageUrl, jobId, tempDir);
   const contentType = getContentTypeFromExtension(ext);
   const fileName = `model-image-${jobId}-${Date.now()}${ext}`;
   return await uploadBuffer(buffer, contentType, fileName);
@@ -139,6 +136,7 @@ export async function processJob(
 ): Promise<void> {
   const job = await getJob(jobId);
   if (!job) return;
+  const tempDir = createTempWorkspace(`job-${jobId}`);
 
   try {
     // Resolve social URL once — download, store in GCS, update DB
@@ -149,8 +147,6 @@ export async function processJob(
       console.log(`[Video] Got play URL (${playUrl.length} chars)`);
 
       await updateJob(jobId, { step: 'Downloading and storing video...' });
-      const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
-      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
       const tempPath = path.join(tempDir, `source-${jobId}-${Date.now()}.mp4`);
       try {
         await downloadFile(playUrl, tempPath);
@@ -169,14 +165,14 @@ export async function processJob(
     if (job.videoSource === 'upload' && job.videoUrl) {
       await updateJob(jobId, { step: 'Preparing video for AI...' });
       console.log(`[Upload] Processing video: ${job.videoUrl.slice(0, 80)}...`);
-      falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId);
+      falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId, tempDir);
       console.log(`[FAL] Video ready: ${falVideoUrl}`);
     } else {
       throw new Error('No video source provided. Please provide a video URL or upload a video.');
     }
 
     await updateJob(jobId, { step: 'Uploading model image...' });
-    const falImageUrl = await uploadImageToFal(job.imageUrl, jobId);
+    const falImageUrl = await uploadImageToFal(job.imageUrl, jobId, tempDir);
 
     await updateJob(jobId, { step: 'Generating video with AI...' });
 
@@ -230,9 +226,6 @@ export async function processJob(
 
     await updateJob(jobId, { step: 'Downloading and uploading result...' });
 
-    const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-
     const tempOutputPath = path.join(tempDir, `result-${jobId}.mp4`);
 
     try {
@@ -276,6 +269,8 @@ export async function processJob(
     if (failedJob?.batchId) {
       await updateBatchProgress(failedJob.batchId);
     }
+  } finally {
+    cleanupTempWorkspace(tempDir);
   }
 }
 
@@ -292,6 +287,7 @@ export async function processJobWithImage(
 ): Promise<void> {
   const job = await getJob(jobId);
   if (!job) return;
+  const tempDir = createTempWorkspace(`job-${jobId}`);
 
   try {
     // Resolve social URL once — download, store in GCS, update DB
@@ -301,8 +297,6 @@ export async function processJobWithImage(
       console.log(`[Video] Got play URL (${playUrl.length} chars)`);
 
       await updateJob(jobId, { step: 'Downloading and storing video...' });
-      const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
-      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
       const tempPath = path.join(tempDir, `source-${jobId}-${Date.now()}.mp4`);
       try {
         await downloadFile(playUrl, tempPath);
@@ -321,7 +315,7 @@ export async function processJobWithImage(
     if (job.videoSource === 'upload' && job.videoUrl) {
       await updateJob(jobId, { step: 'Preparing video for AI...' });
       console.log(`[Upload] Processing video: ${job.videoUrl.slice(0, 80)}...`);
-      falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId);
+      falVideoUrl = await prepareUploadedVideoForFal(job.videoUrl, job.maxSeconds || 10, jobId, tempDir);
       console.log(`[FAL] Video ready: ${falVideoUrl}`);
     } else {
       throw new Error('No video source provided. Please provide a video URL or upload a video.');
@@ -329,7 +323,7 @@ export async function processJobWithImage(
 
     await updateJob(jobId, { step: 'Uploading model image...' });
     // Use the provided imageUrl instead of job.imageUrl
-    const falImageUrl = await uploadImageToFal(imageUrl, jobId);
+    const falImageUrl = await uploadImageToFal(imageUrl, jobId, tempDir);
 
     fal.config({ credentials: falKey });
 
@@ -379,9 +373,6 @@ export async function processJobWithImage(
 
     await updateJob(jobId, { step: 'Downloading and uploading result...' });
 
-    const tempDir = path.join(os.tmpdir(), 'ai-ugc-temp');
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-
     const tempOutputPath = path.join(tempDir, `result-${jobId}.mp4`);
 
     try {
@@ -424,5 +415,7 @@ export async function processJobWithImage(
     if (failedJob?.batchId) {
       await updateBatchProgress(failedJob.batchId);
     }
+  } finally {
+    cleanupTempWorkspace(tempDir);
   }
 }
