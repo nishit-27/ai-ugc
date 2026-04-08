@@ -1,4 +1,5 @@
 export const DEFAULT_APP_TIMEZONE = 'Asia/Kolkata';
+export const ANALYTICS_START_DATE = '2020-01-01';
 
 function padTwo(value: number): string {
   return String(value).padStart(2, '0');
@@ -43,6 +44,54 @@ export function getDateKeyInTimeZone(
 
 export function getTodayDateKey(timezone = DEFAULT_APP_TIMEZONE): string {
   return getDateKeyInTimeZone(new Date(), timezone);
+}
+
+export function resolveAnalyticsDateRange(params: {
+  dateRange: string;
+  customFrom?: string;
+  customTo?: string;
+  today?: string;
+  startDate?: string;
+}): { fromDate: string; toDate: string } {
+  const {
+    dateRange,
+    customFrom,
+    customTo,
+    today = getTodayDateKey(),
+    startDate = ANALYTICS_START_DATE,
+  } = params;
+
+  if (dateRange === 'custom') {
+    return {
+      fromDate: customFrom || startDate,
+      toDate: customTo || today,
+    };
+  }
+
+  if (dateRange === 'yesterday') {
+    const yesterday = shiftDateKey(today, -1);
+    return {
+      fromDate: yesterday,
+      toDate: yesterday,
+    };
+  }
+
+  const presetDays = dateRange === '7d'
+    ? 7
+    : dateRange === '30d'
+      ? 30
+      : dateRange === '90d'
+        ? 90
+        : dateRange === '180d'
+          ? 180
+          : dateRange === '365d'
+            ? 365
+            : 0;
+
+  return {
+    fromDate: presetDays > 0 ? shiftDateKey(today, -(presetDays - 1)) : startDate,
+    toDate: today,
+  };
 }
 
 export function shiftDateKey(dateKey: string, days: number): string {

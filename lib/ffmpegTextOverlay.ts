@@ -5,6 +5,11 @@ import sharp from 'sharp';
 import ffmpegPath from 'ffmpeg-static';
 import ffprobePath from '@ffprobe-installer/ffprobe';
 import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
+import {
+  TEXT_OVERLAY_CJK_FONT_FAMILY,
+  wrapTextForOverlay,
+  containsCjkGlyphs,
+} from '@/lib/textOverlayLayout';
 const FFPROBE_PATH = typeof ffprobePath === 'string' ? ffprobePath : (ffprobePath as { path: string }).path;
 import type { TextOverlayConfig } from '@/types';
 const FFMPEG = ffmpegPath || 'ffmpeg';
@@ -25,6 +30,7 @@ const FONT_FILE_MAP: Record<string, string> = {
   'Playfair Display, serif':   'PlayfairDisplay-Bold.ttf',
   'Roboto, sans-serif':        'Roboto-Bold.ttf',
   'Raleway, sans-serif':       'Raleway-Bold.ttf',
+  [TEXT_OVERLAY_CJK_FONT_FAMILY]: 'NotoSansJP-wght.ttf',
 };
 const FONT_ITALIC_MAP: Record<string, string> = {
   'sans-serif':     'Inter-BoldItalic.ttf',
@@ -39,6 +45,14 @@ const FONT_DIRS = [
 ];
 const _fontCache = new Map<string, string>();
 let _fontDirsLogged = false;
+
+function resolveBundledFontFilename(fontFamily?: string, italic = false): string {
+  const family = fontFamily || 'sans-serif';
+  if (italic && FONT_ITALIC_MAP[family]) return FONT_ITALIC_MAP[family];
+  if (FONT_FILE_MAP[family]) return FONT_FILE_MAP[family];
+  if (italic && FONT_ITALIC_MAP['sans-serif']) return FONT_ITALIC_MAP['sans-serif'];
+  return FONT_FILE_MAP['sans-serif'];
+}
 /**
  * Resolve a CSS font-family to a bundled TTF file path.
  * Falls back to Inter-Bold.ttf (the default sans) if the requested family is not found.
@@ -64,8 +78,7 @@ function getBundledFont(fontFamily?: string, italic = false): string {
       }
     }
   }
-  const map = italic ? FONT_ITALIC_MAP : FONT_FILE_MAP;
-  const filename = (fontFamily && map[fontFamily]) || map['sans-serif'];
+  const filename = resolveBundledFontFilename(fontFamily, italic);
   for (const dir of FONT_DIRS) {
     const fullPath = path.join(dir, filename);
     if (fs.existsSync(fullPath)) {
@@ -90,41 +103,6 @@ function getBundledFont(fontFamily?: string, italic = false): string {
     `Font file "${filename}" not found in any of: ${FONT_DIRS.join(', ')}. ` +
     `Ensure lib/fonts/ is included in outputFileTracingIncludes in next.config.ts.`
   );
-}
-/**
- * Word-wrap text to fit within a max character width per line.
- */
-function wrapText(text: string, maxChars: number): string {
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let line = '';
-  for (const word of words) {
-    if (line.length === 0) {
-      line = word;
-    } else if (line.length + 1 + word.length <= maxChars) {
-      line += ' ' + word;
-    } else {
-      lines.push(line);
-      line = word;
-    }
-  }
-  if (line) lines.push(line);
-  return lines.join('\n');
-}
-/**
- * Wrap text so each line has at most `wordsPerLine` words.
- * Respects existing newlines in the input.
- */
-function wrapByWordCount(text: string, wordsPerLine: number): string {
-  return text.split('\n').map((paragraph) => {
-    const words = paragraph.split(/\s+/).filter(Boolean);
-    if (words.length <= wordsPerLine) return paragraph;
-    const lines: string[] = [];
-    for (let i = 0; i < words.length; i += wordsPerLine) {
-      lines.push(words.slice(i, i + wordsPerLine).join(' '));
-    }
-    return lines.join('\n');
-  }).join('\n');
 }
 /**
  * Probe video dimensions.
@@ -246,6 +224,14 @@ function getEffectiveFontFamily(configFamily?: string, textStyle?: string): stri
   if (textStyle === 'classic') return configFamily || 'Georgia, serif';
   return configFamily || 'sans-serif';
 }
+
+function getRenderableFontFamily(text: string, configFamily?: string, textStyle?: string): string {
+  const effectiveFamily = getEffectiveFontFamily(configFamily, textStyle);
+  if (containsCjkGlyphs(text)) {
+    return TEXT_OVERLAY_CJK_FONT_FAMILY;
+  }
+  return effectiveFamily;
+}
 /**
  * Render Pango text to a raw RGBA buffer via sharp.
  * We pass a very large `width` so Pango never auto-wraps (our wrapping is pre-applied).
@@ -322,22 +308,19 @@ export async function renderTextOverlayPng(
         effectiveBgColor = effectiveBgColor || '#8b5cf6'; effectiveFontColor = '#FFFFFF'; boxPad = Math.round(16 * scale); break;
     }
   }
-  const effectiveFamily = getEffectiveFontFamily(fontFamily, textStyle);
-  const fontPath = getBundledFont(effectiveFamily, useItalic);
-  let wrappedText = text;
-  const designLeft = paddingLeft > 0 ? paddingLeft : 90;
-  const designRight = paddingRight > 0 ? paddingRight : 90;
-  if (wordsPerLine && wordsPerLine > 0) {
-    wrappedText = wrapByWordCount(wrappedText, wordsPerLine);
-  } else {
-    const availableWidth = DESIGN_WIDTH - designLeft - designRight;
-    const charWidth = fontSize * 0.55; // unscaled, same as preview
-    const maxCharsPerLine = Math.max(5, Math.floor(availableWidth / charWidth));
-    wrappedText = wrapText(wrappedText, maxCharsPerLine);
-  }
+  let wrappedText = wrapTextForOverlay(
+    text,
+    wordsPerLine,
+    paddingLeft,
+    paddingRight,
+    fontSize,
+    DESIGN_WIDTH,
+  );
   if (textStyle === 'creator' || textStyle === 'subscribe') {
     wrappedText = wrappedText.toUpperCase();
   }
+  const effectiveFamily = getRenderableFontFamily(wrappedText, fontFamily, textStyle);
+  const fontPath = getBundledFont(effectiveFamily, useItalic);
   const pangoAlign = (textAlign === 'left' ? 'left' : textAlign === 'right' ? 'right' : 'centre') as 'left' | 'centre' | 'right';
   const pangoSize = Math.round(scaledFontSize * 1024);
   const weightAttr = useBold ? ' weight="bold"' : '';

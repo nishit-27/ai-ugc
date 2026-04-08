@@ -31,10 +31,9 @@ import {
   getDateKeyInTimeZone,
   getTodayDateKey,
   listDateKeysInRange,
-  shiftDateKey,
+  resolveAnalyticsDateRange,
+  ANALYTICS_START_DATE,
 } from '@/lib/dateUtils';
-
-const ANALYTICS_START_DATE = '2020-01-01';
 
 function LateMetricCardsSkeleton() {
   return (
@@ -290,31 +289,12 @@ function LateAnalyticsContent() {
 
   // Compute date range for child components
   const dateRange = useMemo(() => {
-    const today = getTodayDateKey();
-
-    if (filters.dateRange === 'custom') {
-      return {
-        fromDate: filters.customFrom || ANALYTICS_START_DATE,
-        toDate: filters.customTo || today,
-      };
-    }
-
-    const presetDays = filters.dateRange === '7d'
-      ? 7
-      : filters.dateRange === '30d'
-        ? 30
-        : filters.dateRange === '90d'
-          ? 90
-          : filters.dateRange === '180d'
-            ? 180
-            : filters.dateRange === '365d'
-              ? 365
-              : 0;
-
-    return {
-      fromDate: presetDays > 0 ? shiftDateKey(today, -(presetDays - 1)) : ANALYTICS_START_DATE,
-      toDate: today,
-    };
+    return resolveAnalyticsDateRange({
+      dateRange: filters.dateRange,
+      customFrom: filters.customFrom,
+      customTo: filters.customTo,
+      startDate: ANALYTICS_START_DATE,
+    });
   }, [filters.dateRange, filters.customFrom, filters.customTo]);
 
   const handleDownload = useCallback(() => {

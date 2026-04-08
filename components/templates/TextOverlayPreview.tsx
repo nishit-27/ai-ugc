@@ -3,75 +3,12 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import type { TextOverlayConfig } from '@/types';
 import { TEXT_STYLES } from './textStyles';
+import {
+  TEXT_OVERLAY_DESIGN_WIDTH,
+  wrapTextForOverlay,
+} from '@/lib/textOverlayLayout';
 
-const VIDEO_WIDTH = 720;
-
-/**
- * Shared wrapping logic — identical to ffmpegOps so preview == video.
- *
- * Rules:
- *  • wordsPerLine > 0  →  wrap ONLY by word count (user's explicit choice)
- *  • wordsPerLine = 0  →  wrap by character-width (auto fit to margins)
- *  These two modes are mutually exclusive; word-count is never overridden.
- */
-function computeWrappedText(
-  raw: string,
-  wordsPerLine: number | undefined,
-  paddingLeft: number,
-  paddingRight: number,
-  fontSize: number,
-): string {
-  let wrapped = raw;
-  const wpl = wordsPerLine ?? 0;
-
-  if (wpl > 0) {
-    // ── Word-count wrapping: exact words per line, nothing else ──
-    wrapped = wrapped
-      .split('\n')
-      .map((paragraph) => {
-        const words = paragraph.split(/\s+/).filter(Boolean);
-        if (words.length === 0) return '';
-        if (words.length <= wpl) return words.join(' ');
-        const lines: string[] = [];
-        for (let i = 0; i < words.length; i += wpl) {
-          lines.push(words.slice(i, i + wpl).join(' '));
-        }
-        return lines.join('\n');
-      })
-      .join('\n');
-  } else {
-    // ── Character-width wrapping: auto-fit based on margins ──
-    const effectiveLeft = paddingLeft > 0 ? paddingLeft : 90;
-    const effectiveRight = paddingRight > 0 ? paddingRight : 90;
-    const availableWidth = VIDEO_WIDTH - effectiveLeft - effectiveRight;
-    const charWidth = fontSize * 0.55;
-    const maxChars = Math.max(5, Math.floor(availableWidth / charWidth));
-
-    wrapped = wrapped
-      .split('\n')
-      .map((line) => {
-        if (line.length <= maxChars) return line;
-        const words = line.split(/\s+/);
-        const subLines: string[] = [];
-        let current = '';
-        for (const word of words) {
-          if (current.length === 0) {
-            current = word;
-          } else if (current.length + 1 + word.length <= maxChars) {
-            current += ' ' + word;
-          } else {
-            subLines.push(current);
-            current = word;
-          }
-        }
-        if (current) subLines.push(current);
-        return subLines.join('\n');
-      })
-      .join('\n');
-  }
-
-  return wrapped;
-}
+const VIDEO_WIDTH = TEXT_OVERLAY_DESIGN_WIDTH;
 
 export default function TextOverlayPreview({
   config,
@@ -136,7 +73,7 @@ export default function TextOverlayPreview({
   /* ── Wrapped text (same algo as ffmpeg) ── */
   const formattedText = useMemo(
     () =>
-      computeWrappedText(
+      wrapTextForOverlay(
         config.text || '',
         config.wordsPerLine,
         config.paddingLeft ?? 0,

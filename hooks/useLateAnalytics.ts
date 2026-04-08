@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { getDateKeyInTimeZone, getTodayDateKey, shiftDateKey } from '@/lib/dateUtils';
+import { getDateKeyInTimeZone, resolveAnalyticsDateRange, ANALYTICS_START_DATE } from '@/lib/dateUtils';
 
 type DailyMetric = {
   date: string;
@@ -163,7 +163,6 @@ let _groupAccountsCache: GroupAccountMap[] = [];
 let _cacheTime = 0;
 let _cachedDateKey = '';
 const CACHE_TTL = 5 * 60_000; // 5 minutes
-const ANALYTICS_START_DATE = '2020-01-01';
 
 export function useLateAnalytics() {
   const [allPosts, setAllPosts] = useState<PostAnalytics[]>(_allPostsCache);
@@ -182,31 +181,12 @@ export function useLateAnalytics() {
   const postsLoaded = useRef(_allPostsCache.length > 0);
 
   const getDateRange = useCallback(() => {
-    const today = getTodayDateKey();
-
-    if (filters.dateRange === 'custom') {
-      return {
-        fromDate: filters.customFrom || ANALYTICS_START_DATE,
-        toDate: filters.customTo || today,
-      };
-    }
-
-    const presetDays = filters.dateRange === '7d'
-      ? 7
-      : filters.dateRange === '30d'
-        ? 30
-        : filters.dateRange === '90d'
-          ? 90
-          : filters.dateRange === '180d'
-            ? 180
-            : filters.dateRange === '365d'
-              ? 365
-              : 0;
-
-    return {
-      fromDate: presetDays > 0 ? shiftDateKey(today, -(presetDays - 1)) : ANALYTICS_START_DATE,
-      toDate: today,
-    };
+    return resolveAnalyticsDateRange({
+      dateRange: filters.dateRange,
+      customFrom: filters.customFrom,
+      customTo: filters.customTo,
+      startDate: ANALYTICS_START_DATE,
+    });
   }, [filters.dateRange, filters.customFrom, filters.customTo]);
 
   // Heavy fetch: posts from GetLate for current date range (only on mount or manual refresh)

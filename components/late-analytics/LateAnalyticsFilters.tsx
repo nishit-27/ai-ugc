@@ -145,6 +145,7 @@ export default function LateAnalyticsFilters({
         )}
 
         <select className={selectClass} style={chevronStyle} value={filters.dateRange} onChange={e => setFilters({ ...filters, dateRange: e.target.value })}>
+          <option value="yesterday">Yesterday</option>
           <option value="7d">Last 7 days</option>
           <option value="30d">Last 30 days</option>
           <option value="90d">Last 90 days</option>

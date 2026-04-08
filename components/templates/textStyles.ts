@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { TEXT_OVERLAY_CJK_FONT_FAMILY } from '@/lib/textOverlayLayout';
 
 export type TextStyleDef = {
   id: string;
@@ -23,6 +24,7 @@ export const TEXT_STYLES: TextStyleDef[] = [
 
 export const FONTS = [
   { name: 'Sans', family: 'sans-serif' },
+  { name: 'Japanese', family: TEXT_OVERLAY_CJK_FONT_FAMILY },
   { name: 'Impact', family: 'Impact, sans-serif' },
   { name: 'Georgia', family: 'Georgia, serif' },
   { name: 'Courier', family: 'Courier New, monospace' },

@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ANALYTICS_START_DATE,
   getCreatedDateDisplay,
   getDateKeyInTimeZone,
   getScheduledDateDisplay,
   getTodayDateKey,
   listDateKeysInRange,
+  resolveAnalyticsDateRange,
   shiftDateKey,
 } from '../dateUtils';
 
@@ -80,5 +82,25 @@ describe('date key helpers', () => {
   it('returns today in the requested timezone', () => {
     const today = getTodayDateKey('Asia/Kolkata');
     expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('resolves yesterday to the previous calendar day only', () => {
+    expect(resolveAnalyticsDateRange({
+      dateRange: 'yesterday',
+      today: '2026-04-08',
+    })).toEqual({
+      fromDate: '2026-04-07',
+      toDate: '2026-04-07',
+    });
+  });
+
+  it('resolves custom ranges with fallback bounds', () => {
+    expect(resolveAnalyticsDateRange({
+      dateRange: 'custom',
+      today: '2026-04-08',
+    })).toEqual({
+      fromDate: ANALYTICS_START_DATE,
+      toDate: '2026-04-08',
+    });
   });
 });
