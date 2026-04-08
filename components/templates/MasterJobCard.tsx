@@ -1,7 +1,9 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, XCircle, AlertCircle, Check, ThumbsUp, ThumbsDown, RotateCcw, Copy, Pencil, Send, FileEdit } from 'lucide-react';
 import type { TemplateJob } from '@/types';
+import { deriveTemplateJobStepState } from '@/lib/templateJobState';
 
 const STEP_LABELS: Record<string, string> = {
   'video-generation': 'Video',
@@ -12,6 +14,21 @@ const STEP_LABELS: Record<string, string> = {
   'compose': 'Compose',
   'carousel': 'Carousel',
 };
+
+const videoDurationCache = new Map<string, number>();
+
+function formatDuration(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
 
 export default function MasterJobCard({
   job,
@@ -50,17 +67,35 @@ export default function MasterJobCard({
 }) {
   const isCompleted = job.status === 'completed';
   const isFailed = job.status === 'failed';
-  const isProcessing = job.status === 'processing' || job.status === 'queued';
+  const isProcessing = job.status === 'processing';
+  const isQueued = job.status === 'queued';
   const isCarouselOutput = job.outputUrl?.startsWith('carousel:');
   const carouselUrls = isCarouselOutput ? (() => { try { return JSON.parse(job.outputUrl!.slice('carousel:'.length)) as string[]; } catch { return []; } })() : [];
+  const resolvedVideoUrl = !isCarouselOutput ? (job.signedUrl || job.outputUrl || null) : null;
   const hasOutput = !!job.outputUrl || !!job.signedUrl;
   const canAct = isCompleted && !job.postStatus;
   const canRepost = isCompleted && job.postStatus === 'posted';
-  const canRegenerate = (isCompleted || isFailed) && !isProcessing;
+  const canRegenerate = (isCompleted || isFailed) && !isProcessing && !isQueued;
   const isBusy = isApproving || isRejecting || isRegenerating;
+  const {
+    enabledSteps,
+    completedStepIds,
+    activeStepIndex,
+    failedStepIndex,
+  } = deriveTemplateJobStepState(job);
+  const [durationSeconds, setDurationSeconds] = useState<number | null>(() => (
+    resolvedVideoUrl ? videoDurationCache.get(resolvedVideoUrl) ?? null : null
+  ));
 
-  const enabledSteps = (job.pipeline || []).filter(s => s.enabled);
-  const completedStepIds = new Set((job.stepResults || []).map(r => r.stepId));
+  useEffect(() => {
+    if (!resolvedVideoUrl) {
+      setDurationSeconds(null);
+      return;
+    }
+    setDurationSeconds(videoDurationCache.get(resolvedVideoUrl) ?? null);
+  }, [resolvedVideoUrl]);
+
+  const durationLabel = durationSeconds != null ? formatDuration(durationSeconds) : null;
 
   return (
     <div
@@ -145,10 +180,17 @@ export default function MasterJobCard({
           </div>
         ) : hasOutput && isCompleted ? (
           <video
-            src={job.signedUrl || job.outputUrl}
+            src={resolvedVideoUrl || undefined}
             className="h-full w-full object-cover"
             muted
-            preload="none"
+            playsInline
+            preload="metadata"
+            onLoadedMetadata={(e) => {
+              const duration = (e.currentTarget as HTMLVideoElement).duration;
+              if (!resolvedVideoUrl || !Number.isFinite(duration) || duration <= 0) return;
+              videoDurationCache.set(resolvedVideoUrl, duration);
+              setDurationSeconds(duration);
+            }}
             onMouseEnter={(e) => { try { (e.target as HTMLVideoElement).play(); } catch {} }}
             onMouseLeave={(e) => { try { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; } catch {} }}
           />
@@ -156,6 +198,10 @@ export default function MasterJobCard({
           <div className="flex h-full flex-col items-center justify-center gap-2 px-3">
             <Loader2 className="h-6 w-6 animate-spin text-master dark:text-master-foreground" />
             <div className="text-[10px] text-[var(--text-muted)] text-center leading-tight">{job.step || 'Processing...'}</div>
+          </div>
+        ) : isQueued ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-[10px] text-[var(--text-muted)]">Queued</div>
           </div>
         ) : isFailed ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-4">
@@ -167,9 +213,11 @@ export default function MasterJobCard({
               </div>
             )}
           </div>
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-[10px] text-[var(--text-muted)]">Queued</div>
+        ) : null}
+
+        {isCompleted && !isCarouselOutput && durationLabel && (
+          <div className="absolute bottom-1.5 right-1.5 rounded-full bg-black/60 px-2 py-1 text-[10px] font-semibold tabular-nums text-white backdrop-blur-sm">
+            {durationLabel}
           </div>
         )}
 
@@ -178,8 +226,8 @@ export default function MasterJobCard({
           <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-black/50 px-2 py-1 backdrop-blur-sm">
             {enabledSteps.map((step, i) => {
               const isDone = completedStepIds.has(step.id);
-              const isCurrent = isProcessing && i === (job.currentStep || 0);
-              const isFutureOrFailed = isFailed && !isDone;
+              const isCurrent = isProcessing && i === activeStepIndex;
+              const isFailedStep = isFailed && i === failedStepIndex;
               return (
                 <div
                   key={step.id}
@@ -187,7 +235,7 @@ export default function MasterJobCard({
                   className={`h-1.5 rounded-full transition-all ${
                     isDone ? 'w-3 bg-emerald-400' :
                     isCurrent ? 'w-3 bg-master animate-pulse' :
-                    isFutureOrFailed ? 'w-1.5 bg-red-400/50' :
+                    isFailedStep ? 'w-1.5 bg-red-400/70' :
                     'w-1.5 bg-white/30'
                   }`}
                 />

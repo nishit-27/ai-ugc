@@ -15,7 +15,7 @@ export const maxDuration = 300;
  * jobs in a single function.
  */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: jobId } = await params;
@@ -25,14 +25,24 @@ export async function POST(
   }
 
   await initDatabase();
+  let fromStepIndex: number | undefined;
+  try {
+    const body = await request.json();
+    if (body?.fromStepIndex !== undefined) {
+      if (!Number.isInteger(body.fromStepIndex) || body.fromStepIndex < 0) {
+        return NextResponse.json({ error: 'fromStepIndex must be a non-negative integer' }, { status: 400 });
+      }
+      fromStepIndex = body.fromStepIndex;
+    }
+  } catch {}
 
   after(async () => {
     try {
-      await processTemplateJob(jobId);
+      await processTemplateJob(jobId, fromStepIndex);
     } catch (err) {
-      console.error(`[ProcessEndpoint] processTemplateJob(${jobId}) failed:`, err);
+      console.error(`[ProcessEndpoint] processTemplateJob(${jobId}, ${fromStepIndex ?? 'full'}) failed:`, err);
     }
   });
 
-  return NextResponse.json({ ok: true, jobId });
+  return NextResponse.json({ ok: true, jobId, fromStepIndex: fromStepIndex ?? null });
 }

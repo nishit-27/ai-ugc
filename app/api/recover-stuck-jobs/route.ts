@@ -14,7 +14,7 @@ import {
 import { config } from '@/lib/config';
 import { uploadVideoFromPath } from '@/lib/storage';
 import { downloadFile } from '@/lib/serverUtils';
-import { processTemplateJob } from '@/lib/processTemplateJob';
+import { getStepLabel, processTemplateJob, triggerTemplateJobProcessing } from '@/lib/processTemplateJob';
 import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
 import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import type { MiniAppStep } from '@/types';
@@ -234,26 +234,35 @@ async function recoverTemplateJob(job: {
 
         const { url: recoveredUrl } = await uploadVideoFromPath(currentVideoPath, `template-${job.id}-recovered.mp4`);
 
+        const enabledSteps = (job.pipeline || []).filter((s: MiniAppStep) => s.enabled);
+        const recoveredStepDef = enabledSteps[job.currentStep];
+        const recoveredStepLabel = recoveredStepDef ? getStepLabel(recoveredStepDef) : 'Video Generation (recovered)';
         const stepResults = [...(job.stepResults || [])];
         stepResults.push({
-          stepId: `recovered-step-${job.currentStep}`,
-          type: 'video-generation',
-          label: 'Video Generation (recovered)',
+          stepId: recoveredStepDef?.id || `recovered-step-${job.currentStep}`,
+          type: recoveredStepDef?.type || 'video-generation',
+          label: recoveredStepLabel,
           outputUrl: recoveredUrl,
         });
 
         // Persist recovered step immediately so it survives if we timeout on a later FAL step
         await updateTemplateJob(job.id, {
           currentStep: job.currentStep + 1,
-          step: `Step ${job.currentStep + 1}/${job.totalSteps}: Video Generation — done (recovered)`,
+          step: `Step ${job.currentStep + 1}/${job.totalSteps}: ${recoveredStepLabel} — done (recovered)`,
           stepResults,
+          falRequestId: null,
+          falEndpoint: null,
+          error: null,
         });
 
-        const enabledSteps = (job.pipeline || []).filter((s: MiniAppStep) => s.enabled);
         const nextStepIndex = job.currentStep + 1;
         if (nextStepIndex < enabledSteps.length) {
           console.log(`[Recovery] Continuing pipeline for ${job.id} from step ${nextStepIndex + 1}/${enabledSteps.length}`);
-          await processTemplateJob(job.id, nextStepIndex);
+          const triggered = await triggerTemplateJobProcessing(job.id, nextStepIndex);
+          if (!triggered) {
+            console.warn(`[Recovery] Failed to trigger fresh continuation for ${job.id}; falling back to inline processing.`);
+            await processTemplateJob(job.id, nextStepIndex);
+          }
           return { id: job.id, recovered: true, status: 'resumed' };
         }
 
@@ -263,6 +272,9 @@ async function recoverTemplateJob(job: {
           step: 'Done! (recovered)',
           outputUrl: finalUrl,
           completedAt: new Date(),
+          error: null,
+          falRequestId: null,
+          falEndpoint: null,
         });
         if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
         return { id: job.id, recovered: true, status: 'completed' };

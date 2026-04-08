@@ -79,7 +79,20 @@ export function useTemplates() {
       const arr: TemplateJob[] = Array.isArray(data) ? data : [];
 
       const snapshot = arr
-        .map((j) => `${j.id}:${j.status}:${j.step}:${j.currentStep}:${j.signedUrl || ''}`)
+        .map((j) => {
+          const resultFingerprint = (j.stepResults || [])
+            .map((result) => result.stepId)
+            .join(',');
+          return [
+            j.id,
+            j.status,
+            j.step,
+            j.currentStep,
+            j.outputUrl || '',
+            j.error || '',
+            resultFingerprint,
+          ].join(':');
+        })
         .join('|');
 
       if (snapshot !== lastSnapshotRef.current) {

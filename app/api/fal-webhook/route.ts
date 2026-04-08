@@ -15,7 +15,7 @@ import {
 import { config } from '@/lib/config';
 import { uploadVideoFromPath } from '@/lib/storage';
 import { downloadFile } from '@/lib/serverUtils';
-import { getStepLabel, processTemplateJob } from '@/lib/processTemplateJob';
+import { getStepLabel, processTemplateJob, triggerTemplateJobProcessing } from '@/lib/processTemplateJob';
 import { canFinalizeTemplateJobFromPersistedSteps, getFinalTemplateJobOutputUrl } from '@/lib/templateJobFinalization';
 import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import type { MiniAppStep } from '@/types';
@@ -135,7 +135,7 @@ async function handleTemplateJob(
     const stepResults = [...(job.stepResults || [])];
     stepResults.push({
       stepId: currentStepDef?.id || `webhook-step-${job.currentStep}`,
-      type: 'video-generation',
+      type: currentStepDef?.type || 'video-generation',
       label: stepLabel,
       outputUrl: stepUrl,
     });
@@ -145,12 +145,19 @@ async function handleTemplateJob(
       currentStep: job.currentStep + 1,
       step: `Step ${job.currentStep + 1}/${enabledSteps.length}: ${stepLabel} — done (webhook)`,
       stepResults,
+      falRequestId: null,
+      falEndpoint: null,
+      error: null,
     });
 
     const nextStepIndex = job.currentStep + 1;
     if (nextStepIndex < enabledSteps.length) {
       console.log(`[Webhook] Continuing pipeline for ${job.id} from step ${nextStepIndex + 1}/${enabledSteps.length}`);
-      await processTemplateJob(job.id, nextStepIndex);
+      const triggered = await triggerTemplateJobProcessing(job.id, nextStepIndex);
+      if (!triggered) {
+        console.warn(`[Webhook] Failed to trigger fresh continuation for ${job.id}; falling back to inline processing.`);
+        await processTemplateJob(job.id, nextStepIndex);
+      }
       return;
     }
 
@@ -160,6 +167,9 @@ async function handleTemplateJob(
       step: 'Done!',
       outputUrl: finalUrl,
       completedAt: new Date(),
+      error: null,
+      falRequestId: null,
+      falEndpoint: null,
     });
 
     console.log(`[Webhook] Template job ${job.id} completed via webhook`);

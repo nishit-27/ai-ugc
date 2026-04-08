@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { X, Download, ThumbsUp, XCircle, CheckCircle2, Loader2, ExternalLink, RotateCcw, Copy, Pencil, Send, FileEdit, AlertTriangle, Film, Type, Music, Layers, PlusCircle, ChevronLeft, ChevronRight, Image as ImageIcon, Play, Eye } from 'lucide-react';
 import type { TemplateJob, MasterConfigModel, MiniAppType, StepResult } from '@/types';
+import { deriveTemplateJobStepState } from '@/lib/templateJobState';
 
 type PostRecord = {
   platform: string;
@@ -72,7 +73,7 @@ export default function MasterJobModal({
   const isCompleted = job.status === 'completed';
   const isFailed = job.status === 'failed';
   const isQueued = job.status === 'queued';
-  const isProcessing = job.status === 'processing' || isQueued;
+  const isProcessing = job.status === 'processing';
   const isBusy = posting || regenerating;
 
   // Carousel detection
@@ -85,9 +86,14 @@ export default function MasterJobModal({
   // Step viewing state: null = final output, stepId = viewing that step's result
   const [viewingStepId, setViewingStepId] = useState<string | null>(null);
 
-  const enabledSteps = (job.pipeline || []).filter(s => s.enabled);
-  const completedStepIds = new Set((job.stepResults || []).map(r => r.stepId));
-  const stepResultMap = new Map<string, StepResult>((job.stepResults || []).map(r => [r.stepId, r]));
+  const {
+    enabledSteps,
+    normalizedStepResults,
+    completedStepIds,
+    activeStepIndex,
+    failedStepIndex,
+  } = deriveTemplateJobStepState(job);
+  const stepResultMap = new Map<string, StepResult>(normalizedStepResults.map(r => [r.stepId, r]));
 
   // Get the URL to display based on viewingStepId
   const viewingResult = viewingStepId ? stepResultMap.get(viewingStepId) : null;
@@ -225,6 +231,8 @@ export default function MasterJobModal({
                   <Loader2 className="mx-auto mb-2 h-8 w-8 animate-spin text-master-foreground" />
                   <div className="text-xs text-neutral-500">{job.step || 'Processing...'}</div>
                 </div>
+              ) : isQueued ? (
+                <div className="text-sm text-neutral-500">Queued</div>
               ) : (
                 <div className="text-sm text-neutral-500">
                   {isFailed ? (isCarouselOutput ? 'Carousel generation failed' : 'Video generation failed') : 'No media available'}
@@ -251,12 +259,12 @@ export default function MasterJobModal({
               <div className="space-y-1">
                 {enabledSteps.map((step, i) => {
                   const isDone = completedStepIds.has(step.id);
-                  const isCurrent = isProcessing && i === (job.currentStep || 0);
-                  const isStepFailed = isFailed && !isDone && i >= (job.currentStep || 0);
+                  const isCurrent = isProcessing && i === activeStepIndex;
+                  const isStepFailed = isFailed && i === failedStepIndex;
                   const meta = STEP_META[step.type as MiniAppType] || { label: step.type, icon: Film };
                   const Icon = meta.icon;
                   const stepResult = stepResultMap.get(step.id);
-                  const hasResult = isDone && stepResult;
+                  const hasResult = !!stepResult;
                   const isViewing = viewingStepId === step.id;
                   const hasPriorResults = i === 0 || enabledSteps.slice(0, i).every((prevStep) => completedStepIds.has(prevStep.id));
                   const canRegen = (isCompleted || isFailed || isQueued) && !isBusy && job.status !== 'processing' && !!onRegenStep && hasPriorResults;

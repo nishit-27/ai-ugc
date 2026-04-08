@@ -48,6 +48,10 @@ class Semaphore {
 const localProcessingSemaphore = new Semaphore(5);
 type LoadedTemplateJob = NonNullable<Awaited<ReturnType<typeof getTemplateJob>>>;
 
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 async function withTemplateJobRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
   return retry(fn, {
     retries: 3,
@@ -137,19 +141,39 @@ function consumeStepOutputReferences(
   }
 }
 
+async function persistRequiredTemplateUpdate(
+  jobId: string,
+  updates: Parameters<typeof updateTemplateJob>[1],
+  description: string,
+) {
+  try {
+    return await updateTemplateJob(jobId, updates);
+  } catch (error) {
+    throw new Error(`Failed to persist ${description} for template job ${jobId}.`, {
+      cause: asError(error),
+    });
+  }
+}
+
 async function persistTemplateFalRequest(
   jobId: string,
+  currentStep: number,
   step: string,
   falRequestId: string,
   falEndpoint: string,
 ): Promise<void> {
-  const updatedJob = await updateTemplateJob(jobId, {
+  const updatedJob = await persistRequiredTemplateUpdate(jobId, {
+    currentStep,
     step,
     falRequestId,
     falEndpoint,
-  });
+  }, `FAL request metadata for step ${currentStep + 1}`);
 
-  if (updatedJob?.falRequestId !== falRequestId || updatedJob?.falEndpoint !== falEndpoint) {
+  if (
+    updatedJob?.falRequestId !== falRequestId ||
+    updatedJob?.falEndpoint !== falEndpoint ||
+    updatedJob?.currentStep !== currentStep
+  ) {
     throw new Error(`Submitted FAL request ${falRequestId} but failed to persist its recovery metadata.`);
   }
 }
@@ -224,6 +248,16 @@ async function downloadToLocal(url: string, destPath: string): Promise<void> {
   } else {
     await downloadFile(url, destPath);
   }
+}
+
+function ensureVideoInput(stepType: MiniAppStep['type'], currentVideoPath: string): void {
+  if (currentVideoPath) {
+    return;
+  }
+
+  throw new Error(
+    `Step "${stepType}" is missing its input video. A previous step result was not restored or persisted correctly.`,
+  );
 }
 /**
  * Upload an image to FAL-accessible presigned URL.
@@ -316,6 +350,7 @@ export async function processStep(
         });
         await persistTemplateFalRequest(
           jobId,
+          stepIndex,
           `Step ${stepIndex + 1}: Veo 3.1 — generating...`,
           request_id,
           falEndpoint,
@@ -372,6 +407,7 @@ export async function processStep(
         });
         await persistTemplateFalRequest(
           jobId,
+          stepIndex,
           `Step ${stepIndex + 1}: Motion Control — processing...`,
           request_id,
           falEndpoint,
@@ -433,6 +469,7 @@ export async function processStep(
           }
           return outputPaths;
         }
+        ensureVideoInput(step.type, currentVideoPath);
         const outputPath = path.join(tempDir, `tpl-step-${stepIndex}-${jobId}-${Date.now()}.mp4`);
         await addTextOverlay(currentVideoPath, outputPath, cfg, tempDir);
         return outputPath;
@@ -444,6 +481,7 @@ export async function processStep(
       await localProcessingSemaphore.acquire();
       try {
         const cfg = step.config as BgMusicConfig;
+        ensureVideoInput(step.type, currentVideoPath);
         const trackUrl = cfg.customTrackUrl || cfg.trackId;
         if (!trackUrl) throw new Error('No music track specified');
         let effectiveAudioMode: 'replace' | 'mix' = 'mix';
@@ -471,6 +509,7 @@ export async function processStep(
       await localProcessingSemaphore.acquire();
       try {
         const cfg = step.config as AttachVideoConfig;
+        ensureVideoInput(step.type, currentVideoPath);
         let clipUrl: string | undefined;
         let clipIsLocal = false;
         if (cfg.sourceStepId && stepOutputs.has(cfg.sourceStepId)) {
@@ -592,20 +631,16 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
     job = await withTemplateJobRetry(`load job ${jobId}`, () => getTemplateJob(jobId));
     if (!job) return;
 
-    try {
-      await updateTemplateJob(jobId, {
-        status: 'processing',
-        step: resuming ? `Resuming from step ${fromStepIndex + 1}...` : 'Starting pipeline...',
-        error: null,
-        outputUrl: null,
-        completedAt: null,
-        falRequestId: null,
-        falEndpoint: null,
-        ...(resuming ? {} : { currentStep: 0, stepResults: null }),
-      });
-    } catch (statusErr) {
-      console.error(`[Template] Non-fatal: failed to set processing status for ${jobId}:`, statusErr instanceof Error ? statusErr.message : statusErr);
-    }
+    await persistRequiredTemplateUpdate(jobId, {
+      status: 'processing',
+      step: resuming ? `Resuming from step ${fromStepIndex + 1}...` : 'Starting pipeline...',
+      error: null,
+      outputUrl: null,
+      completedAt: null,
+      falRequestId: null,
+      falEndpoint: null,
+      ...(resuming ? {} : { currentStep: 0, stepResults: null }),
+    }, 'processing status');
 
     const enabledSteps = job.pipeline.filter((s: MiniAppStep) => s.enabled);
     if (canFinalizeTemplateJobFromPersistedSteps(job.currentStep, enabledSteps.length, job.stepResults)) {
@@ -619,6 +654,9 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
         step: 'Done!',
         outputUrl: persistedOutputUrl,
         completedAt: job.completedAt ?? new Date(),
+        error: null,
+        falRequestId: null,
+        falEndpoint: null,
       });
 
       if (job.pipelineBatchId) {
@@ -773,14 +811,18 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       if (inlineMusicSkipSet.has(step.id)) {
         continue;
       }
-      try {
-        await updateTemplateJob(jobId, {
-          currentStep: i,
-          step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel}`,
-        });
-      } catch (progressErr) {
-        console.error(`[Template] Non-fatal: failed to update progress for step ${i}:`, progressErr instanceof Error ? progressErr.message : progressErr);
+      if (step.type === 'video-generation' && i > startIdx) {
+        console.log(`[Template] Handing off job ${jobId} to a fresh invocation for step ${i + 1}/${enabledSteps.length}`);
+        const triggered = await triggerTemplateJobProcessing(jobId, i);
+        if (triggered) {
+          return;
+        }
+        console.warn(`[Template] Failed to hand off job ${jobId} for step ${i + 1}; continuing inline.`);
       }
+      await persistRequiredTemplateUpdate(jobId, {
+        currentStep: i,
+        step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel}`,
+      }, `start of step ${i + 1}`);
       const inlineMusic = inlineMusicMap.get(step.id);
       const previousVideoPath = currentVideoPath;
       const previousVideoStepId = currentVideoStepId;
@@ -836,15 +878,13 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
           releaseStepOutputIfUnused(previousVideoStepId, stepOutputs, remainingStepReferenceCounts, protectedPaths);
         }
       }
-      try {
-        await updateTemplateJob(jobId, {
-          currentStep: i + 1,
-          step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel} — done`,
-          stepResults,
-        });
-      } catch (progressErr) {
-        console.error(`[Template] Non-fatal: failed to update progress after step ${i}:`, progressErr instanceof Error ? progressErr.message : progressErr);
-      }
+      await persistRequiredTemplateUpdate(jobId, {
+        currentStep: i + 1,
+        step: `Step ${i + 1}/${enabledSteps.length}: ${stepLabel} — done`,
+        stepResults,
+        falRequestId: null,
+        falEndpoint: null,
+      }, `completion of step ${i + 1}`);
     }
     // Determine final output URL
     const lastResult = stepResults[stepResults.length - 1];
@@ -857,12 +897,15 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       finalUrl = (await uploadVideoFromPath(currentVideoPath, `template-${jobId}.mp4`)).url;
     }
     completionOutputUrl = finalUrl;
-    await updateTemplateJob(jobId, {
+    await persistRequiredTemplateUpdate(jobId, {
       status: 'completed',
       step: 'Done!',
       outputUrl: finalUrl,
       completedAt: new Date(),
-    });
+      error: null,
+      falRequestId: null,
+      falEndpoint: null,
+    }, 'final completion state');
     if (job.pipelineBatchId) {
       try {
         await updatePipelineBatchProgress(job.pipelineBatchId);
@@ -881,6 +924,9 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
           step: 'Done!',
           outputUrl: completionOutputUrl,
           completedAt: new Date(),
+          error: null,
+          falRequestId: null,
+          falEndpoint: null,
         });
         if (job?.pipelineBatchId) {
           try {
@@ -961,12 +1007,19 @@ function getInternalBaseUrl(): string {
  * Each call creates a separate serverless invocation with its own timeout,
  * preventing queue starvation when processing large batches.
  */
-async function triggerJobProcessing(jobId: string, baseUrl: string): Promise<boolean> {
+export async function triggerTemplateJobProcessing(
+  jobId: string,
+  fromStepIndex?: number,
+  baseUrl = getInternalBaseUrl(),
+): Promise<boolean> {
   try {
     await retry(async () => {
       const res = await fetch(`${baseUrl}/api/templates/${jobId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: typeof fromStepIndex === 'number'
+          ? JSON.stringify({ fromStepIndex })
+          : undefined,
       });
       if (res.ok) {
         return;
@@ -1028,7 +1081,7 @@ async function triggerJobsWithThrottle(jobIds: string[], baseUrl: string): Promi
 
       const jobId = jobIds[currentIndex];
       await launchLimiter.acquire();
-      const ok = await triggerJobProcessing(jobId, baseUrl);
+      const ok = await triggerTemplateJobProcessing(jobId, undefined, baseUrl);
       triggeredCount++;
       if (ok) succeeded++;
       else failed++;

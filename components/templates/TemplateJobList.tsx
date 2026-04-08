@@ -12,6 +12,7 @@ import ProgressBar from '@/components/ui/ProgressBar';
 import Modal from '@/components/ui/Modal';
 import LoadingShimmer from '@/components/ui/LoadingShimmer';
 import { useToast } from '@/hooks/useToast';
+import { deriveTemplateJobStepState } from '@/lib/templateJobState';
 
 gsap.registerPlugin(useGSAP);
 
@@ -173,14 +174,15 @@ export default function TemplateJobList({
     <>
       <div ref={gridRef} className="grid gap-4 grid-cols-2 sm:grid-cols-4">
         {paginatedJobs.map((job) => {
-          const isActive = job.status === 'queued' || job.status === 'processing';
-          const isFailedCard = job.status === 'failed';
+          const isProcessing = job.status === 'processing';
           const isQueued = job.status === 'queued';
+          const isFailedCard = job.status === 'failed';
           const isDeletingQueued = !!deletingQueuedIds[job.id];
           const resolvedUrl = getSignedUrl(job);
           const hasVideo = job.status === 'completed' && !!(job.signedUrl || job.outputUrl);
           const videoReady = hasVideo && resolvedUrl;
-          const progress = job.totalSteps > 0 ? Math.round((job.currentStep / job.totalSteps) * 100) : 0;
+          const { completedStepCount } = deriveTemplateJobStepState(job);
+          const progress = job.totalSteps > 0 ? Math.round((completedStepCount / job.totalSteps) * 100) : 0;
           const isLoaded = !!loadedById[job.id];
 
           return (
@@ -188,7 +190,7 @@ export default function TemplateJobList({
               key={job.id}
               onClick={() => setSelectedJob(job)}
               className={`group relative cursor-pointer overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] transition-shadow hover:shadow-lg ${
-                isActive ? 'ring-1 ring-[var(--primary)]/50' : ''
+                isProcessing ? 'ring-1 ring-[var(--primary)]/50' : ''
               }`}
             >
               {/* Thumbnail — 9:16 */}
@@ -222,10 +224,12 @@ export default function TemplateJobList({
                   <>
                     <LoadingShimmer />
                     <div className="absolute inset-0 flex items-center justify-center">
-                      {isActive ? (
+                      {isProcessing ? (
                         <Loader2 className="h-5 w-5 animate-spin text-[var(--primary)]" />
-                      ) : (
+                      ) : isQueued ? (
                         <span className="text-[10px] font-medium text-[var(--text-muted)]">Queued</span>
+                      ) : (
+                        <span className="text-[10px] font-medium text-[var(--text-muted)]">Pending</span>
                       )}
                     </div>
                   </>
@@ -255,7 +259,7 @@ export default function TemplateJobList({
                 )}
 
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 via-black/40 to-transparent px-2 pb-1.5 pt-8">
-                  {isActive && (
+                  {isProcessing && (
                     <div className="mb-1.5">
                       <div className="mb-1 flex items-center gap-1 text-[9px] text-white/85">
                         <Spinner className="h-2.5 w-2.5" />
@@ -345,20 +349,24 @@ export default function TemplateJobList({
         maxWidth="max-w-sm"
       >
         {liveJob && (() => {
-          const isActive = liveJob.status === 'queued' || liveJob.status === 'processing';
+          const isActive = liveJob.status === 'processing';
           const isFailed = liveJob.status === 'failed';
           const isCompleted = liveJob.status === 'completed';
           const isQueued = liveJob.status === 'queued';
-          const enabledSteps = liveJob.pipeline.filter((s) => s.enabled);
-          const completedSteps = isCompleted
-            ? enabledSteps.length
-            : Math.min(liveJob.currentStep, enabledSteps.length);
+          const {
+            enabledSteps,
+            normalizedStepResults,
+            completedStepIds,
+            completedStepCount,
+            activeStepIndex,
+            failedStepIndex,
+          } = deriveTemplateJobStepState(liveJob);
+          const completedSteps = completedStepCount;
           const progress = enabledSteps.length > 0
             ? Math.round((completedSteps / enabledSteps.length) * 100)
             : 0;
           const finalVideoSrc = liveJob.signedUrl || getSignedUrl(liveJob) || liveJob.outputUrl;
-          const stepResults: StepResult[] = liveJob.stepResults || [];
-          const completedStepIds = new Set(stepResults.map((r) => r.stepId));
+          const stepResults: StepResult[] = normalizedStepResults;
           const regenBusy = regenBusyJobId === liveJob.id;
 
           // Determine which video to show
@@ -447,9 +455,10 @@ export default function TemplateJobList({
                   <div className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Pipeline Steps</div>
                   <div className="flex flex-col gap-1">
                     {enabledSteps.map((step, i) => {
-                      let st: 'done' | 'active' | 'pending' = 'pending';
-                      if (i < liveJob.currentStep || isCompleted) st = 'done';
-                      else if (i === liveJob.currentStep && liveJob.status === 'processing') st = 'active';
+                      let st: 'done' | 'active' | 'failed' | 'pending' = 'pending';
+                      if (completedStepIds.has(step.id)) st = 'done';
+                      else if (isActive && i === activeStepIndex) st = 'active';
+                      else if (isFailed && i === failedStepIndex) st = 'failed';
 
                       const hasResult = stepResults.some((r) => r.stepId === step.id);
                       const isViewing = viewingStepId === step.id;
@@ -476,10 +485,10 @@ export default function TemplateJobList({
                             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
                               style={{
                                 backgroundColor: isViewing ? 'rgba(255,255,255,0.2)' : st === 'done' ? 'rgba(34,197,94,0.15)' : st === 'active' ? 'var(--accent)' : 'rgba(0,0,0,0.05)',
-                                color: isViewing ? 'white' : st === 'done' ? '#22c55e' : st === 'active' ? 'var(--primary)' : 'var(--text-muted)',
+                                color: isViewing ? 'white' : st === 'done' ? '#22c55e' : st === 'active' ? 'var(--primary)' : st === 'failed' ? '#f87171' : 'var(--text-muted)',
                               }}
                             >
-                              {st === 'done' ? <Check className="h-3 w-3" /> : st === 'active' ? <Loader2 className="h-3 w-3 animate-spin" /> : i + 1}
+                              {st === 'done' ? <Check className="h-3 w-3" /> : st === 'active' ? <Loader2 className="h-3 w-3 animate-spin" /> : st === 'failed' ? <AlertCircle className="h-3 w-3" /> : i + 1}
                             </span>
                             <span className="flex-1 capitalize truncate">{step.type.replace(/-/g, ' ')}</span>
                             {hasResult && (
