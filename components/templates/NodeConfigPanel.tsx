@@ -110,7 +110,7 @@ export default function NodeConfigPanel({
           </div>
         </div>
         <div className={`p-4 ${isExpanded ? '' : 'space-y-4'}`}>
-          <div className={isExpanded ? 'mx-auto max-w-2xl space-y-4' : 'space-y-4'}>
+          <div className={isExpanded ? (sourceConfig.videoSource === 'library' && masterMode ? 'mx-auto max-w-6xl space-y-4' : 'mx-auto max-w-2xl space-y-4') : 'space-y-4'}>
           <div className="flex gap-2">
             {(masterMode
               ? (['tiktok', 'upload', 'library', 'generate'] as const)
@@ -140,6 +140,7 @@ export default function NodeConfigPanel({
                 libraryVideos={sourceConfig.libraryVideos || {}}
                 onSelect={sourceConfig.onLibraryVideoSelect || (() => {})}
                 onRemove={sourceConfig.onLibraryVideoRemove || (() => {})}
+                isExpanded={isExpanded}
               />
               <LibraryVideoTrimPanel
                 masterModels={masterModels || []}
