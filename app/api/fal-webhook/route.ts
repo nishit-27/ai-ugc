@@ -4,7 +4,9 @@ import { fal } from '@fal-ai/client';
 import {
   initDatabase,
   getJobByFalRequestId,
+  getJobByRecoveryToken,
   getTemplateJobByFalRequestId,
+  getTemplateJobByRecoveryToken,
   getTemplateJob,
   updateJob,
   updateTemplateJob,
@@ -61,6 +63,7 @@ async function handleRegularJob(
       step: 'Done!',
       outputUrl: url,
       completedAt: new Date(),
+      falRecoveryToken: null,
     });
 
     console.log(`[Webhook] Job ${job.id} completed via webhook`);
@@ -113,6 +116,7 @@ async function handleTemplateJob(
         step: 'Done!',
         outputUrl: persistedOutputUrl,
         completedAt: new Date(),
+        falRecoveryToken: null,
       });
 
       if (job.pipelineBatchId) {
@@ -147,6 +151,7 @@ async function handleTemplateJob(
       stepResults,
       falRequestId: null,
       falEndpoint: null,
+      falRecoveryToken: null,
       error: null,
     });
 
@@ -170,6 +175,7 @@ async function handleTemplateJob(
       error: null,
       falRequestId: null,
       falEndpoint: null,
+      falRecoveryToken: null,
     });
 
     console.log(`[Webhook] Template job ${job.id} completed via webhook`);
@@ -185,6 +191,7 @@ async function handleTemplateJob(
       status: 'failed',
       step: 'Failed',
       error: error instanceof Error ? error.message : String(error),
+      falRecoveryToken: null,
     });
 
     const failedJob = await getTemplateJob(job.id);
@@ -198,6 +205,10 @@ async function handleTemplateJob(
 }
 
 export async function POST(request: NextRequest) {
+  const webhookJobType = request.nextUrl.searchParams.get('jobType');
+  const webhookJobId = request.nextUrl.searchParams.get('jobId');
+  const recoveryToken = request.nextUrl.searchParams.get('recoveryToken');
+
   // Parse body before responding — after() can't access the request body
   let body: Record<string, unknown>;
   try {
@@ -209,11 +220,14 @@ export async function POST(request: NextRequest) {
   const requestId = body.request_id as string | undefined;
   const status = body.status as string | undefined;
 
-  if (!requestId) {
-    return NextResponse.json({ error: 'Missing request_id' }, { status: 400 });
+  if (!requestId && !(webhookJobType && webhookJobId && recoveryToken)) {
+    return NextResponse.json({ error: 'Missing request_id and recovery metadata' }, { status: 400 });
   }
 
-  console.log(`[Webhook] Received callback for request_id=${requestId}, status=${status}`);
+  console.log(
+    `[Webhook] Received callback for request_id=${requestId ?? 'missing'}, ` +
+    `jobType=${webhookJobType ?? 'unknown'}, jobId=${webhookJobId ?? 'unknown'}, status=${status}`
+  );
 
   // Respond 200 immediately, do the heavy work in after()
   // FAL has a 15s delivery timeout and retries 10x over 2h
@@ -226,29 +240,39 @@ export async function POST(request: NextRequest) {
         const errorPayload = body.payload as { detail?: string } | undefined;
         const errorMsg = errorPayload?.detail || `FAL webhook error: ${status}`;
 
-        const job = await getJobByFalRequestId(requestId);
-        if (job) {
-          if (job.status === 'completed' || job.status === 'failed') return;
-          await updateJob(job.id, {
+        const job = requestId ? await getJobByFalRequestId(requestId) : null;
+        const fallbackJob = !job && webhookJobType === 'job' && webhookJobId && recoveryToken
+          ? await getJobByRecoveryToken(webhookJobId, recoveryToken)
+          : null;
+        const resolvedJob = job || fallbackJob;
+        if (resolvedJob) {
+          if (resolvedJob.status === 'completed' || resolvedJob.status === 'failed') return;
+          await updateJob(resolvedJob.id, {
             status: 'failed',
             step: 'Failed',
             error: errorMsg,
+            falRecoveryToken: null,
           });
-          if (job.batchId) await updateBatchProgress(job.batchId).catch(() => {});
-          console.log(`[Webhook] Job ${job.id} failed via webhook: ${errorMsg}`);
+          if (resolvedJob.batchId) await updateBatchProgress(resolvedJob.batchId).catch(() => {});
+          console.log(`[Webhook] Job ${resolvedJob.id} failed via webhook: ${errorMsg}`);
           return;
         }
 
-        const templateJob = await getTemplateJobByFalRequestId(requestId);
-        if (templateJob) {
-          if (templateJob.status === 'completed' || templateJob.status === 'failed') return;
-          await updateTemplateJob(templateJob.id, {
+        const templateJob = requestId ? await getTemplateJobByFalRequestId(requestId) : null;
+        const fallbackTemplateJob = !templateJob && webhookJobType === 'template' && webhookJobId && recoveryToken
+          ? await getTemplateJobByRecoveryToken(webhookJobId, recoveryToken)
+          : null;
+        const resolvedTemplateJob = templateJob || fallbackTemplateJob;
+        if (resolvedTemplateJob) {
+          if (resolvedTemplateJob.status === 'completed' || resolvedTemplateJob.status === 'failed') return;
+          await updateTemplateJob(resolvedTemplateJob.id, {
             status: 'failed',
             step: 'Failed',
             error: errorMsg,
+            falRecoveryToken: null,
           });
-          if (templateJob.pipelineBatchId) await updatePipelineBatchProgress(templateJob.pipelineBatchId).catch(() => {});
-          console.log(`[Webhook] Template job ${templateJob.id} failed via webhook: ${errorMsg}`);
+          if (resolvedTemplateJob.pipelineBatchId) await updatePipelineBatchProgress(resolvedTemplateJob.pipelineBatchId).catch(() => {});
+          console.log(`[Webhook] Template job ${resolvedTemplateJob.id} failed via webhook: ${errorMsg}`);
         }
         return;
       }
@@ -266,21 +290,37 @@ export async function POST(request: NextRequest) {
       }
 
       // Look up the job by fal_request_id
-      const job = await getJobByFalRequestId(requestId);
+      const job = requestId ? await getJobByFalRequestId(requestId) : null;
       if (job) {
         await handleRegularJob(job, videoUrl);
         return;
       }
 
-      const templateJob = await getTemplateJobByFalRequestId(requestId);
+      if (webhookJobType === 'job' && webhookJobId && recoveryToken) {
+        const fallbackJob = await getJobByRecoveryToken(webhookJobId, recoveryToken);
+        if (fallbackJob) {
+          await handleRegularJob(fallbackJob, videoUrl);
+          return;
+        }
+      }
+
+      const templateJob = requestId ? await getTemplateJobByFalRequestId(requestId) : null;
       if (templateJob) {
         await handleTemplateJob(templateJob, videoUrl);
         return;
       }
 
-      console.warn(`[Webhook] No job found for request_id=${requestId}`);
+      if (webhookJobType === 'template' && webhookJobId && recoveryToken) {
+        const fallbackTemplateJob = await getTemplateJobByRecoveryToken(webhookJobId, recoveryToken);
+        if (fallbackTemplateJob) {
+          await handleTemplateJob(fallbackTemplateJob, videoUrl);
+          return;
+        }
+      }
+
+      console.warn(`[Webhook] No job found for request_id=${requestId ?? 'missing'}, jobId=${webhookJobId ?? 'unknown'}`);
     } catch (error) {
-      console.error(`[Webhook] Error processing callback for request_id=${requestId}:`, error);
+      console.error(`[Webhook] Error processing callback for request_id=${requestId ?? 'missing'}:`, error);
     }
   });
 

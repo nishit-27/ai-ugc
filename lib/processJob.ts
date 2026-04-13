@@ -160,6 +160,7 @@ export async function processJob(
       completedAt: null,
       falRequestId: null,
       falEndpoint: null,
+      falRecoveryToken: null,
     });
 
     // Resolve social URL once — download, store in GCS, update DB
@@ -202,6 +203,11 @@ export async function processJob(
     fal.config({ credentials: falKey });
 
     const falEndpoint = 'fal-ai/kling-video/v2.6/standard/motion-control';
+    const falRecoveryToken = crypto.randomUUID();
+
+    await updateJob(jobId, {
+      falRecoveryToken,
+    });
 
     // Submit to FAL queue and store request_id IMMEDIATELY
     // so we can recover if the Lambda times out
@@ -213,7 +219,7 @@ export async function processJob(
         keep_original_sound: true,
         prompt: job.customPrompt || prompt,
       },
-      webhookUrl: getFalWebhookUrl(),
+      webhookUrl: getFalWebhookUrl({ jobType: 'job', jobId, recoveryToken: falRecoveryToken }),
     });
 
     // Save request_id to DB before waiting — critical for recovery
@@ -272,6 +278,7 @@ export async function processJob(
         step: 'Done!',
         outputUrl: url,
         completedAt: new Date(),
+        falRecoveryToken: null,
       });
     } finally {
       try { fs.unlinkSync(tempOutputPath); } catch {}
@@ -286,6 +293,7 @@ export async function processJob(
       status: 'failed',
       error: error instanceof Error ? error.message : String(error),
       step: 'Failed',
+      falRecoveryToken: null,
     });
 
     // Update batch progress on failure too
@@ -322,6 +330,7 @@ export async function processJobWithImage(
       completedAt: null,
       falRequestId: null,
       falEndpoint: null,
+      falRecoveryToken: null,
     });
 
     // Resolve social URL once — download, store in GCS, update DB
@@ -362,6 +371,11 @@ export async function processJobWithImage(
     fal.config({ credentials: falKey });
 
     const falEndpoint = 'fal-ai/kling-video/v2.6/standard/motion-control';
+    const falRecoveryToken = crypto.randomUUID();
+
+    await updateJob(jobId, {
+      falRecoveryToken,
+    });
 
     // Submit to FAL queue and store request_id IMMEDIATELY for recovery
     const { request_id } = await fal.queue.submit(falEndpoint, {
@@ -372,7 +386,7 @@ export async function processJobWithImage(
         keep_original_sound: true,
         prompt: job.customPrompt || prompt,
       },
-      webhookUrl: getFalWebhookUrl(),
+      webhookUrl: getFalWebhookUrl({ jobType: 'job', jobId, recoveryToken: falRecoveryToken }),
     });
 
     await updateJob(jobId, {
@@ -430,6 +444,7 @@ export async function processJobWithImage(
         step: 'Done!',
         outputUrl: url,
         completedAt: new Date(),
+        falRecoveryToken: null,
       });
 
       const completedJob = await getJob(jobId);
@@ -444,6 +459,7 @@ export async function processJobWithImage(
       status: 'failed',
       error: error instanceof Error ? error.message : String(error),
       step: 'Failed',
+      falRecoveryToken: null,
     });
 
     const failedJob = await getJob(jobId);

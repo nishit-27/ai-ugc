@@ -24,7 +24,7 @@ import fs from 'fs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120; // 2 min — recovery downloads + re-uploads videos
 
-const STUCK_THRESHOLD_MINUTES = 5; // 5 minutes (webhook handles fast path)
+const STUCK_THRESHOLD_MINUTES = 10; // Allow active invocations to finish before recovery takes over
 
 function getMissingFalRecoveryError(kind: 'job' | 'template-job'): string {
   if (kind === 'job') {
@@ -54,6 +54,7 @@ async function finalizeTemplateJobFromPersistedSteps(job: {
     step: 'Done! (recovered)',
     outputUrl: finalUrl,
     completedAt: new Date(),
+    falRecoveryToken: null,
   });
 
   if (job.pipelineBatchId) {
@@ -78,6 +79,7 @@ async function recoverJob(job: {
       status: 'failed',
       step: 'Failed',
       error: getMissingFalRecoveryError('job'),
+      falRecoveryToken: null,
     });
     if (job.batchId) await updateBatchProgress(job.batchId).catch(() => {});
     return { id: job.id, recovered: false, status: 'failed_no_request_id' };
@@ -106,6 +108,7 @@ async function recoverJob(job: {
           status: 'failed',
           step: 'Failed',
           error: 'FAL completed but no video URL in response.',
+          falRecoveryToken: null,
         });
         if (job.batchId) await updateBatchProgress(job.batchId).catch(() => {});
         return { id: job.id, recovered: false, status: 'no_video_url' };
@@ -133,6 +136,7 @@ async function recoverJob(job: {
           step: 'Done! (recovered)',
           outputUrl: url,
           completedAt: new Date(),
+          falRecoveryToken: null,
         });
 
         if (job.batchId) await updateBatchProgress(job.batchId).catch(() => {});
@@ -153,6 +157,7 @@ async function recoverJob(job: {
         status: 'failed',
         step: 'Failed',
         error: `FAL job status: ${falStatus}`,
+        falRecoveryToken: null,
       });
       if (job.batchId) await updateBatchProgress(job.batchId).catch(() => {});
       return { id: job.id, recovered: false, status: `fal_${falStatus}` };
@@ -193,6 +198,7 @@ async function recoverTemplateJob(job: {
       status: 'failed',
       step: 'Failed',
       error: getMissingFalRecoveryError('template-job'),
+      falRecoveryToken: null,
     });
     if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
     return { id: job.id, recovered: false, status: 'failed_no_request_id' };
@@ -219,6 +225,7 @@ async function recoverTemplateJob(job: {
           status: 'failed',
           step: 'Failed',
           error: 'FAL completed but no video URL in response.',
+          falRecoveryToken: null,
         });
         if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
         return { id: job.id, recovered: false, status: 'no_video_url' };
@@ -252,6 +259,7 @@ async function recoverTemplateJob(job: {
           stepResults,
           falRequestId: null,
           falEndpoint: null,
+          falRecoveryToken: null,
           error: null,
         });
 
@@ -275,6 +283,7 @@ async function recoverTemplateJob(job: {
           error: null,
           falRequestId: null,
           falEndpoint: null,
+          falRecoveryToken: null,
         });
         if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
         return { id: job.id, recovered: true, status: 'completed' };
@@ -294,6 +303,7 @@ async function recoverTemplateJob(job: {
         status: 'failed',
         step: 'Failed',
         error: `FAL job status: ${falStatus}`,
+        falRecoveryToken: null,
       });
       if (job.pipelineBatchId) await updatePipelineBatchProgress(job.pipelineBatchId).catch(() => {});
       return { id: job.id, recovered: false, status: `fal_${falStatus}` };

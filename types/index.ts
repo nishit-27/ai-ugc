@@ -11,6 +11,7 @@ export type Job = {
   signedUrl?: string;
   createdBy?: string;
   createdAt: string;
+  updatedAt?: string;
 };
 
 export type PostPlatform = {
@@ -327,6 +328,7 @@ export type TemplateJob = {
   error?: string;
   createdBy?: string;
   createdAt: string;
+  updatedAt?: string;
   completedAt?: string;
 };
 

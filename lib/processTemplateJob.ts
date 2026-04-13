@@ -178,6 +178,15 @@ async function persistTemplateFalRequest(
   }
 }
 
+async function persistTemplateFalRecoveryToken(
+  jobId: string,
+  falRecoveryToken: string,
+): Promise<void> {
+  await persistRequiredTemplateUpdate(jobId, {
+    falRecoveryToken,
+  }, 'FAL recovery token');
+}
+
 async function prepareSourceVideo(
   job: LoadedTemplateJob,
   jobId: string,
@@ -337,6 +346,8 @@ export async function processStep(
       if (cfg.mode === 'subtle-animation') {
         const veo = config.veoSettings;
         const falEndpoint = 'fal-ai/veo3.1/image-to-video';
+        const falRecoveryToken = crypto.randomUUID();
+        await persistTemplateFalRecoveryToken(jobId, falRecoveryToken);
         const { request_id } = await fal.queue.submit(falEndpoint, {
           input: {
             image_url: falImageUrl,
@@ -346,7 +357,7 @@ export async function processStep(
             resolution: (cfg.resolution || veo.resolution) as '720p' | '1080p',
             generate_audio: cfg.generateAudio ?? veo.generateAudio,
           },
-          webhookUrl: getFalWebhookUrl(),
+          webhookUrl: getFalWebhookUrl({ jobType: 'template', jobId, recoveryToken: falRecoveryToken }),
         });
         await persistTemplateFalRequest(
           jobId,
@@ -395,6 +406,8 @@ export async function processStep(
           if (trimmedPath) try { fs.unlinkSync(trimmedPath); } catch {}
         }
         const falEndpoint = 'fal-ai/kling-video/v2.6/standard/motion-control';
+        const falRecoveryToken = crypto.randomUUID();
+        await persistTemplateFalRecoveryToken(jobId, falRecoveryToken);
         const { request_id } = await fal.queue.submit(falEndpoint, {
           input: {
             image_url: falImageUrl,
@@ -403,7 +416,7 @@ export async function processStep(
             keep_original_sound: cfg.generateAudio ?? true,
             prompt: cfg.prompt || config.prompt,
           },
-          webhookUrl: getFalWebhookUrl(),
+          webhookUrl: getFalWebhookUrl({ jobType: 'template', jobId, recoveryToken: falRecoveryToken }),
         });
         await persistTemplateFalRequest(
           jobId,
@@ -639,6 +652,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       completedAt: null,
       falRequestId: null,
       falEndpoint: null,
+      falRecoveryToken: null,
       ...(resuming ? {} : { currentStep: 0, stepResults: null }),
     }, 'processing status');
 
@@ -657,6 +671,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
         error: null,
         falRequestId: null,
         falEndpoint: null,
+        falRecoveryToken: null,
       });
 
       if (job.pipelineBatchId) {
@@ -884,6 +899,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
         stepResults,
         falRequestId: null,
         falEndpoint: null,
+        falRecoveryToken: null,
       }, `completion of step ${i + 1}`);
     }
     // Determine final output URL
@@ -905,6 +921,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
       error: null,
       falRequestId: null,
       falEndpoint: null,
+      falRecoveryToken: null,
     }, 'final completion state');
     if (job.pipelineBatchId) {
       try {
@@ -927,6 +944,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
           error: null,
           falRequestId: null,
           falEndpoint: null,
+          falRecoveryToken: null,
         });
         if (job?.pipelineBatchId) {
           try {
@@ -945,6 +963,7 @@ export async function processTemplateJob(jobId: string, fromStepIndex?: number):
         status: 'failed',
         step: 'Failed',
         error: errMsg + errCause,
+        falRecoveryToken: null,
       });
     } catch (updateErr) {
       console.error(`[Template] Failed to mark job ${jobId} as failed:`, updateErr);

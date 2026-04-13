@@ -16,10 +16,16 @@ function parseBoundedPositiveInt(
   return Math.min(parsed, max);
 }
 
-export function getFalWebhookUrl(): string | undefined {
+export function getFalWebhookUrl(params?: Record<string, string | undefined>): string | undefined {
   const appUrl = getAppUrl();
   if (!appUrl) return undefined;
-  return `${appUrl}/api/fal-webhook`;
+  const url = new URL('/api/fal-webhook', appUrl);
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, value);
+    }
+  }
+  return url.toString();
 }
 
 function getSocialApiKeys(): string[] {

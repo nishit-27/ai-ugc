@@ -30,8 +30,10 @@ export const jobs = pgTable('jobs', {
   batchId: uuid('batch_id').references(() => batches.id, { onDelete: 'set null' }),
   falRequestId: text('fal_request_id'),
   falEndpoint: text('fal_endpoint'),
+  falRecoveryToken: text('fal_recovery_token'),
   createdBy: text('created_by'),
   createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
   completedAt: timestamp('completed_at'),
 });
 
@@ -149,8 +151,10 @@ export const templateJobs = pgTable('template_jobs', {
   timezoneOverride: text('timezone_override'),
   falRequestId: text('fal_request_id'),
   falEndpoint: text('fal_endpoint'),
+  falRecoveryToken: text('fal_recovery_token'),
   createdBy: text('created_by'),
   createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
   completedAt: timestamp('completed_at'),
 }, (t) => [
   index('idx_template_jobs_pipeline_batch_id').on(t.pipelineBatchId),
