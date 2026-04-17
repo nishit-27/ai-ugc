@@ -2,12 +2,8 @@
   "regions": ["sin1"],
   "crons": [
     {
-      "path": "/api/analytics/cron",
-      "schedule": "30 0 * * *"
-    },
-    {
-      "path": "/api/analytics/cron?mode=full",
-      "schedule": "30 21 * * 0"
+      "path": "/api/late-analytics/sync",
+      "schedule": "0 1 * * *"
     }
   ]
 }

@@ -234,7 +234,7 @@ export default function AgentPage() {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendLockRef = useRef(false);
@@ -759,7 +759,10 @@ function MessageBubble({ message, isLastAssistantBusy }: { message: ChatMessage;
 function MarkdownLite({ text }: { text: string }) {
   const blocks = useMemo(() => splitCodeBlocks(text), [text]);
   return (
-    <div className="prose prose-sm max-w-none text-[var(--text-primary)]">
+    <div
+      className="prose prose-sm min-w-0 max-w-none text-[var(--text-primary)]"
+      style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+    >
       {blocks.map((b, i) =>
         b.type === 'code' ? (
           <pre

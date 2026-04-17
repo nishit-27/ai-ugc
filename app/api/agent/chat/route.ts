@@ -3,6 +3,12 @@ import { GoogleGenAI, type FunctionDeclaration, type Part } from '@google/genai'
 import { neon } from '@neondatabase/serverless';
 import { config } from '@/lib/config';
 import { auth } from '@/lib/auth';
+import { getApiKeys, fetchFromAllKeys } from '@/lib/lateAccountPool';
+import { lateApiRequest } from '@/lib/lateApi';
+import {
+  extractLateAnalyticsPosts,
+  normalizeLateAnalyticsPost,
+} from '@/lib/late-analytics-normalize';
 import {
   ensureAgentChatsTables,
   getAgentChat,
@@ -33,9 +39,14 @@ Instagram Reels, YouTube Shorts).
 3. Completed videos are published to social platforms via Zernio/Late API → rows land in the
    "posts" table (accountId, lateAccountId, caption, platform, status, scheduledFor, publishedAt,
    platformPostUrl, latePostId). Posts can be scheduled or published-now.
-4. Analytics are pulled back in from TikTok/Instagram/YouTube and stored. **These are the
-   authoritative tables for every performance question** — the "/analytics" and "/late-analytics"
-   dashboards both read from them:
+4. Analytics are pulled back in from TikTok/Instagram/YouTube and the Late (Zernio) API and
+   stored in these tables. **They are the authoritative source for every performance question**
+   — both the "/analytics" and "/late-analytics" dashboards read from them. Two cron jobs keep
+   them fresh daily: the native-platform sync at 00:30 UTC and the Late-API sync at 01:00 UTC.
+   Each media row carries a snapshot in analytics_media_snapshots, so you can compare
+   today-vs-yesterday or today-vs-last-week by joining to snapshot_date. If the user asks
+   "how fresh is this data", check analytics_accounts.last_synced_at and
+   MAX(analytics_media_snapshots.snapshot_date):
      - analytics_accounts          → per-account totals. Columns: platform, username, display_name,
                                      account_id, late_account_id, profile_url, followers,
                                      total_views, total_likes, total_comments, total_shares,
@@ -72,25 +83,52 @@ Instagram Reels, YouTube Shorts).
 
 ## Formatting rules (STRICT)
 
-  - When citing an account, use \`[@username](profile_url)\` where \`profile_url\` is the EXACT
-    value from analytics_accounts.profile_url. Do NOT construct URLs yourself.
+  - When citing an account, use \`[@username](profile_url)\`.
+      1. Prefer the exact value of analytics_accounts.profile_url.
+      2. If profile_url is null, CONSTRUCT the canonical profile URL from platform + username:
+         - tiktok    → https://www.tiktok.com/@{username}
+         - instagram → https://www.instagram.com/{username}/
+         - youtube   → https://www.youtube.com/@{username}
+      3. NEVER use thumbnail_url, any *.cdninstagram.com / *.googleusercontent.com / any image
+         host, or any metadata JSON field as a profile link. Those are image URLs — they render
+         a photo, not a profile page.
   - When citing a video/post, use \`[caption preview…](url)\` where \`url\` is the EXACT value
-    from analytics_media_items.url (or posts.platform_post_url). Never guess, never build URLs
-    from handles. If you don't have the URL column in your result, re-run the SELECT to include it.
-  - If a URL column is null in the DB, mention the handle + platform in plain text and explicitly
-    say "(no direct link stored)".
+    of analytics_media_items.url or posts.platform_post_url. If that column is null, link to
+    the account instead and say "(no per-video URL stored)".
   - NEVER output raw URLs wrapped as \`[url](url)\` or prefixed with 🔗. One clean Markdown link
     per citation.
+  - Keep link labels short — the handle or a trimmed caption (≤ 60 chars). Do not put long URLs
+    in the visible text.
   - Use a short numbered list when ranking items. Put the key metric at the start of each bullet
     (views, engagement rate) so humans can scan.
 
-## Web tools
+## Tool selection
 
-You also have Google Search and URL-context grounding. Use them when:
-  - The user asks about something outside the DB (trends, competitors, platform updates).
-  - You need to verify/complete a profile link we don't have stored.
-  - The user asks "look up X on TikTok/Instagram" etc.
-Do NOT use web search to make up numbers for things that should come from our DB.
+You have FIVE tools. Pick the right one:
+
+  1. **fetch_late_posts** — LIVE call to Zernio/Late's /analytics endpoint
+     (same source as the "Analytics (New)" dashboard). Freshest per-post
+     numbers and the canonical platform URL. **Prefer this for any "current
+     performance / top / latest / best / worst / top videos mentioning X"
+     question.** Use the returned \`url\` on each platform entry for links.
+  2. **fetch_late_followers** — LIVE follower/subscriber counts per account.
+     Use for "biggest accounts", "most followers", growth comparisons.
+  3. **run_sql** — our Neon DB. Use for: historical trends
+     (analytics_media_snapshots, analytics_account_snapshots), joins to our
+     internal tables (template_jobs, pipeline_batches, posts,
+     custom_variables, job_variable_values, media_variable_values), and
+     anything Late doesn't have (captions A/B, batches, variable
+     correlations). DB metrics may be stale — when asked "right now",
+     reach for Late tools first.
+  4. **describe_table** — column introspection before writing SQL.
+  5. **list_tables** — table discovery.
+
+Rule of thumb: live numbers → Late tools. Cross-joins to our internal
+metadata → SQL. When in doubt call both, and cite the live Late number as
+authoritative.
+
+You do NOT have general web search. If the question needs the open web
+(competitors, platform announcements), say so.
 
 ## Your job
 
@@ -171,6 +209,134 @@ async function describeTable(tableName: string) {
   };
 }
 
+// ── Late (Zernio) API tools — live data, no DB involvement ─────────────────
+
+type LateFilter = {
+  platform?: 'tiktok' | 'instagram' | 'youtube';
+  fromDate?: string; // YYYY-MM-DD
+  toDate?: string;   // YYYY-MM-DD
+  sortBy?: 'date' | 'engagement';
+  order?: 'asc' | 'desc';
+  captionContains?: string; // client-side filter after fetch
+  username?: string; // client-side filter after fetch
+  limit?: number; // max rows to return (1-50)
+};
+
+function buildLateQs(f: LateFilter, page: number, pageSize: number): string {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(pageSize));
+  qs.set('page', String(page));
+  qs.set('sortBy', f.sortBy === 'engagement' ? 'engagement' : 'date');
+  qs.set('order', f.order === 'asc' ? 'asc' : 'desc');
+  if (f.platform) qs.set('platform', f.platform);
+  if (f.fromDate) qs.set('fromDate', f.fromDate);
+  if (f.toDate) qs.set('toDate', f.toDate);
+  return qs.toString();
+}
+
+async function fetchLatePosts(f: LateFilter) {
+  const keys = getApiKeys();
+  if (keys.length === 0) return { error: 'No LATE_API_KEYS configured' };
+  const limit = Math.max(1, Math.min(50, f.limit ?? 20));
+  const pageSize = 100;
+
+  const all: unknown[] = [];
+  // One page per key is enough for most agent queries — 100 posts × N keys.
+  // If the agent needs more, it can narrow with date filters.
+  const keyResults = await Promise.allSettled(
+    keys.map((apiKey) =>
+      lateApiRequest<unknown>(`/analytics?${buildLateQs(f, 1, pageSize)}`, { apiKey }),
+    ),
+  );
+  for (const r of keyResults) {
+    if (r.status === 'fulfilled') all.push(...extractLateAnalyticsPosts(r.value));
+  }
+
+  let normalized = all.map((raw) =>
+    normalizeLateAnalyticsPost(raw as Parameters<typeof normalizeLateAnalyticsPost>[0]),
+  );
+
+  if (f.captionContains) {
+    const needle = f.captionContains.toLowerCase();
+    normalized = normalized.filter((p) => (p.content || '').toLowerCase().includes(needle));
+  }
+  if (f.username) {
+    const handle = f.username.replace(/^@/, '').toLowerCase();
+    normalized = normalized.filter((p) =>
+      p.platforms.some((pe) => pe.accountUsername.toLowerCase() === handle),
+    );
+  }
+  if (f.platform) {
+    normalized = normalized.filter((p) => p.platforms.some((pe) => pe.platform === f.platform));
+  }
+
+  // Slim the payload: drop zero-filled metrics, keep what matters.
+  const rows = normalized.slice(0, limit).map((p) => ({
+    id: p._id,
+    publishedAt: p.publishedAt,
+    caption: (p.content || '').slice(0, 240),
+    url: p.platformPostUrl || null,
+    thumbnailUrl: p.thumbnailUrl || null,
+    platforms: p.platforms.map((pe) => ({
+      platform: pe.platform,
+      username: pe.accountUsername,
+      url: pe.platformPostUrl || null,
+      publishedAt: pe.publishedAt || null,
+      views: pe.analytics.views,
+      likes: pe.analytics.likes,
+      comments: pe.analytics.comments,
+      shares: pe.analytics.shares,
+      saves: pe.analytics.saves,
+      engagementRate: Math.round(pe.analytics.engagementRate * 100) / 100,
+    })),
+  }));
+
+  return {
+    source: 'late-live',
+    totalMatched: normalized.length,
+    returned: rows.length,
+    posts: rows,
+  };
+}
+
+async function fetchLateFollowers(limit = 50): Promise<Record<string, unknown>> {
+  const keys = getApiKeys();
+  if (keys.length === 0) return { error: 'No LATE_API_KEYS configured' };
+
+  const results = await fetchFromAllKeys<{ accounts?: Array<Record<string, unknown>> }>(
+    '/accounts/follower-stats',
+  );
+  const seen = new Set<string>();
+  const rows: Array<Record<string, unknown>> = [];
+  for (const { data } of results) {
+    const items: Array<Record<string, unknown>> = Array.isArray(data)
+      ? (data as Array<Record<string, unknown>>)
+      : (data as { accounts?: Array<Record<string, unknown>> })?.accounts || [];
+    for (const item of items) {
+      const id = (item._id || item.accountId || item.id) as string | undefined;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const followers =
+        (item.followers as number | undefined) ??
+        (item.followerCount as number | undefined) ??
+        (item.subscriberCount as number | undefined) ??
+        0;
+      rows.push({
+        accountId: id,
+        platform: item.platform,
+        username: item.username,
+        displayName: item.displayName,
+        followers,
+        profileUrl: item.profileUrl || item.profilePicture,
+      });
+    }
+  }
+  rows.sort((a, b) => Number(b.followers || 0) - Number(a.followers || 0));
+  return { source: 'late-live', count: rows.length, accounts: rows.slice(0, Math.max(1, Math.min(200, limit))) };
+}
+
+// ── SQL tool ─────────────────────────────────────────────────────────────────
+
 async function runSql(query: string, limit = 200) {
   const check = validateReadOnlySql(query);
   if (!check.ok) return { error: `Query rejected: ${check.reason}` };
@@ -218,6 +384,35 @@ const tools: FunctionDeclaration[] = [
       required: ['query'],
     },
   },
+  {
+    name: 'fetch_late_posts',
+    description:
+      'Query the Zernio/Late analytics API live (same source as the "Analytics (New)" dashboard). Returns the freshest per-post metrics — views, likes, comments, shares, saves, engagementRate — plus the direct platform URL for every video Late tracks. USE THIS FIRST for any question about current performance of real posts; fall back to run_sql only for historical/trend queries that need DB snapshots.',
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        platform: { type: 'string', enum: ['tiktok', 'instagram', 'youtube'], description: 'Optional platform filter.' },
+        fromDate: { type: 'string', description: 'YYYY-MM-DD inclusive lower bound on publishedAt.' },
+        toDate: { type: 'string', description: 'YYYY-MM-DD inclusive upper bound on publishedAt.' },
+        sortBy: { type: 'string', enum: ['date', 'engagement'], description: 'Server-side sort. Default "date".' },
+        order: { type: 'string', enum: ['asc', 'desc'], description: 'Sort direction. Default "desc".' },
+        captionContains: { type: 'string', description: 'Client-side substring filter on caption (case-insensitive). Useful for tag searches like "runable".' },
+        username: { type: 'string', description: 'Client-side filter on account handle (no @).' },
+        limit: { type: 'integer', description: 'Max posts to return (1-50). Default 20.' },
+      },
+    },
+  },
+  {
+    name: 'fetch_late_followers',
+    description:
+      'Live follower counts (and subscriber counts for YouTube) for every connected account, pulled from Zernio/Late. Use when the user asks about follower counts, growth, or biggest accounts.',
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', description: 'Max accounts to return (1-200). Default 50.' },
+      },
+    },
+  },
 ];
 
 type ToolArgs = Record<string, unknown>;
@@ -229,6 +424,13 @@ async function executeTool(name: string, args: ToolArgs): Promise<Record<string,
     if (name === 'run_sql') {
       const limit = typeof args.limit === 'number' ? Math.max(1, Math.min(1000, args.limit)) : 200;
       return await runSql(String(args.query), limit);
+    }
+    if (name === 'fetch_late_posts') {
+      return await fetchLatePosts(args as LateFilter);
+    }
+    if (name === 'fetch_late_followers') {
+      const limit = typeof args.limit === 'number' ? args.limit : 50;
+      return await fetchLateFollowers(limit);
     }
     return { error: `Unknown tool: ${name}` };
   } catch (err) {
@@ -330,11 +532,9 @@ export async function POST(req: Request) {
             contents: history as unknown as Parameters<typeof ai.models.generateContentStream>[0]['contents'],
             config: {
               systemInstruction: PRODUCT_CONTEXT,
-              tools: [
-                { functionDeclarations: tools },
-                { googleSearch: {} },
-                { urlContext: {} },
-              ],
+              // NOTE: cannot mix googleSearch/urlContext with functionDeclarations
+              // until the SDK exposes tool_config.include_server_side_tool_invocations.
+              tools: [{ functionDeclarations: tools }],
               temperature: 0.2,
             },
           });
