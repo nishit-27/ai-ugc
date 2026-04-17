@@ -472,6 +472,32 @@ export const lateProfileApiKeys = pgTable('late_profile_api_keys', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+// ── Agent Chats ──
+
+export const agentChats = pgTable('agent_chats', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  title: text('title').notNull().default('New chat'),
+  createdBy: text('created_by'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (t) => [
+  index('idx_agent_chats_updated_at').on(t.updatedAt),
+]);
+
+export const agentChatMessages = pgTable('agent_chat_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  chatId: uuid('chat_id').notNull().references(() => agentChats.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(),
+  content: text('content').notNull().default(''),
+  toolCalls: jsonb('tool_calls'),
+  createdBy: text('created_by'),
+  createdByName: text('created_by_name'),
+  createdByImage: text('created_by_image'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => [
+  index('idx_agent_chat_messages_chat_id').on(t.chatId, t.createdAt),
+]);
+
 // ── Twitter Pipelines ──
 
 export const twitterPipelines = pgTable('twitter_pipelines', {

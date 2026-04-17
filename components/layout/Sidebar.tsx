@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Sparkles, UserCircle, Package, FileText, Link2, ListVideo, LayoutTemplate, ClipboardList, ImageIcon, Crown, LogOut, Video, LayoutGrid, BarChart3, TrendingUp, Tag, FolderOpen, Trash2, DollarSign, Twitter } from 'lucide-react';
+import { GeminiIcon } from '@/components/agent';
 import { useSession, signOut } from 'next-auth/react';
 import {
   Sidebar,
@@ -40,6 +41,10 @@ const contentItems = [
   { href: '/delete', label: 'Delete Videos', icon: Trash2 },
 ];
 
+const agentItems = [
+  { href: '/agent', label: 'Agent', icon: GeminiIcon },
+];
+
 const settingsItems = [
   { href: '/models', label: 'Models', icon: UserCircle },
   { href: '/model-groups', label: 'Model Groups', icon: FolderOpen },
@@ -52,7 +57,8 @@ export default function AppSidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
 
-  const renderGroup = (items: typeof createItems) =>
+  type NavItem = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
+  const renderGroup = (items: readonly NavItem[]) =>
     items.map((item) => {
       const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
       const Icon = item.icon;
@@ -102,6 +108,18 @@ export default function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu className="gap-1">
               {renderGroup(contentItems)}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarSeparator />
+
+        {/* Agent */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-semibold">Agent</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu className="gap-1">
+              {renderGroup(agentItems)}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
