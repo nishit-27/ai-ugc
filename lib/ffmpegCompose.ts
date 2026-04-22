@@ -1,15 +1,10 @@
 import { execFileSync } from 'child_process';
-import ffmpegPath from 'ffmpeg-static';
-import ffprobePath from '@ffprobe-installer/ffprobe';
+import { getFfmpeg, getFfprobe } from './ffmpegBinaries';
 import type { ComposeConfig } from '@/types';
-
-const FFPROBE_PATH = typeof ffprobePath === 'string' ? ffprobePath : (ffprobePath as { path: string }).path;
-const FFMPEG = ffmpegPath || 'ffmpeg';
-const FFPROBE = FFPROBE_PATH || 'ffprobe';
 
 function probeDuration(filePath: string): number {
   try {
-    const output = execFileSync(FFPROBE, [
+    const output = execFileSync(getFfprobe(), [
       '-v', 'error',
       '-show_entries', 'format=duration',
       '-of', 'default=noprint_wrappers=1:nokey=1',
@@ -139,7 +134,7 @@ export function composeMedia(
         const filePath = layerPaths.get(layer.id);
         if (filePath) {
           try {
-            const probeOut = execFileSync(FFPROBE, [
+            const probeOut = execFileSync(getFfprobe(), [
               '-v', 'error', '-select_streams', 'a',
               '-show_entries', 'stream=index', '-of', 'csv=p=0',
               filePath,
@@ -174,5 +169,5 @@ export function composeMedia(
     outputPath,
   ];
 
-  execFileSync(FFMPEG, args, { timeout: 300000, maxBuffer: 50 * 1024 * 1024 });
+  execFileSync(getFfmpeg(), args, { timeout: 300000, maxBuffer: 50 * 1024 * 1024 });
 }

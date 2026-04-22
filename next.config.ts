@@ -14,7 +14,15 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/api/templates': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
     '/api/templates/[id]': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
-    '/api/video-duration': ['./node_modules/@ffprobe-installer/**'],
+    '/api/templates/[id]/process': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
+    '/api/templates/[id]/regenerate': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
+    '/api/templates/[id]/regen-step': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
+    '/api/templates/master': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
+    '/api/video-duration': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**'],
+    '/api/extract-frames': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**'],
+    '/api/extract-timeline-frames': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**'],
+    '/api/fal-webhook': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
+    '/api/recover-stuck-jobs': ['./node_modules/ffmpeg-static/**', './node_modules/@ffprobe-installer/**', './lib/fonts/**'],
     '/api/generate-first-frame': ['./node_modules/@fal-ai/**'],
   },
 };

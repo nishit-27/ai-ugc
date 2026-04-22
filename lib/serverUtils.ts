@@ -4,12 +4,8 @@ import https from 'https'
 import http from 'http'
 import os from 'os'
 import path from 'path'
-import ffmpegPath from 'ffmpeg-static'
-import ffprobePath from '@ffprobe-installer/ffprobe'
+import { getFfmpeg, getFfprobe } from './ffmpegBinaries'
 import { isRetryableError, retry } from './retry'
-
-const FFMPEG = ffmpegPath || 'ffmpeg'
-const FFPROBE = (typeof ffprobePath === 'string' ? ffprobePath : (ffprobePath as { path: string }).path) || 'ffprobe'
 
 /** Get MIME content type from a URL by inspecting its extension */
 export function getContentType(url: string): string {
@@ -46,7 +42,7 @@ export function getExtensionFromUrl(url: string): string {
 
 /** Get video duration in seconds using ffprobe */
 export function getVideoDuration(filePath: string): number {
-  const output = execFileSync(FFPROBE, [
+  const output = execFileSync(getFfprobe(), [
     '-v', 'error',
     '-show_entries', 'format=duration',
     '-of', 'default=noprint_wrappers=1:nokey=1',
@@ -57,7 +53,7 @@ export function getVideoDuration(filePath: string): number {
 
 /** Trim a video to maxSeconds using ffmpeg */
 export function trimVideo(inputPath: string, outputPath: string, maxSeconds: number): void {
-  execFileSync(FFMPEG, [
+  execFileSync(getFfmpeg(), [
     '-y',
     '-i', inputPath,
     '-t', String(maxSeconds),
@@ -88,7 +84,7 @@ export function extractRandomFrames(videoPath: string, count = 10): Array<{ time
   try {
     for (const ts of timestamps) {
       const outPath = path.join(tmpDir, `frame-${ts.toFixed(3)}.jpg`)
-      execFileSync(FFMPEG, [
+      execFileSync(getFfmpeg(), [
         '-ss', String(ts),
         '-i', videoPath,
         '-vframes', '1',
@@ -128,7 +124,7 @@ export function extractEvenlySpacedFrames(
   try {
     for (const ts of timestamps) {
       const outPath = path.join(tmpDir, `frame-${ts.toFixed(3)}.jpg`)
-      execFileSync(FFMPEG, [
+      execFileSync(getFfmpeg(), [
         '-ss', String(ts),
         '-i', videoPath,
         '-vframes', '1',
@@ -157,7 +153,7 @@ export function trimVideoRange(
   endSec: number,
 ): void {
   const duration = endSec - startSec
-  execFileSync(FFMPEG, [
+  execFileSync(getFfmpeg(), [
     '-y',
     '-ss', String(startSec),
     '-i', inputPath,

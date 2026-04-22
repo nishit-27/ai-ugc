@@ -2,18 +2,14 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
-import ffmpegPath from 'ffmpeg-static';
-import ffprobePath from '@ffprobe-installer/ffprobe';
+import { getFfmpeg, getFfprobe } from '@/lib/ffmpegBinaries';
 import { cleanupTempWorkspace, createTempWorkspace } from '@/lib/tempWorkspace';
 import {
   TEXT_OVERLAY_CJK_FONT_FAMILY,
   wrapTextForOverlay,
   containsCjkGlyphs,
 } from '@/lib/textOverlayLayout';
-const FFPROBE_PATH = typeof ffprobePath === 'string' ? ffprobePath : (ffprobePath as { path: string }).path;
 import type { TextOverlayConfig } from '@/types';
-const FFMPEG = ffmpegPath || 'ffmpeg';
-const FFPROBE = FFPROBE_PATH || 'ffprobe';
 const FONT_FILE_MAP: Record<string, string> = {
   'sans-serif':                'Inter-Bold.ttf',
   'Impact, sans-serif':        'Anton-Regular.ttf',
@@ -109,7 +105,7 @@ function getBundledFont(fontFamily?: string, italic = false): string {
  */
 function probeVideoSize(filePath: string): { width: number; height: number } {
   try {
-    const probe = execFileSync(FFPROBE, [
+    const probe = execFileSync(getFfprobe(), [
       '-v', 'error',
       '-select_streams', 'v:0',
       '-show_entries', 'stream=width,height',
@@ -473,7 +469,7 @@ export async function addTextOverlay(
         enableExpr = `:enable='gte(t,${start})'`;
       }
     }
-    execFileSync(FFMPEG, [
+    execFileSync(getFfmpeg(), [
       '-y',
       '-i', inputPath,
       '-i', overlayPng,
