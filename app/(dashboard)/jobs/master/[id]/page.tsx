@@ -51,8 +51,73 @@ export default function MasterBatchDetailPage() {
   const [signedModelImages, setSignedModelImages] = useState<Record<string, string>>({});
   const [jobPosts, setJobPosts] = useState<Record<string, { platform: string; status: string; platformPostUrl?: string; latePostId?: string }[]>>({});
 
+  const failedUploadsStorageKey = `master-batch-failed-uploads:${id}`;
+  const [failedUploadJobIds, setFailedUploadJobIds] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const raw = window.localStorage.getItem(`master-batch-failed-uploads:${id}`);
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []);
+    } catch {
+      return new Set();
+    }
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(failedUploadsStorageKey, JSON.stringify(Array.from(failedUploadJobIds)));
+    } catch {}
+  }, [failedUploadJobIds, failedUploadsStorageKey]);
+
+  const applyPostResults = useCallback((
+    results: Array<{ jobId?: string; status?: string }> | undefined,
+    attemptedJobIds: string[],
+    networkFailed: boolean,
+  ) => {
+    setFailedUploadJobIds((prev) => {
+      const next = new Set(prev);
+      if (networkFailed) {
+        for (const jid of attemptedJobIds) next.add(jid);
+        return next;
+      }
+      const seen = new Set<string>();
+      if (Array.isArray(results)) {
+        for (const r of results) {
+          if (!r?.jobId) continue;
+          seen.add(r.jobId);
+          if (r.status === 'posted') next.delete(r.jobId);
+          else if (r.status === 'failed') next.add(r.jobId);
+        }
+      }
+      for (const jid of attemptedJobIds) {
+        if (!seen.has(jid)) next.add(jid);
+      }
+      return next;
+    });
+  }, []);
+
   const masterConfig: MasterConfig | undefined = batch?.masterConfig;
   const jobs = useMemo<TemplateJob[]>(() => batch?.jobs || [], [batch?.jobs]);
+
+  const postedJobIdsKey = useMemo(
+    () => jobs.filter((j) => j.postStatus === 'posted').map((j) => j.id).join(','),
+    [jobs],
+  );
+  useEffect(() => {
+    if (!postedJobIdsKey) return;
+    const postedIds = postedJobIdsKey.split(',');
+    setFailedUploadJobIds((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Set(prev);
+      for (const jid of postedIds) {
+        if (next.delete(jid)) changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [postedJobIdsKey]);
 
   // Build model name + image lookup from masterConfig
   const modelNameMap = useMemo(() => {
@@ -169,9 +234,8 @@ export default function MasterBatchDetailPage() {
   const handlePostSelected = async () => {
     if (selectedJobIds.size === 0 || posting) return;
     setPosting(true);
+    const ids = Array.from(selectedJobIds);
     try {
-      const ids = Array.from(selectedJobIds);
-
       const res = await fetch(`/api/templates/master/${id}/post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -179,8 +243,10 @@ export default function MasterBatchDetailPage() {
       });
       const data = await res.json();
       if (!res.ok) {
+        applyPostResults(undefined, ids, true);
         showToast(data.error || 'Failed to approve videos', 'error');
       } else {
+        applyPostResults(data.results, ids, false);
         const posted = Number(data.summary?.posted || 0);
         const skipped = Number(data.summary?.skipped || 0);
         const failed = Number(data.summary?.failed || 0);
@@ -200,6 +266,7 @@ export default function MasterBatchDetailPage() {
       setSelectedJobIds(new Set());
       await loadBatch();
     } catch {
+      applyPostResults(undefined, ids, true);
       showToast('Failed to approve videos', 'error');
     } finally {
       setPosting(false);
@@ -240,6 +307,7 @@ export default function MasterBatchDetailPage() {
         clearTimeout(timeout);
       }
       const data = await res.json();
+      applyPostResults(res.ok ? data.results : undefined, [jobId], !res.ok);
       if (res.ok && data.summary?.posted > 0) {
         showToast('Approved & posted!', 'success');
       } else if (res.ok && data.summary?.skipped > 0) {
@@ -275,6 +343,7 @@ export default function MasterBatchDetailPage() {
       setModalJob(null);
       await loadBatch();
     } catch (err) {
+      applyPostResults(undefined, [jobId], true);
       const msg = err instanceof Error && err.name === 'AbortError'
         ? 'Approve timed out — check server logs'
         : 'Failed to approve';
@@ -500,8 +569,8 @@ export default function MasterBatchDetailPage() {
     if (selectableJobs.length === 0 || posting) return;
     if (!confirm(`Approve all ${selectableJobs.length} videos?`)) return;
     setPosting(true);
+    const ids = selectableJobs.map((job) => job.id);
     try {
-      const ids = selectableJobs.map((job) => job.id);
       const res = await fetch(`/api/templates/master/${id}/post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -509,8 +578,10 @@ export default function MasterBatchDetailPage() {
       });
       const data = await res.json();
       if (!res.ok) {
+        applyPostResults(undefined, ids, true);
         showToast(data.error || 'Failed to approve all', 'error');
       } else {
+        applyPostResults(data.results, ids, false);
         const posted = Number(data.summary?.posted || 0);
         const skipped = Number(data.summary?.skipped || 0);
         const failed = Number(data.summary?.failed || 0);
@@ -528,6 +599,7 @@ export default function MasterBatchDetailPage() {
       }
       await loadBatch();
     } catch {
+      applyPostResults(undefined, ids, true);
       showToast('Failed to approve all', 'error');
     } finally {
       setPosting(false);
@@ -596,6 +668,7 @@ export default function MasterBatchDetailPage() {
         onEditRegenerateJob={openRegenerateModal}
         onEditJobOverrides={setEditOverridesJob}
         jobsWithOverrides={jobsWithOverrides}
+        failedUploadJobIds={failedUploadJobIds}
       />
 
       <MasterBatchSelectionBar

@@ -24,6 +24,7 @@ type Props = {
   onEditRegenerateJob: (job: TemplateJob) => void;
   onEditJobOverrides?: (job: TemplateJob) => void;
   jobsWithOverrides?: Set<string>;
+  failedUploadJobIds?: Set<string>;
 };
 
 export default function MasterBatchVideoGrid({
@@ -46,6 +47,7 @@ export default function MasterBatchVideoGrid({
   onEditRegenerateJob,
   onEditJobOverrides,
   jobsWithOverrides,
+  failedUploadJobIds,
 }: Props) {
   return (
     <div>
@@ -91,6 +93,7 @@ export default function MasterBatchVideoGrid({
             onEditRegenerate={() => onEditRegenerateJob(job)}
             onEditOverrides={onEditJobOverrides ? () => onEditJobOverrides(job) : undefined}
             hasOverrides={jobsWithOverrides?.has(job.id)}
+            uploadFailed={failedUploadJobIds?.has(job.id)}
             isApproving={posting || busyJobIds.has(job.id)}
             isRejecting={false}
             isRegenerating={false}

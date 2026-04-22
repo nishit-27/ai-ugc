@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, CheckCircle2, XCircle, AlertCircle, Check, ThumbsUp, ThumbsDown, RotateCcw, Copy, Pencil, Send, FileEdit } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, AlertCircle, Check, ThumbsUp, ThumbsDown, RotateCcw, Copy, Pencil, Send, FileEdit, CloudOff } from 'lucide-react';
 import type { TemplateJob } from '@/types';
 import { deriveTemplateJobStepState } from '@/lib/templateJobState';
 
@@ -44,6 +44,7 @@ export default function MasterJobCard({
   onEditRegenerate,
   onEditOverrides,
   hasOverrides,
+  uploadFailed,
   isApproving,
   isRejecting,
   isRegenerating,
@@ -61,6 +62,7 @@ export default function MasterJobCard({
   onEditRegenerate?: () => void;
   onEditOverrides?: () => void;
   hasOverrides?: boolean;
+  uploadFailed?: boolean;
   isApproving?: boolean;
   isRejecting?: boolean;
   isRegenerating?: boolean;
@@ -133,8 +135,16 @@ export default function MasterJobCard({
         </div>
       )}
 
+      {/* Not Uploaded badge — persists after a failed approve attempt until it succeeds */}
+      {!job.postStatus && uploadFailed && isCompleted && (
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+          <CloudOff className="h-2.5 w-2.5" />
+          Not Uploaded
+        </div>
+      )}
+
       {/* Custom overrides badge */}
-      {hasOverrides && !job.postStatus && (
+      {hasOverrides && !job.postStatus && !(uploadFailed && isCompleted) && (
         <div className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full bg-master/90 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
           <FileEdit className="h-2.5 w-2.5" />
           Custom
