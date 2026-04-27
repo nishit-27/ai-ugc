@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Pencil } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
 import type { KeyUsageInfo } from '@/hooks/useConnections';
 import Modal from '@/components/ui/Modal';
@@ -31,6 +32,33 @@ export default function NewProfileModal({
   const allKeysFull =
     keyUsage.length > 0 &&
     keyUsage.every((k) => k.limitSource !== 'unknown' && k.count >= k.max);
+
+  const handleSetCap = async (apiKeyIndex: number, label: string, currentMax?: number) => {
+    const input = window.prompt(
+      `Set the profile cap for ${label}.\nThis is the max number of social accounts your Late plan allows for this key.\nLeave blank to cancel.`,
+      currentMax && currentMax < 1_000_000 ? String(currentMax) : '',
+    );
+    if (input === null) return;
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    const value = parseInt(trimmed, 10);
+    if (!Number.isFinite(value) || value < 1) {
+      showToast('Cap must be a positive number', 'error');
+      return;
+    }
+    const res = await fetch('/api/late/profiles/limits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKeyIndex, max: value }),
+    });
+    if (res.ok) {
+      showToast(`${label} cap set to ${value}`, 'success');
+      onCreated(); // triggers a refresh of keyUsage
+    } else {
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || 'Failed to set cap', 'error');
+    }
+  };
 
   const handleCreate = async () => {
     if (!form.name.trim()) {
@@ -118,30 +146,45 @@ export default function NewProfileModal({
                     const capUnknown = k.limitSource === 'unknown';
                     const isFull = !capUnknown && k.count >= k.max;
                     const display = capUnknown ? `${k.count}` : `${k.count}/${k.max}`;
+                    const label = `GL-${k.index + 1}`;
                     return (
-                      <button
+                      <div
                         key={k.index}
-                        type="button"
-                        onClick={() => setSelectedKeyIndex(k.index)}
-                        disabled={isFull}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors ${
                           selectedKeyIndex === k.index
                             ? 'border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]'
                             : 'border-[var(--border)] bg-[var(--background)] text-[var(--text-muted)] hover:border-[var(--primary)]'
-                        } disabled:opacity-40 disabled:pointer-events-none`}
-                        title={
-                          k.limitSource === 'learned'
-                            ? `Cap auto-detected from Late API at ${k.max}`
-                            : k.limitSource === 'env'
-                            ? `Cap from LATE_API_KEY_LIMITS env (${k.max})`
-                            : 'Cap not yet detected — will auto-learn from the API'
-                        }
+                        } ${isFull ? 'opacity-60' : ''}`}
                       >
-                        <GlBadge index={k.index} />
-                        <span className={`text-[10px] ${isFull ? 'text-red-400' : 'text-[var(--text-muted)]'}`}>
-                          {display}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedKeyIndex(k.index)}
+                          disabled={isFull}
+                          className="inline-flex items-center gap-1.5 disabled:pointer-events-none"
+                          title={
+                            k.limitSource === 'learned'
+                              ? `Cap set to ${k.max}. Click pencil to edit.`
+                              : 'Cap not set — click the pencil to set it once.'
+                          }
+                        >
+                          <GlBadge index={k.index} />
+                          <span className={`text-[10px] ${isFull ? 'text-red-400' : 'text-[var(--text-muted)]'}`}>
+                            {display}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSetCap(k.index, label, capUnknown ? undefined : k.max);
+                          }}
+                          className="ml-0.5 rounded p-0.5 text-[var(--text-muted)] hover:bg-[var(--muted)] hover:text-[var(--primary)]"
+                          title={`Set ${label} profile cap`}
+                          aria-label={`Set ${label} profile cap`}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      </div>
                     );
                   })
                 : Array.from({ length: apiKeyCount }, (_, i) => (

@@ -85,11 +85,17 @@ export async function lateApiRequest<T = unknown>(
       const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
 
       if (!response.ok) {
-        let errorBody: unknown;
-        try {
-          errorBody = await response.json();
-        } catch {
-          errorBody = await response.text();
+        // Read the body as text once — calling response.json() and then
+        // response.text() on the same response throws "Body is unusable" since
+        // fetch consumes the body on the first read attempt.
+        const rawText = await response.text().catch(() => '');
+        let errorBody: unknown = rawText;
+        if (rawText) {
+          try {
+            errorBody = JSON.parse(rawText);
+          } catch {
+            errorBody = rawText;
+          }
         }
 
         const apiError = new LateApiError(

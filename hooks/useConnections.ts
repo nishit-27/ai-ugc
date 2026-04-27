@@ -11,7 +11,7 @@ export type KeyUsageInfo = {
   count: number;
   max: number;
   label: string;
-  limitSource?: 'learned' | 'env' | 'unknown';
+  limitSource?: 'learned' | 'unknown';
 };
 
 // Module-level cache

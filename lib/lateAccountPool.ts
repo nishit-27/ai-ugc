@@ -6,9 +6,9 @@ import {
   setLearnedLimit,
 } from './db-late-api-key-limits';
 
-// Sentinel returned when no learned limit and no env override exist — the
-// balancer should treat this key as "limit unknown" and just route by count
-// until Late tells us we're full (we then learn the cap from that error).
+// Sentinel returned when we haven't learned a cap for this key yet — the
+// balancer treats it as "limit unknown" and just routes by count until Late
+// tells us we're full (we then learn the cap from that error).
 export const UNKNOWN_LIMIT = Number.MAX_SAFE_INTEGER;
 
 // Soft default kept for code that imports the constant directly. Not used by
@@ -16,27 +16,20 @@ export const UNKNOWN_LIMIT = Number.MAX_SAFE_INTEGER;
 export const DEFAULT_MAX_PROFILES_PER_KEY = 50;
 export const MAX_PROFILES_PER_KEY = DEFAULT_MAX_PROFILES_PER_KEY;
 
-function parseEnvLimits(): number[] {
-  const raw = process.env.LATE_API_KEY_LIMITS;
-  if (!raw) return [];
-  return raw
-    .split(',')
-    .map((s) => parseInt(s.trim(), 10))
-    .map((n) => (Number.isFinite(n) && n > 0 ? n : NaN));
-}
+type EffectiveLimit = { max: number; source: 'learned' | 'unknown' };
 
-type EffectiveLimit = { max: number; source: 'learned' | 'env' | 'unknown' };
-
+// The cap is learned from the Late API: we persist it in `late_api_key_limits`
+// when a profile add fails with a quota-shaped error, and bump it when an add
+// succeeds past a previously learned cap. The legacy `LATE_API_KEY_LIMITS`
+// env var is intentionally NOT consulted here — its values stick around and
+// override real-world detection (which is exactly the bug we just fixed).
 async function getEffectiveLimits(): Promise<Map<number, EffectiveLimit>> {
   const keys = config.LATE_API_KEYS;
   const learned = await getLearnedLimitsAll();
-  const envLimits = parseEnvLimits();
   const map = new Map<number, EffectiveLimit>();
   for (let i = 0; i < keys.length; i++) {
     if (learned.has(i)) {
       map.set(i, { max: learned.get(i)!, source: 'learned' });
-    } else if (!Number.isNaN(envLimits[i])) {
-      map.set(i, { max: envLimits[i], source: 'env' });
     } else {
       map.set(i, { max: UNKNOWN_LIMIT, source: 'unknown' });
     }
@@ -86,7 +79,7 @@ export async function getBalancedApiKeyIndex(): Promise<number> {
 }
 
 export async function getKeyUsage(): Promise<
-  { index: number; count: number; max: number; label: string; limitSource: 'learned' | 'env' | 'unknown' }[]
+  { index: number; count: number; max: number; label: string; limitSource: 'learned' | 'unknown' }[]
 > {
   const keys = config.LATE_API_KEYS;
   const counts = await getProfileCountPerKey();
