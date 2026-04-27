@@ -26,7 +26,11 @@ export default function NewProfileModal({
   const [selectedKeyIndex, setSelectedKeyIndex] = useState<number | 'auto'>('auto');
   const [isCreating, setIsCreating] = useState(false);
 
-  const allKeysFull = keyUsage.length > 0 && keyUsage.every((k) => k.count >= k.max);
+  // A key with `limitSource === 'unknown'` has no detected cap yet — don't
+  // count it toward "all keys full" (we'll let the API tell us when it is).
+  const allKeysFull =
+    keyUsage.length > 0 &&
+    keyUsage.every((k) => k.limitSource !== 'unknown' && k.count >= k.max);
 
   const handleCreate = async () => {
     if (!form.name.trim()) {
@@ -111,7 +115,9 @@ export default function NewProfileModal({
               </button>
               {keyUsage.length > 0
                 ? keyUsage.map((k) => {
-                    const isFull = k.count >= k.max;
+                    const capUnknown = k.limitSource === 'unknown';
+                    const isFull = !capUnknown && k.count >= k.max;
+                    const display = capUnknown ? `${k.count}` : `${k.count}/${k.max}`;
                     return (
                       <button
                         key={k.index}
@@ -123,10 +129,17 @@ export default function NewProfileModal({
                             ? 'border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]'
                             : 'border-[var(--border)] bg-[var(--background)] text-[var(--text-muted)] hover:border-[var(--primary)]'
                         } disabled:opacity-40 disabled:pointer-events-none`}
+                        title={
+                          k.limitSource === 'learned'
+                            ? `Cap auto-detected from Late API at ${k.max}`
+                            : k.limitSource === 'env'
+                            ? `Cap from LATE_API_KEY_LIMITS env (${k.max})`
+                            : 'Cap not yet detected — will auto-learn from the API'
+                        }
                       >
                         <GlBadge index={k.index} />
                         <span className={`text-[10px] ${isFull ? 'text-red-400' : 'text-[var(--text-muted)]'}`}>
-                          {k.count}/{k.max}
+                          {display}
                         </span>
                       </button>
                     );

@@ -6,7 +6,13 @@ import { usePageVisibility } from './usePageVisibility';
 
 const REFRESH_INTERVAL = 60_000;
 
-export type KeyUsageInfo = { index: number; count: number; max: number; label: string };
+export type KeyUsageInfo = {
+  index: number;
+  count: number;
+  max: number;
+  label: string;
+  limitSource?: 'learned' | 'env' | 'unknown';
+};
 
 // Module-level cache
 let _profilesCache: Profile[] = [];

@@ -472,6 +472,16 @@ export const lateProfileApiKeys = pgTable('late_profile_api_keys', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+// Per-key profile limits, auto-learned from Late API responses so the user
+// doesn't have to maintain LATE_API_KEY_LIMITS by hand. `learnedLimit` is
+// updated when the API rejects a profile add (the current count becomes the
+// observed cap) and bumped upward when adds succeed past it.
+export const lateApiKeyLimits = pgTable('late_api_key_limits', {
+  apiKeyIndex: integer('api_key_index').primaryKey(),
+  learnedLimit: integer('learned_limit').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
 // ── Agent Chats ──
 
 export const agentChats = pgTable('agent_chats', {

@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { config } from '@/lib/config';
-import { lateApiRequest } from '@/lib/lateApi';
-import { fetchFromAllKeys, getBalancedApiKeyIndex, getAccountLabel, getKeyUsage } from '@/lib/lateAccountPool';
+import { lateApiRequest, LateApiError } from '@/lib/lateApi';
+import {
+  fetchFromAllKeys,
+  getBalancedApiKeyIndex,
+  getAccountLabel,
+  getKeyUsage,
+  isQuotaError,
+  learnLimitFromQuotaError,
+  bumpLearnedLimitIfNeeded,
+} from '@/lib/lateAccountPool';
 import { saveProfileApiKey, getProfileApiKeysBatch, getProfileCountPerKey } from '@/lib/db-late-profile-keys';
 
 export const dynamic = 'force-dynamic';
@@ -78,17 +86,43 @@ export async function POST(request: NextRequest) {
     }
     const apiKey = config.LATE_API_KEYS[targetIndex];
 
-    const data = await lateApiRequest<{ profile?: LateProfile }>('/profiles', {
-      method: 'POST',
-      body: JSON.stringify(profileData),
-      apiKey,
-    });
+    let data: { profile?: LateProfile };
+    try {
+      data = await lateApiRequest<{ profile?: LateProfile }>('/profiles', {
+        method: 'POST',
+        body: JSON.stringify(profileData),
+        apiKey,
+      });
+    } catch (err) {
+      // Auto-detect: if Late rejected this add because the plan cap was hit,
+      // learn the cap from the current count so the balancer skips this key
+      // going forward — no env var needed.
+      if (isQuotaError(err)) {
+        const counts = await getProfileCountPerKey();
+        const observed = counts.get(targetIndex) ?? 0;
+        await learnLimitFromQuotaError(targetIndex, observed);
+        const status = err instanceof LateApiError && err.status ? err.status : 400;
+        return NextResponse.json(
+          {
+            error: `${getAccountLabel(targetIndex)} is full (Late returned: ${(err as Error).message}). Cap learned at ${observed} — try again to route to another account.`,
+          },
+          { status }
+        );
+      }
+      throw err;
+    }
 
     const profile = (data as { profile?: LateProfile }).profile ?? data;
     const profileId = (profile as LateProfile)?._id;
     if (profileId) {
       await saveProfileApiKey(profileId, targetIndex);
     }
+
+    // Auto-detect: if the user upgraded their plan and we previously learned a
+    // smaller cap, bump it up to the new observed count so we stop blocking adds.
+    const countsAfter = await getProfileCountPerKey();
+    const newCount = countsAfter.get(targetIndex) ?? 0;
+    await bumpLearnedLimitIfNeeded(targetIndex, newCount);
 
     return NextResponse.json({
       profile: {

@@ -1,21 +1,48 @@
 import { config } from './config';
-import { lateApiRequest } from './lateApi';
+import { lateApiRequest, LateApiError } from './lateApi';
 import { getProfileApiKey, getProfileCountPerKey } from './db-late-profile-keys';
+import {
+  getLearnedLimitsAll,
+  setLearnedLimit,
+} from './db-late-api-key-limits';
 
+// Sentinel returned when no learned limit and no env override exist — the
+// balancer should treat this key as "limit unknown" and just route by count
+// until Late tells us we're full (we then learn the cap from that error).
+export const UNKNOWN_LIMIT = Number.MAX_SAFE_INTEGER;
+
+// Soft default kept for code that imports the constant directly. Not used by
+// the balancer anymore — auto-detect handles it.
 export const DEFAULT_MAX_PROFILES_PER_KEY = 50;
+export const MAX_PROFILES_PER_KEY = DEFAULT_MAX_PROFILES_PER_KEY;
 
-// Allow per-key limits via LATE_API_KEY_LIMITS env var (comma-separated, e.g., "50,100,50")
-function getMaxProfilesForKey(index: number): number {
+function parseEnvLimits(): number[] {
   const raw = process.env.LATE_API_KEY_LIMITS;
-  if (raw) {
-    const limits = raw.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
-    if (index < limits.length) return limits[index];
-  }
-  return DEFAULT_MAX_PROFILES_PER_KEY;
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((s) => parseInt(s.trim(), 10))
+    .map((n) => (Number.isFinite(n) && n > 0 ? n : NaN));
 }
 
-// Backwards compat — keep the constant for code that imports it directly
-export const MAX_PROFILES_PER_KEY = DEFAULT_MAX_PROFILES_PER_KEY;
+type EffectiveLimit = { max: number; source: 'learned' | 'env' | 'unknown' };
+
+async function getEffectiveLimits(): Promise<Map<number, EffectiveLimit>> {
+  const keys = config.LATE_API_KEYS;
+  const learned = await getLearnedLimitsAll();
+  const envLimits = parseEnvLimits();
+  const map = new Map<number, EffectiveLimit>();
+  for (let i = 0; i < keys.length; i++) {
+    if (learned.has(i)) {
+      map.set(i, { max: learned.get(i)!, source: 'learned' });
+    } else if (!Number.isNaN(envLimits[i])) {
+      map.set(i, { max: envLimits[i], source: 'env' });
+    } else {
+      map.set(i, { max: UNKNOWN_LIMIT, source: 'unknown' });
+    }
+  }
+  return map;
+}
 
 export function getApiKeys(): string[] {
   return config.LATE_API_KEYS;
@@ -39,14 +66,15 @@ export async function getApiKeyForProfile(profileId: string): Promise<{ apiKey: 
 
 export async function getBalancedApiKeyIndex(): Promise<number> {
   const keys = config.LATE_API_KEYS;
-  if (keys.length <= 1) return 0;
+  if (keys.length === 0) throw new Error('No GetLate API keys configured.');
   const counts = await getProfileCountPerKey();
+  const limits = await getEffectiveLimits();
   let minIndex = -1;
   let minCount = Infinity;
   for (let i = 0; i < keys.length; i++) {
     const count = counts.get(i) ?? 0;
-    const maxForKey = getMaxProfilesForKey(i);
-    if (count < maxForKey && count < minCount) {
+    const max = limits.get(i)?.max ?? UNKNOWN_LIMIT;
+    if (count < max && count < minCount) {
       minCount = count;
       minIndex = i;
     }
@@ -57,15 +85,22 @@ export async function getBalancedApiKeyIndex(): Promise<number> {
   return minIndex;
 }
 
-export async function getKeyUsage(): Promise<{ index: number; count: number; max: number; label: string }[]> {
+export async function getKeyUsage(): Promise<
+  { index: number; count: number; max: number; label: string; limitSource: 'learned' | 'env' | 'unknown' }[]
+> {
   const keys = config.LATE_API_KEYS;
   const counts = await getProfileCountPerKey();
-  return keys.map((_, i) => ({
-    index: i,
-    count: counts.get(i) ?? 0,
-    max: getMaxProfilesForKey(i),
-    label: getAccountLabel(i),
-  }));
+  const limits = await getEffectiveLimits();
+  return keys.map((_, i) => {
+    const eff = limits.get(i) ?? { max: UNKNOWN_LIMIT, source: 'unknown' as const };
+    return {
+      index: i,
+      count: counts.get(i) ?? 0,
+      max: eff.max,
+      label: getAccountLabel(i),
+      limitSource: eff.source,
+    };
+  });
 }
 
 export async function fetchFromAllKeys<T>(
@@ -109,4 +144,69 @@ export async function tryAllKeys<T>(
 
 export function getAccountLabel(index: number): string {
   return `GL-${index + 1}`;
+}
+
+// ── Auto-learning helpers ──
+
+const QUOTA_HINT_PATTERNS = [
+  /\blimit\b/i,
+  /\bmax(imum)?\b/i,
+  /\bquota\b/i,
+  /\bplan\b/i,
+  /\bsubscription\b/i,
+  /\bupgrade\b/i,
+  /\bcap\b/i,
+  /\bexceed/i,
+  /\bover (the )?limit\b/i,
+];
+
+function flattenErrorText(err: LateApiError): string {
+  const parts: string[] = [err.message];
+  if (typeof err.body === 'string') parts.push(err.body);
+  else if (err.body && typeof err.body === 'object') {
+    try {
+      parts.push(JSON.stringify(err.body));
+    } catch {
+      // ignore
+    }
+  }
+  return parts.join(' ');
+}
+
+// Decide whether a Late API error looks like "you've hit the profile cap on
+// this plan" rather than a transient/unrelated failure.
+export function isQuotaError(err: unknown): boolean {
+  if (!(err instanceof LateApiError)) return false;
+  // 402 Payment Required and 403 Forbidden are the typical billing/quota codes.
+  // Some APIs use 429 too, but we only treat that as quota if the body hints at it.
+  const text = flattenErrorText(err);
+  if (err.status === 402) return true;
+  if (err.status === 403 || err.status === 429 || err.status === 400) {
+    return QUOTA_HINT_PATTERNS.some((re) => re.test(text));
+  }
+  return false;
+}
+
+// Called after a /profiles POST fails with a quota-shaped error: the count we
+// observed at that moment IS the per-key cap. Persist it.
+export async function learnLimitFromQuotaError(
+  apiKeyIndex: number,
+  observedCount: number,
+): Promise<void> {
+  const limit = Math.max(0, observedCount);
+  await setLearnedLimit(apiKeyIndex, limit);
+}
+
+// Called after a /profiles POST succeeds: if we'd previously learned a smaller
+// cap (e.g., user upgraded their Late plan), bump it up so we stop refusing
+// adds preemptively.
+export async function bumpLearnedLimitIfNeeded(
+  apiKeyIndex: number,
+  newCount: number,
+): Promise<void> {
+  const limits = await getLearnedLimitsAll();
+  const current = limits.get(apiKeyIndex);
+  if (current !== undefined && newCount > current) {
+    await setLearnedLimit(apiKeyIndex, newCount);
+  }
 }
