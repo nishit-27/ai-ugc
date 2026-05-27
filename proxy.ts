@@ -1,7 +1,22 @@
 import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 
-const publicPaths = ["/login", "/access-denied", "/api/auth", "/api/fal-webhook", "/api/recover-stuck-jobs", "/api/analytics/cron"];
+// Paths that bypass the session check. Add here for: webhooks (no
+// session cookie), cron entry points (gated on CRON_SECRET inside the
+// route), OAuth redirects (browser has no session yet), and the auth
+// pages themselves.
+const publicPaths = [
+  "/login",
+  "/access-denied",
+  "/api/auth",
+  "/api/fal-webhook",
+  "/api/recover-stuck-jobs",
+  "/api/analytics/cron",
+  "/api/late-analytics/sync",   // Vercel cron — gated on CRON_SECRET in prod
+  "/api/late/connect",          // Late OAuth redirect target
+  "/api/late/invite",           // Late OAuth invite redirect
+  "/api/tiktok/connect",        // TikTok OAuth start
+];
 
 /**
  * Internal API paths that are called server-to-server (no session cookie).
