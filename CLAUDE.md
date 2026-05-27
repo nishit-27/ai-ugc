@@ -98,12 +98,13 @@ types/               # TypeScript type definitions
 
 ## Landmines / Gotchas
 
-- **`lib/processJob.ts` has pre-existing build errors** — missing exports from `lib/utils.ts`. Don't touch it unless you're fixing it.
+- **`proxy.ts` (Next.js 16's renamed `middleware.ts`) auth-gates the entire site.** Adding a new public API endpoint requires adding it to the `publicPaths` list in `proxy.ts` — otherwise it 401s. Webhooks and cron entry points must go there.
 - **`components/queue/` is empty** — the route exists but uses inline components.
 - **Model groups dual-write** — `model_group_memberships` table is the source of truth, but `models.group_name` column is still synced as a legacy fallback. Both must be updated together (see `db-models.js`).
 - **`db-model-account-mappings.js` has a lazy `ensureApiKeyIndex()` migration** — adds `api_key_index` column on first use.
 - **Post deduplication** — uses both `post_idempotency_keys` table AND in-memory caching. Don't bypass either.
 - **All storage is R2** — `signed-url` endpoint is a no-op but kept for backward compatibility.
+- **`/api/templates` GET caps at the last 500 jobs** (override with `?limit=N`, max 2000). Single-job lookups use `/api/templates/[id]`.
 
 ## Commands
 

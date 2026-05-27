@@ -14,10 +14,14 @@ import { auth } from '@/lib/auth';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // 5 minutes — video processing needs more than the default 10s/60s
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await ensureDatabaseReady();
-    const jobs = await getAllTemplateJobs();
+    const rawLimit = Number(request.nextUrl.searchParams.get('limit'));
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.floor(rawLimit), 2000)
+      : 500;
+    const jobs = await getAllTemplateJobs({ limit });
 
     // Return jobs immediately — no URL signing here.
     // Signed URLs are resolved lazily on the client via /api/signed-url
