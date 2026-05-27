@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useModels } from '@/hooks/useModels';
 import { useGeneratedImages } from '@/hooks/useGeneratedImages';
 import PreviewModal from '@/components/ui/PreviewModal';
+import CarouselUrlImport from './CarouselUrlImport';
 import {
   Upload, X, GripVertical, Check, ImageIcon, Loader2, ChevronDown, ChevronRight,
   Sparkles, RefreshCw, Expand, Link2, RotateCcw,
@@ -1097,31 +1098,13 @@ export default function CarouselStepConfig({
         {/* Left column (or full width when not expanded/master) */}
         <div className={`space-y-4 ${isExpanded && masterMode ? 'shrink-0 pr-3' : ''}`} style={isExpanded && masterMode ? { width: `${splitPercent}%` } : undefined}>
           {/* Import URL */}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Link2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
-              <input
-                type="text"
-                value={carouselUrl}
-                onChange={(e) => setCarouselUrl(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleLoadCarouselUrl()}
-                placeholder="Paste Instagram or TikTok carousel URL..."
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] py-1.5 pl-8 pr-3 text-xs text-[var(--text)] placeholder:text-[var(--text-muted)]/50 focus:border-[var(--accent-border)] focus:outline-none"
-              />
-            </div>
-            <button
-              onClick={handleLoadCarouselUrl}
-              disabled={isLoadingUrl || !carouselUrl.trim()}
-              className={`shrink-0 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
-                isLoadingUrl || !carouselUrl.trim()
-                  ? 'bg-[var(--accent)] text-[var(--text-muted)] cursor-not-allowed'
-                  : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90'
-              }`}
-            >
-              {isLoadingUrl ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Load'}
-            </button>
-          </div>
-          {urlError && <p className="text-[10px] text-red-500">{urlError}</p>}
+          <CarouselUrlImport
+            value={carouselUrl}
+            onChange={setCarouselUrl}
+            onLoad={handleLoadCarouselUrl}
+            isLoading={isLoadingUrl}
+            error={urlError}
+          />
 
           {/* Generation settings row */}
           <div className="flex items-center gap-2">
