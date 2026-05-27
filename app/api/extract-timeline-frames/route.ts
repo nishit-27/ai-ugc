@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { downloadFile, extractEvenlySpacedFrames, getVideoDuration } from '@/lib/serverUtils';
 import { uploadImage } from '@/lib/storage.js';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: Request) {
   let tmpVideoPath: string | null = null;
 

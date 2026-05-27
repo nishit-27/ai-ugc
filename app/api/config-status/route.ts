@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const socialApiConfigured = config.LATE_API_KEYS.length > 0;
 

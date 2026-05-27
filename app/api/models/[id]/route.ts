@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModel, updateModel, deleteModel, getModelImages, setModelGroups, ensureDatabaseReady } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 type RouteParams = { params: Promise<{ id: string }> };
 
 function normalizeGroupName(groupName?: string | null): string | null {

@@ -7,7 +7,8 @@ export const maxDuration = 300;
 
 function isCronAuthorized(request: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true; // no secret configured = allow (local dev)
+  // Missing secret: deny in production, allow only in dev so local testing still works.
+  if (!cronSecret) return process.env.NODE_ENV !== 'production';
   const authHeader = request.headers.get('authorization');
   const querySecret = request.nextUrl.searchParams.get('secret');
   return authHeader === `Bearer ${cronSecret}` || querySecret === cronSecret;

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAllBatches, getModel } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 interface Batch {
   id: string;
   name: string;

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ensureDatabaseReady, getAllModelGroupMemberships, getSetting, setSetting, removeAllMembershipsForGroup, renameGroupMemberships, updateModelsGroupName, clearModelsGroupName } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 const MODEL_GROUPS_SETTING_KEY = 'model_groups';
 
 type ModelGroupSummary = { name: string; count: number };

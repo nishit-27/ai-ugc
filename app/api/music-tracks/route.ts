@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllMusicTracks, createMusicTrack, initDatabase } from '@/lib/db';
 import { uploadVideo } from '@/lib/storage';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     await initDatabase();

@@ -11,6 +11,8 @@ import { getEndpointCost } from '@/lib/fal-pricing';
 import { auth } from '@/lib/auth';
 import { generateImageWithReferences } from '@/lib/gemini-image';
 
+export const dynamic = 'force-dynamic';
+
 export const maxDuration = 300;
 
 const FAL_MODEL = 'fal-ai/nano-banana-pro/edit';

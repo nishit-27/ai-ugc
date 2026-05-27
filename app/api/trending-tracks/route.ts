@@ -4,6 +4,8 @@ import { config } from '@/lib/config';
 import { uploadBuffer } from '@/lib/storage';
 import { v4 as uuidv4 } from 'uuid';
 
+export const dynamic = 'force-dynamic';
+
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const RESOLVE_CONCURRENCY = 3;
 const MAX_TRACKS = 20; // Limit to top 20 to avoid route timeout

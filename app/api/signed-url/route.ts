@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * Signed URL endpoint — kept for backward compatibility.
  * All URLs are now R2 public, so we just return them as-is.

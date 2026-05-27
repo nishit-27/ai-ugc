@@ -8,6 +8,8 @@ import { initDatabase, createGeneratedImage } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { generateImageWithReferences } from '@/lib/gemini-image';
 
+export const dynamic = 'force-dynamic';
+
 export const maxDuration = 300;
 
 const FAL_MODEL = 'fal-ai/nano-banana-pro/edit';

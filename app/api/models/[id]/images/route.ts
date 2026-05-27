@@ -3,6 +3,8 @@ import path from 'path';
 import { ensureDatabaseReady, getModel, getModelImages, createModelImage } from '@/lib/db';
 import { uploadImage } from '@/lib/storage';
 
+export const dynamic = 'force-dynamic';
+
 type RouteParams = { params: Promise<{ id: string }> };
 type ModelImageRecord = {
   id: string;

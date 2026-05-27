@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModel, getModelImage, deleteModelImage, setModelImagePrimary } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 type RouteParams = { params: Promise<{ id: string; imageId: string }> };
 
 // DELETE /api/models/[id]/images/[imageId] - Delete specific image

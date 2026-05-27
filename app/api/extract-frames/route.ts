@@ -9,6 +9,8 @@ import { downloadFile, extractRandomFrames } from '@/lib/serverUtils';
 import { uploadImage, getSignedUrlFromPublicUrl } from '@/lib/storage.js';
 import { isR2Url } from '@/lib/r2';
 
+export const dynamic = 'force-dynamic';
+
 const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
 
 export async function POST(req: Request) {

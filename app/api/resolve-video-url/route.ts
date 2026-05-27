@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 import { getVideoDownloadUrl } from '@/lib/processJob';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const { url } = (await request.json()) as { url?: string };

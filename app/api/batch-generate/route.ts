@@ -11,6 +11,8 @@ import {
 } from '@/lib/db';
 import { auth } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 interface BatchGenerateRequest {
   // Batch info
   name?: string;

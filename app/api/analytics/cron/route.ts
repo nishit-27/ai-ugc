@@ -24,6 +24,9 @@ export async function GET(request: NextRequest) {
     if (!authorized) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+  } else if (process.env.NODE_ENV === 'production') {
+    // Don't let a missing secret silently open the endpoint in production.
+    return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 });
   }
 
   try {

@@ -4,6 +4,8 @@ import { processJob } from '@/lib/processJob';
 import { createJob } from '@/lib/db';
 import { auth } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const {

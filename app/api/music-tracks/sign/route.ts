@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 /** URLs are now R2 public — return as-is. Kept for backward compatibility. */
 export async function POST(request: NextRequest) {
   try {

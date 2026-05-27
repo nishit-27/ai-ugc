@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { retry } from '@/lib/retry';
 
+export const dynamic = 'force-dynamic';
+
 export const maxDuration = 300;
 
 const CONCURRENCY_LIMIT = 20;

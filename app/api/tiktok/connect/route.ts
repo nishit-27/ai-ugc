@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { config } from '@/lib/config';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   if (!config.LATE_API_KEYS[0]) {
     return NextResponse.json({ error: 'LATE_API_KEY not configured' }, { status: 500 });

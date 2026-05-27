@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 // TikTok URL patterns
 const TIKTOK_PATTERNS = [
   /https?:\/\/(www\.)?tiktok\.com\/@[\w.-]+\/video\/\d+/gi,

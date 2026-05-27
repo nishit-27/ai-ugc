@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createModel, setModelGroups, ensureDatabaseReady, getAllModels, getModelImageCountsForModels, getModelAccountMappingsForModels } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 interface Model {
   id: string;
   name: string;

@@ -3,6 +3,8 @@ import { config } from '@/lib/config';
 import { lateApiRequest } from '@/lib/lateApi';
 import { getAllTikTokAccounts, createTikTokAccount } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const accounts: {
     id?: string;

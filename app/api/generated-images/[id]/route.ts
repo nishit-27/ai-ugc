@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { initDatabase, getGeneratedImage, deleteGeneratedImage } from '@/lib/db';
 import { deleteFile } from '@/lib/storage';
 
+export const dynamic = 'force-dynamic';
+
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

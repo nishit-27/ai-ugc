@@ -9,6 +9,8 @@ import {
 } from '@/lib/db';
 import { getRunableIntegrationValueByName } from '@/lib/runable-integration';
 
+export const dynamic = 'force-dynamic';
+
 type MediaFile = {
   filename: string;
   gcsUrl: string;
