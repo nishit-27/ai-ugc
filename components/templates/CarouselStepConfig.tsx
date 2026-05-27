@@ -7,6 +7,7 @@ import PreviewModal from '@/components/ui/PreviewModal';
 import CarouselUrlImport from './CarouselUrlImport';
 import CarouselOrderList from './CarouselOrderList';
 import CarouselCoverPicker from './CarouselCoverPicker';
+import MasterModelCard from './MasterModelCard';
 import {
   Upload, X, GripVertical, Check, ImageIcon, Loader2, ChevronDown, ChevronRight,
   Sparkles, RefreshCw, Expand, Link2, RotateCcw,
@@ -1352,445 +1353,56 @@ export default function CarouselStepConfig({
                   {masterModels.map((model) => {
                     const isGenerating = masterGeneratingIds.has(model.modelId);
                     const perSceneResults = masterPerModelResults[model.modelId] || {};
-                    const allResults = flattenPerSceneResults(perSceneResults);
                     const selectedImages = config.masterCarouselImages?.[model.modelId] || [];
-                    const isCollapsed = collapsedModels.has(model.modelId);
-                    const totalScenes = sceneImages.filter((s) => s.action === 'generate').length;
-                    const completedScenes = Object.entries(perSceneResults).filter(([idx, r]) => {
-                      const si = sceneImages[Number(idx)];
-                      return si?.action === 'generate' && r.length > 0;
-                    }).length;
-                    const hasMissing = totalScenes > 0 && completedScenes < totalScenes && completedScenes > 0;
-                    const failedCount = Object.entries(perSceneResults).filter(([idx, r]) => {
-                      const si = sceneImages[Number(idx)];
-                      return si?.action === 'generate' && Array.isArray(r) && r.length === 0;
-                    }).length;
-                    const hasFailed = failedCount > 0;
                     return (
-                      <div key={model.modelId} className="rounded-xl border border-[var(--border)] p-2.5 space-y-2">
-                        {/* Clickable header row */}
-                        <div
-                          className="flex items-center gap-2.5 cursor-pointer select-none"
-                          onClick={() => setCollapsedModels((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(model.modelId)) next.delete(model.modelId);
-                            else next.add(model.modelId);
-                            return next;
-                          })}
-                        >
-                          {isCollapsed
-                            ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
-                            : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
-                          }
-                          <img
-                            src={model.primaryImageUrl}
-                            alt={model.modelName}
-                            className="h-10 w-10 rounded-lg object-cover shrink-0 border border-[var(--border)] cursor-pointer"
-                            onClick={(e) => { e.stopPropagation(); setPreviewUrl(model.primaryImageUrl); }}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-[var(--text)] truncate">{model.modelName}</p>
-                            <p className="text-[10px] text-[var(--text-muted)]">
-                              {`${selectedImages.length} image${selectedImages.length !== 1 ? 's' : ''}`}
-                              {selectedImages.length > 0 && ` / ${maxImages} max`}
-                              {totalScenes > 0 && completedScenes > 0 && ` · ${completedScenes}/${totalScenes} done`}
-                              {selectedImages.length === 0 && activeSceneCount > 0 && !isGenerating && (
-                                <span className="ml-1 text-amber-500">· pending</span>
-                              )}
-                            </p>
-                          </div>
-                          {isGenerating && <span className="h-4 w-4 rounded-full border-2 border-[var(--text-muted)]/30 border-t-[var(--primary)] animate-spin shrink-0" />}
-                          {/* Action buttons — stop propagation so clicking them doesn't toggle collapse */}
-                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                            {/* Browse library for this model */}
-                            <button
-                              onClick={() => toggleModelLibrary(model.modelId)}
-                              className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border transition-colors ${browsingModelId === model.modelId ? 'border-[var(--primary)] text-[var(--primary)] bg-[var(--primary)]/10' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]'}`}
-                            >
-                              <ImageIcon className="h-3 w-3" /> Browse
-                            </button>
-                            {!isGenerating && !isMasterGeneratingAll && hasMissing && (
-                              <button
-                                onClick={() => masterGenerateMissing(model.modelId, model.primaryGcsUrl)}
-                                disabled={isMasterGeneratingAll}
-                                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border border-amber-400 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20 disabled:opacity-50"
-                              >
-                                <Sparkles className="h-3 w-3" /> Missing
-                              </button>
-                            )}
-                            {!isGenerating && !isMasterGeneratingAll && hasFailed && (
-                              <button
-                                onClick={() => masterRetryFailed(model.modelId, model.primaryGcsUrl)}
-                                disabled={isMasterGeneratingAll}
-                                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border border-red-400 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50"
-                              >
-                                <RotateCcw className="h-3 w-3" /> Retry ({failedCount})
-                              </button>
-                            )}
-                            {!isGenerating && !isMasterGeneratingAll && generateCount > 0 && (
-                              <button
-                                onClick={() => masterGenerateForModel(model.modelId, model.primaryGcsUrl)}
-                                disabled={isMasterGeneratingAll || sceneImages.length === 0}
-                                className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-colors ${allResults.length > 0 ? 'border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--accent)]' : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary-hover)]'} disabled:opacity-50`}
-                              >
-                                {allResults.length > 0 ? <RefreshCw className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
-                                {allResults.length > 0 ? 'Redo' : 'Generate'}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        {/* Expanded content: flat grid of all scene results + failed/pending placeholders */}
-                        {!isCollapsed && (() => {
-                          // Build a flat list of all active scenes with their status
-                          const activeScenes = sceneImages
-                            .map((s, i) => ({ scene: s, index: i }))
-                            .filter(({ scene }) => scene.action !== 'skip');
-                          const extras = masterExtraImages[model.modelId] || [];
-                          const hasAnyContent = isGenerating || allResults.length > 0 || extras.length > 0 || activeScenes.some(({ index }) => perSceneResults[index]?.length === 0);
-
-                          if (!hasAnyContent && activeScenes.length === 0) return null;
-
-                          return (
-                            <>
-                              {/* Fixed-height scrollable grid */}
-                              <div className="max-h-[280px] overflow-y-auto rounded-lg">
-                                <div className={`grid gap-1.5 ${isExpanded ? 'grid-cols-5' : 'grid-cols-3'}`}>
-                                  {activeScenes.map(({ scene, index: sceneIdx }) => {
-                                    const sceneResult = perSceneResults[sceneIdx];
-                                    const hasResults = sceneResult && sceneResult.length > 0;
-                                    const isFailed = Array.isArray(sceneResult) && sceneResult.length === 0;
-                                    const isPending = !sceneResult && isGenerating;
-                                    const isSceneRegenerating = masterRegeneratingScenes.has(`${model.modelId}:${sceneIdx}`);
-
-                                    // Scene has results — show result image with hover actions
-                                    if (hasResults) {
-                                      return sceneResult.map((result, ri) => {
-                                        const selected = isMasterResultSelected(model.modelId, result);
-                                        const atLimit = !selected && selectedImages.length >= maxImages;
-                                        const orderIdx = selectedImages.findIndex((e) => e.imageUrl === (result.url || result.gcsUrl) || e.imageId === result.id);
-                                        return (
-                                          <button
-                                            key={`${sceneIdx}-${ri}`}
-                                            onClick={() => !atLimit && masterToggleResult(model.modelId, result)}
-                                            className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${selected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20' : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed' : 'border-[var(--border)] hover:border-[var(--primary)]/50'}`}
-                                          >
-                                            <img src={result.url} alt="" className="h-full w-full object-cover" />
-                                            <div className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 py-0.5 text-[8px] font-bold text-white">
-                                              {sceneIdx + 1}
-                                            </div>
-                                            {selected && (
-                                              <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
-                                                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] font-bold">{orderIdx + 1}</div>
-                                              </div>
-                                            )}
-                                            <div className="absolute bottom-0.5 right-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                                              {scene.action === 'generate' && (
-                                                <div
-                                                  onClick={(e) => { e.stopPropagation(); masterRegenerateScene(model.modelId, model.primaryGcsUrl, sceneIdx); }}
-                                                  className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-black/70"
-                                                  title="Re-generate"
-                                                >
-                                                  <RotateCcw className="h-2 w-2" />
-                                                </div>
-                                              )}
-                                              <div
-                                                onClick={(e) => { e.stopPropagation(); openLibraryForChoosing(model.modelId, sceneIdx); }}
-                                                className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-black/70"
-                                                title="Choose from library"
-                                              >
-                                                <ImageIcon className="h-2 w-2" />
-                                              </div>
-                                              <div
-                                                onClick={(e) => { e.stopPropagation(); setPreviewUrl(result.url); }}
-                                                className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-black/70"
-                                              >
-                                                <Expand className="h-2 w-2" />
-                                              </div>
-                                            </div>
-                                          </button>
-                                        );
-                                      });
-                                    }
-
-                                    // Failed scene — show scene bg with Retry + Choose + Generate icons
-                                    if (isFailed) {
-                                      return (
-                                        <div
-                                          key={`failed-${sceneIdx}`}
-                                          className="group relative aspect-[3/4] overflow-hidden rounded-lg border-2 border-dashed border-red-400/50 bg-[var(--accent)]"
-                                        >
-                                          <img src={scene.url} alt="" className="h-full w-full object-cover opacity-20" />
-                                          <div className="absolute left-0.5 top-0.5 rounded bg-red-500/80 px-1 py-0.5 text-[8px] font-bold text-white">
-                                            {sceneIdx + 1}
-                                          </div>
-                                          <div className="absolute right-0.5 top-0.5 rounded bg-red-500/80 px-1 py-0.5 text-[7px] font-bold text-white">
-                                            Failed
-                                          </div>
-                                          <div className="absolute inset-0 flex items-center justify-center gap-1.5">
-                                            {isSceneRegenerating ? (
-                                              <Loader2 className="h-4 w-4 animate-spin text-[var(--primary)]" />
-                                            ) : (
-                                              <>
-                                                <div
-                                                  onClick={() => masterRegenerateScene(model.modelId, model.primaryGcsUrl, sceneIdx)}
-                                                  className={`flex flex-col items-center gap-0.5 rounded-lg bg-black/50 text-white cursor-pointer hover:bg-black/70 transition-colors ${isExpanded ? 'px-1.5 py-1' : 'p-1.5'}`}
-                                                  title="Retry"
-                                                >
-                                                  <RotateCcw className="h-3 w-3" />
-                                                  {isExpanded && <span className="text-[6px] font-bold">Retry</span>}
-                                                </div>
-                                                <div
-                                                  onClick={() => openLibraryForChoosing(model.modelId, sceneIdx)}
-                                                  className={`flex flex-col items-center gap-0.5 rounded-lg bg-black/50 text-white cursor-pointer hover:bg-black/70 transition-colors ${isExpanded ? 'px-1.5 py-1' : 'p-1.5'}`}
-                                                  title="Choose from library"
-                                                >
-                                                  <ImageIcon className="h-3 w-3" />
-                                                  {isExpanded && <span className="text-[6px] font-bold">Choose</span>}
-                                                </div>
-                                              </>
-                                            )}
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-
-                                    // Pending / generating — skeleton
-                                    if (isPending || isSceneRegenerating) {
-                                      return (
-                                        <div key={`pending-${sceneIdx}`} className="relative aspect-[3/4] overflow-hidden rounded-lg border-2 border-[var(--border)] bg-[var(--accent)]">
-                                          <img src={scene.url} alt="" className="h-full w-full object-cover opacity-25" />
-                                          <div className="absolute left-0.5 top-0.5 rounded bg-black/40 px-1 py-0.5 text-[8px] font-bold text-white">
-                                            {sceneIdx + 1}
-                                          </div>
-                                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-                                            <Loader2 className="h-4 w-4 animate-spin text-[var(--primary)]" />
-                                          </div>
-                                          <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/5 to-transparent" />
-                                        </div>
-                                      );
-                                    }
-
-                                    // No results yet, not generating — show Generate + Choose icons
-                                    if (!sceneResult && !isGenerating && scene.action === 'generate') {
-                                      return (
-                                        <div
-                                          key={`empty-${sceneIdx}`}
-                                          className="group relative aspect-[3/4] overflow-hidden rounded-lg border-2 border-dashed border-[var(--border)] bg-[var(--accent)]"
-                                        >
-                                          <img src={scene.url} alt="" className="h-full w-full object-cover opacity-25" />
-                                          <div className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 py-0.5 text-[8px] font-bold text-white">
-                                            {sceneIdx + 1}
-                                          </div>
-                                          <div className="absolute inset-0 flex items-center justify-center gap-1.5">
-                                            <div
-                                              onClick={() => masterRegenerateScene(model.modelId, model.primaryGcsUrl, sceneIdx)}
-                                              className={`flex flex-col items-center gap-0.5 rounded-lg bg-black/40 text-white cursor-pointer hover:bg-black/60 transition-colors ${isExpanded ? 'px-2 py-1.5' : 'p-1.5'}`}
-                                              title="Generate"
-                                            >
-                                              <Sparkles className={isExpanded ? 'h-3.5 w-3.5' : 'h-3 w-3'} />
-                                              {isExpanded && <span className="text-[7px] font-semibold">Generate</span>}
-                                            </div>
-                                            <div
-                                              onClick={() => openLibraryForChoosing(model.modelId, sceneIdx)}
-                                              className={`flex flex-col items-center gap-0.5 rounded-lg bg-black/40 text-white cursor-pointer hover:bg-black/60 transition-colors ${isExpanded ? 'px-2 py-1.5' : 'p-1.5'}`}
-                                              title="Choose from library"
-                                            >
-                                              <ImageIcon className={isExpanded ? 'h-3.5 w-3.5' : 'h-3 w-3'} />
-                                              {isExpanded && <span className="text-[7px] font-semibold">Choose</span>}
-                                            </div>
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-
-                                    return null;
-                                  })}
-                                  {/* Extra images from library (added via "+") */}
-                                  {(masterExtraImages[model.modelId] || []).map((extra, ei) => {
-                                    const extraSelected = isMasterResultSelected(model.modelId, extra);
-                                    const extraAtLimit = !extraSelected && selectedImages.length >= maxImages;
-                                    const extraOrderIdx = selectedImages.findIndex((e) => e.imageUrl === (extra.url || extra.gcsUrl) || e.imageId === extra.id);
-                                    return (
-                                      <button
-                                        key={`extra-${ei}`}
-                                        onClick={() => !extraAtLimit && masterToggleResult(model.modelId, extra)}
-                                        className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${extraSelected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20' : extraAtLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed' : 'border-[var(--border)] hover:border-[var(--primary)]/50'}`}
-                                      >
-                                        <img src={extra.url} alt="" className="h-full w-full object-cover" />
-                                        <div className="absolute left-0.5 top-0.5 rounded bg-purple-600/80 px-1 py-0.5 text-[8px] font-bold text-white">
-                                          +{ei + 1}
-                                        </div>
-                                        {extraSelected && (
-                                          <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
-                                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] font-bold">{extraOrderIdx + 1}</div>
-                                          </div>
-                                        )}
-                                        <div className="absolute bottom-0.5 right-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                                          <div
-                                            onClick={(e) => { e.stopPropagation(); removeExtraImage(model.modelId, ei); }}
-                                            className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-red-500/70"
-                                            title="Remove"
-                                          >
-                                            <X className="h-2 w-2" />
-                                          </div>
-                                          <div
-                                            onClick={(e) => { e.stopPropagation(); setPreviewUrl(extra.url); }}
-                                            className="flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white cursor-pointer hover:bg-black/70"
-                                          >
-                                            <Expand className="h-2 w-2" />
-                                          </div>
-                                        </div>
-                                      </button>
-                                    );
-                                  })}
-                                  {/* "+" card to add extra images from library */}
-                                  <div
-                                    onClick={() => openLibraryForChoosing(model.modelId)}
-                                    className="relative aspect-[3/4] overflow-hidden rounded-lg border-2 border-dashed border-[var(--border)] bg-[var(--accent)] cursor-pointer hover:border-[var(--primary)]/50 hover:bg-[var(--primary)]/5 transition-all flex items-center justify-center"
-                                  >
-                                    <div className="flex flex-col items-center gap-1 text-[var(--text-muted)]">
-                                      <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-dashed border-[var(--border)]">
-                                        <span className="text-base font-medium leading-none">+</span>
-                                      </div>
-                                      <span className="text-[7px] font-medium">Add image</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                              {/* Library browser for this model */}
-                              {browsingModelId === model.modelId && (
-                                <div className="rounded-lg border border-[var(--primary)]/20 bg-[var(--primary)]/5 p-2 space-y-2">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-[var(--text-muted)]">
-                                      Previously Generated {modelLibraryTotal > 0 && `(${modelLibraryTotal})`}
-                                    </span>
-                                    <button
-                                      onClick={() => { setBrowsingModelId(null); setChoosingForScene(null); setAddingExtraForModel(null); }}
-                                      className="rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--accent)]"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  </div>
-                                  {/* Scene assignment banner */}
-                                  {choosingForScene && choosingForScene.modelId === model.modelId && (
-                                    <div className="flex items-center gap-1.5 rounded-md bg-[var(--primary)]/10 px-2 py-1">
-                                      <ImageIcon className="h-3 w-3 text-[var(--primary)]" />
-                                      <span className="text-[10px] font-medium text-[var(--primary)]">
-                                        Pick image for Scene {choosingForScene.sceneIndex + 1}
-                                      </span>
-                                      <button
-                                        onClick={() => setChoosingForScene(null)}
-                                        className="ml-auto text-[var(--text-muted)] hover:text-[var(--text)]"
-                                      >
-                                        <X className="h-2.5 w-2.5" />
-                                      </button>
-                                    </div>
-                                  )}
-                                  {/* Add extra image banner */}
-                                  {addingExtraForModel === model.modelId && !choosingForScene && (
-                                    <div className="flex items-center gap-1.5 rounded-md bg-purple-500/10 px-2 py-1">
-                                      <span className="text-[10px] font-medium text-purple-500">
-                                        Pick an image to add to the carousel
-                                      </span>
-                                      <button
-                                        onClick={() => setAddingExtraForModel(null)}
-                                        className="ml-auto text-[var(--text-muted)] hover:text-[var(--text)]"
-                                      >
-                                        <X className="h-2.5 w-2.5" />
-                                      </button>
-                                    </div>
-                                  )}
-                                  {modelLibraryLoading ? (
-                                    <div className="flex items-center justify-center gap-2 py-4">
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--primary)]" />
-                                      <span className="text-[10px] text-[var(--text-muted)]">Loading...</span>
-                                    </div>
-                                  ) : modelLibraryImages.length === 0 ? (
-                                    <div className="py-3 text-center text-[10px] text-[var(--text-muted)]">
-                                      No previously generated images for this model.
-                                    </div>
-                                  ) : (
-                                    <>
-                                      <div className="max-h-[280px] overflow-y-auto rounded-lg">
-                                      <div className={`grid gap-1.5 ${isExpanded ? 'grid-cols-5' : 'grid-cols-3'}`}>
-                                        {modelLibraryImages.map((img) => {
-                                          const url = img.signedUrl || img.gcsUrl;
-                                          const current = config.masterCarouselImages?.[model.modelId] || [];
-                                          const libSelected = current.some((e) => e.imageId === img.id || e.imageUrl === url);
-                                          const atLimit = !libSelected && current.length >= maxImages;
-                                          const orderIdx = current.findIndex((e) => e.imageId === img.id || e.imageUrl === url);
-                                          const isChoosingForThisModel = choosingForScene && choosingForScene.modelId === model.modelId;
-                                          const isAddingExtra = addingExtraForModel === model.modelId && !isChoosingForThisModel;
-                                          const isPickMode = isChoosingForThisModel || isAddingExtra;
-                                          return (
-                                            <button
-                                              key={img.id}
-                                              onClick={() => {
-                                                if (isChoosingForThisModel) {
-                                                  masterChooseLibraryForScene(model.modelId, choosingForScene!.sceneIndex, img);
-                                                } else if (isAddingExtra) {
-                                                  addExtraImage(model.modelId, img);
-                                                } else if (!atLimit) {
-                                                  masterToggleLibraryImage(model.modelId, img);
-                                                }
-                                              }}
-                                              className={`group relative aspect-[3/4] overflow-hidden rounded-lg border-2 transition-all ${
-                                                isPickMode ? 'border-[var(--border)] hover:border-[var(--primary)] hover:ring-2 hover:ring-[var(--primary)]/20'
-                                                  : libSelected ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
-                                                  : atLimit ? 'border-[var(--border)] opacity-40 cursor-not-allowed'
-                                                  : 'border-[var(--border)] hover:border-[var(--primary)]/50'
-                                              }`}
-                                            >
-                                              <img src={url} alt={img.filename} className="h-full w-full object-cover" loading="lazy" />
-                                              {!isPickMode && libSelected && (
-                                                <div className="absolute inset-0 flex items-center justify-center bg-[var(--primary)]/20">
-                                                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-[9px] font-bold">{orderIdx + 1}</div>
-                                                </div>
-                                              )}
-                                              <div
-                                                onClick={(e) => { e.stopPropagation(); setPreviewUrl(url); }}
-                                                className="absolute bottom-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
-                                              >
-                                                <Expand className="h-2 w-2" />
-                                              </div>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                      </div>
-                                      {modelLibraryTotalPages > 1 && (
-                                        <div className="flex items-center justify-center gap-2">
-                                          <button
-                                            onClick={() => loadModelLibrary(model.modelId, Math.max(1, modelLibraryPage - 1))}
-                                            disabled={modelLibraryPage <= 1}
-                                            className="rounded-md border border-[var(--border)] px-2 py-0.5 text-[9px] font-medium text-[var(--text-muted)] hover:bg-[var(--accent)] disabled:opacity-40"
-                                          >
-                                            Prev
-                                          </button>
-                                          <span className="text-[9px] text-[var(--text-muted)]">{modelLibraryPage} / {modelLibraryTotalPages}</span>
-                                          <button
-                                            onClick={() => loadModelLibrary(model.modelId, Math.min(modelLibraryTotalPages, modelLibraryPage + 1))}
-                                            disabled={modelLibraryPage >= modelLibraryTotalPages}
-                                            className="rounded-md border border-[var(--border)] px-2 py-0.5 text-[9px] font-medium text-[var(--text-muted)] hover:bg-[var(--accent)] disabled:opacity-40"
-                                          >
-                                            Next
-                                          </button>
-                                        </div>
-                                      )}
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                              {selectedImages.length > 0 && (
-                                <div className="flex items-center justify-between">
-                                  <p className="text-[10px] text-green-600 dark:text-green-400 font-medium">{selectedImages.length} image{selectedImages.length !== 1 ? 's' : ''} selected</p>
-                                  <button onClick={() => onChange({ ...config, masterCarouselImages: { ...config.masterCarouselImages, [model.modelId]: [] } })} className="text-[10px] text-red-500 hover:underline">Clear</button>
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()}
-                      </div>
+                      <MasterModelCard
+                        key={model.modelId}
+                        model={model}
+                        isCollapsed={collapsedModels.has(model.modelId)}
+                        isGenerating={isGenerating}
+                        isMasterGeneratingAll={isMasterGeneratingAll}
+                        isExpanded={isExpanded}
+                        generateCount={generateCount}
+                        activeSceneCount={activeSceneCount}
+                        maxImages={maxImages}
+                        sceneImages={sceneImages}
+                        perSceneResults={perSceneResults}
+                        selectedImages={selectedImages}
+                        extras={masterExtraImages[model.modelId] || []}
+                        regeneratingScenes={masterRegeneratingScenes}
+                        isBrowsingLibrary={browsingModelId === model.modelId}
+                        modelLibraryImages={modelLibraryImages}
+                        modelLibraryLoading={modelLibraryLoading}
+                        modelLibraryPage={modelLibraryPage}
+                        modelLibraryTotal={modelLibraryTotal}
+                        modelLibraryTotalPages={modelLibraryTotalPages}
+                        choosingForScene={choosingForScene}
+                        isAddingExtra={addingExtraForModel === model.modelId}
+                        onToggleCollapsed={() => setCollapsedModels((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(model.modelId)) next.delete(model.modelId);
+                          else next.add(model.modelId);
+                          return next;
+                        })}
+                        onPreview={setPreviewUrl}
+                        onToggleLibrary={() => toggleModelLibrary(model.modelId)}
+                        onGenerateMissing={() => masterGenerateMissing(model.modelId, model.primaryGcsUrl)}
+                        onRetryFailed={() => masterRetryFailed(model.modelId, model.primaryGcsUrl)}
+                        onGenerateForModel={() => masterGenerateForModel(model.modelId, model.primaryGcsUrl)}
+                        onRegenerateScene={(sceneIdx) => masterRegenerateScene(model.modelId, model.primaryGcsUrl, sceneIdx)}
+                        openLibraryForChoosing={(sceneIndex) => openLibraryForChoosing(model.modelId, sceneIndex)}
+                        onRemoveExtra={(extraIndex) => removeExtraImage(model.modelId, extraIndex)}
+                        onCloseLibrary={() => { setBrowsingModelId(null); setChoosingForScene(null); setAddingExtraForModel(null); }}
+                        onClearChoosingScene={() => setChoosingForScene(null)}
+                        onClearAddingExtra={() => setAddingExtraForModel(null)}
+                        onChooseLibraryForScene={(sceneIndex, img) => masterChooseLibraryForScene(model.modelId, sceneIndex, img)}
+                        onAddExtraImage={(img) => addExtraImage(model.modelId, img)}
+                        onToggleLibraryImage={(img) => masterToggleLibraryImage(model.modelId, img)}
+                        onToggleResult={(result) => masterToggleResult(model.modelId, result)}
+                        isResultSelected={(result) => isMasterResultSelected(model.modelId, result)}
+                        onLoadLibraryPage={(page) => loadModelLibrary(model.modelId, page)}
+                        onClearSelection={() => onChange({ ...config, masterCarouselImages: { ...config.masterCarouselImages, [model.modelId]: [] } })}
+                      />
                     );
                   })}
                 </div>
