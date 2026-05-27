@@ -10,24 +10,14 @@ import {
 } from 'lucide-react';
 import type { CarouselImageEntry, CarouselConfig as CC, ModelImage, GeneratedImage } from '@/types';
 import type { MasterModel } from '@/components/templates/NodeConfigPanel';
-
-type ImageSource = 'model' | 'upload' | 'generate';
-
-const PLATFORM_LIMITS: Record<string, number> = {
-  instagram: 10,
-  tiktok: 35,
-  both: 10,
-};
-
-type SceneAction = 'generate' | 'use-as-is' | 'skip';
-type SceneImage = { url: string; filename: string; action: SceneAction };
-type GenResult = { id?: string; url: string; gcsUrl: string };
-
-function ordinal(n: number): string {
-  const s = ['th', 'st', 'nd', 'rd'];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-}
+import {
+  PLATFORM_LIMITS,
+  ordinal,
+  type ImageSource,
+  type SceneAction,
+  type SceneImage,
+  type GenResult,
+} from './carouselStepHelpers';
 
 export default function CarouselStepConfig({
   config,
