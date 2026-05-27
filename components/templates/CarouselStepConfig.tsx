@@ -16,6 +16,7 @@ import type { MasterModel } from '@/components/templates/NodeConfigPanel';
 import {
   PLATFORM_LIMITS,
   ordinal,
+  flattenPerSceneResults,
   type ImageSource,
   type SceneAction,
   type SceneImage,
@@ -381,13 +382,6 @@ export default function CarouselStepConfig({
     } finally {
       setIsLoadingUrl(false);
     }
-  };
-
-  // Helper: flatten per-scene results map into a flat array (for config saving)
-  const flattenPerSceneResults = (perScene: Record<number, GenResult[]>): GenResult[] => {
-    const entries = Object.entries(perScene)
-      .sort(([a], [b]) => Number(a) - Number(b));
-    return entries.flatMap(([, results]) => results);
   };
 
   // Internal: generate for one model (all scenes), return results, update local display state only
