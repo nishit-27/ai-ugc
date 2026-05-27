@@ -105,6 +105,7 @@ types/               # TypeScript type definitions
 - **Post deduplication** — uses both `post_idempotency_keys` table AND in-memory caching. Don't bypass either.
 - **All storage is R2** — `signed-url` endpoint is a no-op but kept for backward compatibility.
 - **`/api/templates` GET caps at the last 500 jobs** (override with `?limit=N`, max 2000). Single-job lookups use `/api/templates/[id]`.
+- **Secret rotation.** `.env` has never been committed (verified via `git log -- .env`). For the three random-bytes secrets (`AUTH_SECRET`, `NEXTAUTH_SECRET`, `CRON_SECRET`) run `./scripts/rotate-secrets.sh` — it backs up `.env` and regenerates them. Provider API keys (FAL, OpenAI, Google, R2, Late, Gemini, RapidAPI, YouTube) must be rotated from each provider's admin console.
 
 ## Commands
 
