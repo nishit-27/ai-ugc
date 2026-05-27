@@ -5,6 +5,8 @@ import { useModels } from '@/hooks/useModels';
 import { useGeneratedImages } from '@/hooks/useGeneratedImages';
 import PreviewModal from '@/components/ui/PreviewModal';
 import CarouselUrlImport from './CarouselUrlImport';
+import CarouselOrderList from './CarouselOrderList';
+import CarouselCoverPicker from './CarouselCoverPicker';
 import {
   Upload, X, GripVertical, Check, ImageIcon, Loader2, ChevronDown, ChevronRight,
   Sparkles, RefreshCw, Expand, Link2, RotateCcw,
@@ -1971,93 +1973,26 @@ export default function CarouselStepConfig({
       )}
 
       {/* ─── Selected images with order numbering (all modes) ─── */}
-      {config.images.length > 0 && (
-        <div>
-          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-            Carousel Order (drag to reorder)
-          </label>
-          <div className="space-y-1.5">
-            {config.images.map((entry, index) => {
-              const url = getImageUrl(entry);
-              return (
-                <div
-                  key={`${entry.imageId || entry.imageUrl}-${index}`}
-                  draggable
-                  onDragStart={() => handleDragStart(index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDragEnd={handleDragEnd}
-                  className={`flex items-center gap-2 rounded-lg border bg-[var(--surface)] p-1.5 transition-all ${
-                    dragOverIndex === index ? 'border-[var(--primary)]/60 bg-[var(--accent)] dark:bg-[var(--primary)]/10' : 'border-[var(--border)]'
-                  } ${dragIndex === index ? 'opacity-50' : ''}`}
-                >
-                  <GripVertical className="h-3.5 w-3.5 shrink-0 cursor-grab text-[var(--border)]" />
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-[10px] font-bold text-[var(--primary-foreground)]">
-                    {index + 1}
-                  </div>
-                  {url ? (
-                    <img
-                      src={url}
-                      alt={entry.filename || `Image ${index + 1}`}
-                      className="h-10 w-10 shrink-0 rounded object-cover cursor-pointer"
-                      onClick={() => setPreviewUrl(url)}
-                    />
-                  ) : (
-                    <div className="h-10 w-10 shrink-0 rounded bg-[var(--accent)] flex items-center justify-center">
-                      <ImageIcon className="h-4 w-4 text-[var(--text-muted)]" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <span className="block truncate text-xs text-[var(--text)]">
-                      {entry.filename || `Image ${index + 1}`}
-                    </span>
-                    <span className="text-[10px] text-[var(--text-muted)]">{ordinal(index + 1)} in carousel</span>
-                  </div>
-                  <button
-                    onClick={() => removeImage(index)}
-                    className="shrink-0 rounded p-1 text-[var(--text-muted)] transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <CarouselOrderList
+        images={config.images}
+        getImageUrl={getImageUrl}
+        onRemove={removeImage}
+        onPreview={setPreviewUrl}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+        dragIndex={dragIndex}
+        dragOverIndex={dragOverIndex}
+      />
 
       {/* Photo cover index (for TikTok) */}
-      {(platform === 'tiktok' || platform === 'both') && config.images.length > 0 && (
-        <div>
-          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-            Cover Photo (TikTok)
-          </label>
-          <div className="grid grid-cols-5 gap-1.5">
-            {config.images.map((entry, index) => {
-              const url = getImageUrl(entry);
-              const isCover = (config.photoCoverIndex ?? 0) === index;
-              return (
-                <button
-                  key={index}
-                  onClick={() => onChange({ ...config, photoCoverIndex: index })}
-                  className={`relative aspect-square overflow-hidden rounded-lg border-2 transition-all ${
-                    isCover ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20' : 'border-[var(--border)] hover:border-[var(--primary)]/50'
-                  }`}
-                >
-                  {url ? (
-                    <img src={url} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="h-full w-full bg-[var(--accent)]" />
-                  )}
-                  {isCover && (
-                    <div className="absolute bottom-0 inset-x-0 bg-[var(--primary)] py-0.5 text-center text-[8px] font-bold text-[var(--primary-foreground)]">
-                      COVER
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      {(platform === 'tiktok' || platform === 'both') && (
+        <CarouselCoverPicker
+          images={config.images}
+          coverIndex={config.photoCoverIndex ?? 0}
+          getImageUrl={getImageUrl}
+          onSelect={(index) => onChange({ ...config, photoCoverIndex: index })}
+        />
       )}
 
       {previewUrl && <PreviewModal src={previewUrl} type="image" onClose={() => setPreviewUrl(null)} />}
