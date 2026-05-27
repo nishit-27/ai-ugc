@@ -2,8 +2,9 @@
 
 import { useState, useEffect, type ReactNode } from 'react';
 import { X, Upload, Star, Trash2, Loader2, ImageIcon, Link2, Pencil, Check, Folder, ChevronDown, Plus } from 'lucide-react';
-import type { Model, ModelImage, ModelAccountMapping, Account, GeneratedImage } from '@/types';
+import type { Model, ModelImage } from '@/types';
 import { useToast } from '@/hooks/useToast';
+import { useModelDetail } from '@/hooks/useModelDetail';
 import { Skeleton } from '@/components/ui/skeleton';
 import ModelAccountMapper from '@/components/models/ModelAccountMapper';
 import PreviewModal from '@/components/ui/PreviewModal';
@@ -78,24 +79,22 @@ export default function ModelDetailModal({
   loadModels: () => Promise<void>;
   existingGroupNames?: string[];
 }) {
-  // Social account mappings
-  const [accountMappings, setAccountMappings] = useState<ModelAccountMapping[]>([]);
-  const [allAccounts, setAllAccounts] = useState<Account[]>([]);
-  const [accountsLoading, setAccountsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!open || !model) return;
-    setAccountsLoading(true);
-    Promise.all([
-      fetch(`/api/models/${model.id}/accounts`).then(r => r.ok ? r.json() : []),
-      fetch('/api/late/accounts').then(r => r.ok ? r.json() : { accounts: [] }),
-    ]).then(([mappings, accountsData]) => {
-      setAccountMappings(Array.isArray(mappings) ? mappings : []);
-      setAllAccounts(accountsData.accounts || []);
-    }).catch(() => {}).finally(() => setAccountsLoading(false));
-  }, [open, model]);
-
   const { showToast } = useToast();
+  const detail = useModelDetail(model?.id, open);
+  const {
+    accountMappings,
+    allAccounts,
+    generatedImages,
+    isLoadingAccounts: accountsLoading,
+    patchModel,
+    uploadImage,
+    addImageFromUrl,
+    setImagePrimary,
+    deleteImage,
+    replaceAccountMappings,
+    deleteModel: deleteModelOnApi,
+  } = detail;
+
   const [modelImagesUploading, setModelImagesUploading] = useState(false);
   const [isDeletingModel, setIsDeletingModel] = useState(false);
   const [isSettingPrimary, setIsSettingPrimary] = useState<string | null>(null);
@@ -107,20 +106,8 @@ export default function ModelDetailModal({
   const [editGroupNames, setEditGroupNames] = useState<string[]>([]);
   const [isSavingGroup, setIsSavingGroup] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
-  const [genImagesLoading, setGenImagesLoading] = useState(false);
   const [addingGenImage, setAddingGenImage] = useState<string | null>(null);
   const [showGenImages, setShowGenImages] = useState(false);
-
-  useEffect(() => {
-    if (!open || !model) return;
-    setGenImagesLoading(true);
-    fetch(`/api/generated-images?modelId=${model.id}&limit=100`)
-      .then((r) => (r.ok ? r.json() : { images: [] }))
-      .then((data) => setGeneratedImages(data.images || []))
-      .catch(() => setGeneratedImages([]))
-      .finally(() => setGenImagesLoading(false));
-  }, [open, model]);
 
   useEffect(() => {
     if (!model) return;
@@ -136,21 +123,11 @@ export default function ModelDetailModal({
     }
     setIsSavingName(true);
     try {
-      const res = await fetch(`/api/models/${model!.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmed }),
-      });
-      if (res.ok) {
-        showToast('Name updated', 'success');
-        loadModels();
-      } else {
-        let errMsg = 'Failed to update name';
-        try { const d = await res.json(); errMsg = d.error || errMsg; } catch { /* non-JSON */ }
-        showToast(errMsg, 'error');
-      }
-    } catch {
-      showToast('Failed to update name', 'error');
+      await patchModel({ name: trimmed });
+      showToast('Name updated', 'success');
+      loadModels();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update name', 'error');
     } finally {
       setIsSavingName(false);
       setIsEditingName(false);
@@ -170,21 +147,11 @@ export default function ModelDetailModal({
 
     setIsSavingGroup(true);
     try {
-      const res = await fetch(`/api/models/${model.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupNames: editGroupNames }),
-      });
-      if (res.ok) {
-        showToast(editGroupNames.length > 0 ? 'Groups updated' : 'Groups removed', 'success');
-        await loadModels();
-      } else {
-        let errMsg = 'Failed to update groups';
-        try { const d = await res.json(); errMsg = d.error || errMsg; } catch { /* non-JSON */ }
-        showToast(errMsg, 'error');
-      }
-    } catch {
-      showToast('Failed to update groups', 'error');
+      await patchModel({ groupNames: editGroupNames });
+      showToast(editGroupNames.length > 0 ? 'Groups updated' : 'Groups removed', 'success');
+      await loadModels();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update groups', 'error');
     } finally {
       setIsSavingGroup(false);
       setIsEditingGroup(false);
@@ -237,20 +204,13 @@ export default function ModelDetailModal({
       for (let i = 0; i < files.length; i++) {
         const raw = files instanceof FileList ? files[i] : files[i];
         const file = await compressToWebp(raw);
-        const formData = new FormData();
-        formData.append('images', file);
-        const res = await fetch(`/api/models/${model.id}/images`, {
-          method: 'POST',
-          body: formData,
-        });
-        if (!res.ok) {
-          let errMsg = `Upload failed (${res.status})`;
-          try { const d = await res.json(); errMsg = d.error || errMsg; } catch { /* non-JSON response */ }
-          showToast(errMsg, 'error');
+        try {
+          const data = await uploadImage(file);
+          successCount += data.count || 1;
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Upload failed', 'error');
           continue;
         }
-        const data = await res.json();
-        successCount += data.count || 1;
       }
       if (successCount > 0) {
         showToast(`Uploaded ${successCount} image${successCount > 1 ? 's' : ''}`, 'success');
@@ -459,7 +419,7 @@ export default function ModelDetailModal({
               const filteredGenImages = generatedImages.filter((gi) => !referenceUrls.has(gi.gcsUrl));
               const hasGenImages = filteredGenImages.length > 0;
 
-              if (genImagesLoading || hasGenImages) return (
+              if (detail.isLoadingGeneratedImages || hasGenImages) return (
                 <div className="mb-4 rounded-xl border border-[var(--border)] overflow-hidden">
                   <button
                     onClick={() => setShowGenImages((v) => !v)}
@@ -467,13 +427,13 @@ export default function ModelDetailModal({
                   >
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
                       <ImageIcon className="h-3.5 w-3.5" />
-                      Generated Images {!genImagesLoading && `(${filteredGenImages.length})`}
+                      Generated Images {!detail.isLoadingGeneratedImages && `(${filteredGenImages.length})`}
                     </span>
                     <ChevronDown className={`h-3.5 w-3.5 text-[var(--text-muted)] transition-transform ${showGenImages ? 'rotate-180' : ''}`} />
                   </button>
                   {showGenImages && (
                     <div className="border-t border-[var(--border)] p-3.5">
-                      {genImagesLoading ? (
+                      {detail.isLoadingGeneratedImages ? (
                         <ImageSkeletonGrid />
                       ) : (
                         <div className="grid grid-cols-4 gap-2.5 max-h-64 overflow-y-auto">
@@ -507,15 +467,7 @@ export default function ModelDetailModal({
                                   onClick={async () => {
                                     setAddingGenImage(gi.id);
                                     try {
-                                      const res = await fetch(`/api/models/${model.id}/images`, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ sourceUrl: gi.gcsUrl }),
-                                      });
-                                      if (!res.ok) {
-                                        const d = await res.json().catch(() => ({}));
-                                        throw new Error(d.error || 'Upload failed');
-                                      }
+                                      await addImageFromUrl(gi.gcsUrl);
                                       showToast('Added as reference image', 'success');
                                       await loadModelImages(model.id);
                                       loadModels();
@@ -584,21 +536,12 @@ export default function ModelDetailModal({
                           onClick={async () => {
                             setIsSettingPrimary(img.id);
                             try {
-                              const res = await fetch(`/api/models/${model.id}/images/${img.id}`, {
-                                method: 'PATCH',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ isPrimary: true }),
-                              });
-                              if (!res.ok) {
-                                const data = await res.json().catch(() => ({ error: 'Failed' }));
-                                showToast(data.error || 'Failed to set primary', 'error');
-                                return;
-                              }
+                              await setImagePrimary(img.id);
                               await loadModelImages(model.id, true);
                               loadModels();
                               showToast('Set as primary', 'success');
-                            } catch {
-                              showToast('Failed to set primary', 'error');
+                            } catch (err) {
+                              showToast(err instanceof Error ? err.message : 'Failed to set primary', 'error');
                             } finally {
                               setIsSettingPrimary(null);
                             }
@@ -616,10 +559,12 @@ export default function ModelDetailModal({
                           if (!confirm('Delete this image?')) return;
                           setIsDeletingImage(img.id);
                           try {
-                            await fetch(`/api/models/${model.id}/images/${img.id}`, { method: 'DELETE' });
+                            await deleteImage(img.id);
                             await loadModelImages(model.id, true);
                             loadModels();
                             showToast('Image deleted', 'success');
+                          } catch (err) {
+                            showToast(err instanceof Error ? err.message : 'Failed to delete', 'error');
                           } finally {
                             setIsDeletingImage(null);
                           }
@@ -663,16 +608,12 @@ export default function ModelDetailModal({
               allAccounts={allAccounts}
               loading={accountsLoading}
               onSave={async (accounts) => {
-                const res = await fetch(`/api/models/${model.id}/accounts`, {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ accounts }),
-                });
-                if (res.ok) {
-                  const data = await res.json();
-                  setAccountMappings(Array.isArray(data) ? data : []);
+                try {
+                  await replaceAccountMappings(accounts);
                   showToast('Accounts updated', 'success');
                   loadModels();
+                } catch (err) {
+                  showToast(err instanceof Error ? err.message : 'Failed to update accounts', 'error');
                 }
               }}
             />
@@ -686,10 +627,12 @@ export default function ModelDetailModal({
               if (!confirm(`Delete model "${model.name}" and all its images?`)) return;
               setIsDeletingModel(true);
               try {
-                await fetch(`/api/models/${model.id}`, { method: 'DELETE' });
+                await deleteModelOnApi();
                 onClose();
                 loadModels();
                 showToast('Model deleted', 'success');
+              } catch (err) {
+                showToast(err instanceof Error ? err.message : 'Failed to delete model', 'error');
               } finally {
                 setIsDeletingModel(false);
               }
