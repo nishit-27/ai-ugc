@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModel, getModelImage, deleteModelImage, setModelImagePrimary } from '@/lib/db';
+import { requireSession } from '@/lib/api-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,9 @@ type RouteParams = { params: Promise<{ id: string; imageId: string }> };
 // DELETE /api/models/[id]/images/[imageId] - Delete specific image
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     const { id, imageId } = await params;
 
     const model = await getModel(id);
@@ -36,6 +40,9 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 // PATCH /api/models/[id]/images/[imageId] - Set image as primary
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     const { id, imageId } = await params;
     const body = await request.json();
     const { isPrimary } = body as { isPrimary?: boolean };

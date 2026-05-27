@@ -9,6 +9,7 @@ import { initDatabase, createGeneratedImage } from '@/lib/db';
 import { createGenerationRequest, updateGenerationRequest } from '@/lib/db-generation-requests';
 import { getEndpointCost } from '@/lib/fal-pricing';
 import { auth } from '@/lib/auth';
+import { requireSession } from '@/lib/api-helpers';
 import { generateImageWithReferences } from '@/lib/gemini-image';
 
 export const dynamic = 'force-dynamic';
@@ -125,6 +126,9 @@ async function reviewGeneratedFirstFrameFaceMatch(
 
 export async function POST(req: Request) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     const { modelImageUrl, frameImageUrl, resolution, modelId, provider = 'fal' } = await req.json();
 
     if (!modelImageUrl || !frameImageUrl) {

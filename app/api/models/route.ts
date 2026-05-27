@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createModel, setModelGroups, ensureDatabaseReady, getAllModels, getModelImageCountsForModels, getModelAccountMappingsForModels } from '@/lib/db';
+import { requireSession } from '@/lib/api-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,6 +63,9 @@ export async function GET() {
 // POST /api/models - Create a new model
 export async function POST(request: NextRequest) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     await ensureDatabaseReady();
     const body = await request.json();
     const { name, description, groupName, groupNames } = body as { name?: string; description?: string; groupName?: string | null; groupNames?: string[] };

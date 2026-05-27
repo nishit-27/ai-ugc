@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { ensureDatabaseReady, getModel, getModelImages, createModelImage } from '@/lib/db';
 import { uploadImage } from '@/lib/storage';
+import { requireSession, assertSafeRemoteUrl } from '@/lib/api-helpers';
 
 export const dynamic = 'force-dynamic';
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 type RouteParams = { params: Promise<{ id: string }> };
 type ModelImageRecord = {
@@ -48,6 +51,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 // POST /api/models/[id]/images - Upload image(s) to model
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     await ensureDatabaseReady();
     const { id } = await params;
     const model = await getModel(id);
@@ -61,16 +67,26 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Handle JSON body with sourceUrl (for adding generated images as reference)
     if (contentType.includes('application/json')) {
       const { sourceUrl } = await request.json();
-      if (!sourceUrl || typeof sourceUrl !== 'string') {
-        return NextResponse.json({ error: 'sourceUrl is required' }, { status: 400 });
+      let safeUrl: URL;
+      try {
+        safeUrl = assertSafeRemoteUrl(sourceUrl);
+      } catch (e) {
+        return NextResponse.json({ error: (e as Error).message }, { status: 400 });
       }
-      const imgResp = await fetch(sourceUrl);
+      const imgResp = await fetch(safeUrl);
       if (!imgResp.ok) {
         return NextResponse.json({ error: 'Failed to fetch source image' }, { status: 400 });
       }
+      const declaredSize = Number(imgResp.headers.get('content-length') || '0');
+      if (declaredSize && declaredSize > MAX_IMAGE_BYTES) {
+        return NextResponse.json({ error: 'Source image exceeds size limit' }, { status: 413 });
+      }
       const blob = await imgResp.blob();
       const buffer = Buffer.from(await blob.arrayBuffer());
-      const urlPath = new URL(sourceUrl).pathname;
+      if (buffer.length > MAX_IMAGE_BYTES) {
+        return NextResponse.json({ error: 'Source image exceeds size limit' }, { status: 413 });
+      }
+      const urlPath = safeUrl.pathname;
       const originalName = urlPath.split('/').pop() || 'image.jpg';
       const ext = path.extname(originalName) || '.jpg';
       const allowed = /\.(jpg|jpeg|png|webp)$/i;
@@ -130,6 +146,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
       if (!allowed.test(ext)) {
         continue; // Skip invalid files
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        continue; // Skip oversized files
       }
 
       const bytes = await file.arrayBuffer();

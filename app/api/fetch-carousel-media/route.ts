@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { rapidApiLimiter } from '@/lib/rateLimiter';
 import { config } from '@/lib/config';
 import { uploadImage } from '@/lib/storage.js';
+import { requireSession } from '@/lib/api-helpers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -194,6 +195,9 @@ async function persistImageToR2(item: MediaItem, index: number): Promise<Persist
 
 export async function POST(req: Request) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     const { url } = await req.json();
 
     if (!url || typeof url !== 'string') {

@@ -6,6 +6,7 @@ import { uploadImage, downloadToBuffer } from '@/lib/storage.js';
 import { isR2Url } from '@/lib/r2';
 import { initDatabase, createGeneratedImage } from '@/lib/db';
 import { auth } from '@/lib/auth';
+import { requireSession } from '@/lib/api-helpers';
 import { generateImageWithReferences } from '@/lib/gemini-image';
 
 export const dynamic = 'force-dynamic';
@@ -133,6 +134,9 @@ async function generateFaceSwap(
  */
 export async function POST(req: Request) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     const {
       modelImageUrl,
       sceneImageUrl,

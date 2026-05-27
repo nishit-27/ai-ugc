@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModel, updateModel, deleteModel, getModelImages, setModelGroups, ensureDatabaseReady } from '@/lib/db';
+import { requireSession } from '@/lib/api-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +38,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 // PATCH /api/models/[id] - Update model
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     await ensureDatabaseReady();
     const { id } = await params;
     const body = await request.json();
@@ -88,6 +92,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 // DELETE /api/models/[id] - Delete model and all images
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     await ensureDatabaseReady();
     const { id } = await params;
     const existing = await getModel(id);

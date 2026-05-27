@@ -2,16 +2,28 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { uploadVideo } from '@/lib/storage';
 import { createMediaFile } from '@/lib/db';
+import { requireSession } from '@/lib/api-helpers';
 
 export const maxDuration = 120;
 export const dynamic = 'force-dynamic';
 
+const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+
 export async function POST(request: NextRequest) {
   try {
+    const { error } = await requireSession();
+    if (error) return error;
+
     const formData = await request.formData();
     const file = formData.get('video') as File | null;
     if (!file) {
       return NextResponse.json({ error: 'No video uploaded' }, { status: 400 });
+    }
+    if (file.size > MAX_VIDEO_BYTES) {
+      return NextResponse.json(
+        { error: `Video too large (max ${MAX_VIDEO_BYTES / 1024 / 1024} MB)` },
+        { status: 413 }
+      );
     }
     const ext = path.extname(file.name) || '.mp4';
     const allowed = /\.(mp4|mov|webm)$/i;

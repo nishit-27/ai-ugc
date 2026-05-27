@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { retry } from '@/lib/retry';
+import { requireSession } from '@/lib/api-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,6 +65,9 @@ type ModelResult = {
 
 export async function POST(req: Request) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     const { models, frameImageUrl, resolution, provider = 'fal' } = (await req.json()) as BatchRequest;
 
     if (!models || !Array.isArray(models) || models.length === 0) {

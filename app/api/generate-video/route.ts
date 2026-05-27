@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fal } from '@fal-ai/client';
 import { config } from '@/lib/config';
 import { uploadVideo } from '@/lib/r2';
+import { requireSession } from '@/lib/api-helpers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -98,6 +99,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const { error: authError } = await requireSession();
+    if (authError) return authError;
+
     const body = await request.json();
     const { modelId, prompt, imageUrl, aspectRatio = '9:16', duration = '5' } = body as {
       modelId: string;
