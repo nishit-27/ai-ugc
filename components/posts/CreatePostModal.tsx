@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import type { Profile, Account } from '@/types';
 import { useToast } from '@/hooks/useToast';
+import { useCreatePostData } from '@/hooks/useCreatePostData';
+import { useSubmitPost } from '@/hooks/useSubmitPost';
 import { uploadVideoDirectToGcs } from '@/lib/gcsResumableUpload';
 import CreatePostModalContent from '@/components/posts/CreatePostModalContent';
 
@@ -88,12 +89,9 @@ export default function CreatePostModal({
   preselectedVideoUrl?: string | null;
 }) {
   const { showToast } = useToast();
+  const { videos, accounts, profiles, modelGroups, isLoading: isLoadingModal } = useCreatePostData(open);
+  const { submit: submitPostRequest } = useSubmitPost();
 
-  const [isLoadingModal, setIsLoadingModal] = useState(false);
-  const [videos, setVideos] = useState<{ name: string; path: string; url?: string }[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [modelGroups, setModelGroups] = useState<{ name: string; accountIds: string[] }[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [postForm, setPostForm] = useState({ caption: '', videoUrl: '', date: '', time: '' });
   const [publishMode, setPublishMode] = useState<'now' | 'schedule' | 'queue' | 'draft'>('now');
@@ -132,22 +130,9 @@ export default function CreatePostModal({
     (a) => a.platform === 'tiktok' || a.platform === 'instagram' || a.platform === 'youtube'
   );
 
+  // Hook owns the four GETs; this effect just resets local form state on open.
   useEffect(() => {
     if (!open) return;
-    setIsLoadingModal(true);
-    Promise.all([
-      fetch('/api/videos').then((r) => r.json()),
-      fetch('/api/late/accounts').then((r) => r.json()),
-      fetch('/api/late/profiles').then((r) => r.json()),
-      fetch('/api/model-groups/accounts').then((r) => r.json()),
-    ]).then(([videosData, accountsData, profilesData, groupsData]) => {
-      setVideos(videosData.videos || []);
-      setAccounts(accountsData.accounts || []);
-      setProfiles(profilesData.profiles || []);
-      setModelGroups(groupsData.groups || []);
-    }).catch(console.error).finally(() => {
-      setIsLoadingModal(false);
-    });
     setPostForm({ caption: '', videoUrl: preselectedVideoUrl || '', date: '', time: '' });
     setUploadedVideoPath(null);
     setUploadedVideoPreviewUrl(null);
@@ -284,14 +269,9 @@ export default function CreatePostModal({
             : 'Adding to queue...';
       showToast(toastMsg, 'success');
 
-      const res = await fetch('/api/posts/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      const { ok, data } = await submitPostRequest(body as unknown as Parameters<typeof submitPostRequest>[0]);
 
-      if (res.ok && data.success) {
+      if (ok && data.success) {
         showToast(data.message || 'Post submitted!', 'success');
         onSubmitted();
       } else {
