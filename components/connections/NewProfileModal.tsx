@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Pencil } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
+import { useCreateProfile } from '@/hooks/useCreateProfile';
 import type { KeyUsageInfo } from '@/hooks/useConnections';
 import Modal from '@/components/ui/Modal';
 import Spinner from '@/components/ui/Spinner';
@@ -23,9 +24,9 @@ export default function NewProfileModal({
   keyUsage?: KeyUsageInfo[];
 }) {
   const { showToast } = useToast();
+  const { createProfile, setProfileCap, isCreating } = useCreateProfile();
   const [form, setForm] = useState({ name: '', description: '' });
   const [selectedKeyIndex, setSelectedKeyIndex] = useState<number | 'auto'>('auto');
-  const [isCreating, setIsCreating] = useState(false);
 
   // A key with `limitSource === 'unknown'` has no detected cap yet — don't
   // count it toward "all keys full" (we'll let the API tell us when it is).
@@ -46,17 +47,12 @@ export default function NewProfileModal({
       showToast('Cap must be a positive number', 'error');
       return;
     }
-    const res = await fetch('/api/late/profiles/limits', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKeyIndex, max: value }),
-    });
-    if (res.ok) {
+    try {
+      await setProfileCap(apiKeyIndex, value);
       showToast(`${label} cap set to ${value}`, 'success');
       onCreated(); // triggers a refresh of keyUsage
-    } else {
-      const data = await res.json().catch(() => ({}));
-      showToast(data.error || 'Failed to set cap', 'error');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to set cap', 'error');
     }
   };
 
@@ -65,29 +61,18 @@ export default function NewProfileModal({
       showToast('Profile name is required', 'error');
       return;
     }
-    setIsCreating(true);
     try {
-      const body: Record<string, unknown> = { ...form };
-      if (selectedKeyIndex !== 'auto') {
-        body.apiKeyIndex = selectedKeyIndex;
-      }
-      const res = await fetch('/api/late/profiles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+      await createProfile({
+        ...form,
+        ...(selectedKeyIndex !== 'auto' ? { apiKeyIndex: selectedKeyIndex } : {}),
       });
-      const data = await res.json();
-      if (res.ok) {
-        onClose();
-        setForm({ name: '', description: '' });
-        setSelectedKeyIndex('auto');
-        showToast('Profile created!', 'success');
-        onCreated();
-      } else {
-        showToast(data.error || 'Failed', 'error');
-      }
-    } finally {
-      setIsCreating(false);
+      onClose();
+      setForm({ name: '', description: '' });
+      setSelectedKeyIndex('auto');
+      showToast('Profile created!', 'success');
+      onCreated();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed', 'error');
     }
   };
 

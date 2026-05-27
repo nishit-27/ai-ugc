@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { Search, CheckSquare, Square, Check, Minus, Loader2, AlertTriangle } from 'lucide-react';
 import gsap from 'gsap';
 import type { Model } from '@/types';
+import { useInactiveAccounts } from '@/hooks/useInactiveAccounts';
 
 const UNGROUPED_KEY = '__ungrouped__';
 const UNGROUPED_LABEL = 'Ungrouped';
@@ -68,7 +69,7 @@ export default function TwitterModelSelector({
   twitterAccountCounts?: Record<string, number>;
 }) {
   const [search, setSearch] = useState('');
-  const [inactiveByModel, setInactiveByModel] = useState<Record<string, InactiveInfo[]>>({});
+  const { accounts: inactiveAccounts } = useInactiveAccounts();
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Only show models that have Twitter connected
@@ -77,23 +78,15 @@ export default function TwitterModelSelector({
     [models, twitterAccountCounts]
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/models/inactive-accounts', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        const map: Record<string, InactiveInfo[]> = {};
-        for (const acc of data.inactiveAccounts || []) {
-          if (acc.platform !== 'twitter') continue; // Only show Twitter-related inactive
-          if (!map[acc.modelId]) map[acc.modelId] = [];
-          map[acc.modelId].push({ platform: acc.platform, username: acc.username });
-        }
-        setInactiveByModel(map);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
+  const inactiveByModel = useMemo(() => {
+    const map: Record<string, InactiveInfo[]> = {};
+    for (const acc of inactiveAccounts) {
+      if (acc.platform !== 'twitter') continue;
+      if (!map[acc.modelId]) map[acc.modelId] = [];
+      map[acc.modelId].push({ platform: acc.platform, username: acc.username });
+    }
+    return map;
+  }, [inactiveAccounts]);
 
   // Animate on mount
   useEffect(() => {

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Check } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
+import { useCreateModel } from '@/hooks/useCreateModel';
 import Modal from '@/components/ui/Modal';
 import Spinner from '@/components/ui/Spinner';
 
@@ -18,9 +19,9 @@ export default function NewModelModal({
   existingGroupNames?: string[];
 }) {
   const { showToast } = useToast();
+  const { createModel, isCreating } = useCreateModel();
   const [form, setForm] = useState({ name: '', description: '' });
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
-  const [isCreating, setIsCreating] = useState(false);
 
   const toggleGroup = (groupName: string) => {
     setSelectedGroups((prev) =>
@@ -33,30 +34,15 @@ export default function NewModelModal({
       showToast('Model name is required', 'error');
       return;
     }
-    setIsCreating(true);
     try {
-      const res = await fetch('/api/models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          groupNames: selectedGroups,
-        }),
-      });
-      if (res.ok) {
-        onClose();
-        setForm({ name: '', description: '' });
-        setSelectedGroups([]);
-        showToast('Model created!', 'success');
-        onCreated();
-      } else {
-        const data = await res.json();
-        showToast(data.error || 'Failed', 'error');
-      }
-    } catch {
-      showToast('Error creating model', 'error');
-    } finally {
-      setIsCreating(false);
+      await createModel({ ...form, groupNames: selectedGroups });
+      onClose();
+      setForm({ name: '', description: '' });
+      setSelectedGroups([]);
+      showToast('Model created!', 'success');
+      onCreated();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Error creating model', 'error');
     }
   };
 
