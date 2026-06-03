@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   await initDatabase();
 
   const body = await req.json();
-  const { name, steps, accountIds, scheduledFor, timezone } = body;
+  const { name, steps, accountIds, modelIds, publishMode, scheduledFor, timezone } = body;
 
   if (!name) {
     return NextResponse.json({ error: 'name is required' }, { status: 400 });
@@ -34,6 +34,8 @@ export async function POST(req: Request) {
     name,
     steps: steps || [],
     accountIds: accountIds || [],
+    modelIds: modelIds || [],
+    publishMode: publishMode || 'now',
     scheduledFor: scheduledFor ? new Date(scheduledFor) : undefined,
     timezone,
     createdBy: session.user?.email || undefined,

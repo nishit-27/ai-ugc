@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Link, Sparkles, Wand2, ImageIcon, X } from 'lucide-react';
+import { Link, Sparkles, Wand2, X } from 'lucide-react';
 import type { TwitterQuoteConfig } from '@/types';
+import MediaAttachField from './MediaAttachField';
 
 interface QuoteStepConfigProps {
   config: TwitterQuoteConfig;
@@ -11,10 +12,11 @@ interface QuoteStepConfigProps {
   onGenerate: (params: any) => Promise<any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFetchTweet: (url: string) => Promise<any>;
+  onUploadMedia: (file: File) => Promise<string | null>;
   isGenerating?: boolean;
 }
 
-export default function QuoteStepConfig({ config, onChange, onGenerate, onFetchTweet, isGenerating }: QuoteStepConfigProps) {
+export default function QuoteStepConfig({ config, onChange, onGenerate, onFetchTweet, onUploadMedia, isGenerating }: QuoteStepConfigProps) {
   const [isFetchingTweet, setIsFetchingTweet] = useState(false);
   const charCount = config.content?.length || 0;
 
@@ -128,13 +130,14 @@ export default function QuoteStepConfig({ config, onChange, onGenerate, onFetchT
             Enhance
           </button>
         )}
-        <button
-          onClick={() => {}}
-          className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-[var(--text-secondary)] hover:border-[var(--primary)] hover:text-[var(--primary)]"
-        >
-          <ImageIcon className="h-3.5 w-3.5" />
-        </button>
       </div>
+
+      {/* Media */}
+      <MediaAttachField
+        mediaUrls={config.mediaUrls || []}
+        onChange={(urls) => onChange({ mediaUrls: urls })}
+        onUpload={onUploadMedia}
+      />
     </div>
   );
 }

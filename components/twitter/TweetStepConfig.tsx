@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Sparkles, Wand2, Link, ImageIcon, X, ChevronDown, ChevronLeft, ChevronRight, History } from 'lucide-react';
+import { Sparkles, Wand2, Link, X, ChevronDown, ChevronLeft, ChevronRight, History } from 'lucide-react';
 import gsap from 'gsap';
 import type { TwitterTweetConfig } from '@/types';
+import MediaAttachField from './MediaAttachField';
 
 const GENRES = ['Professional', 'Casual', 'Humorous', 'Motivational', 'Educational', 'Controversial', 'Storytelling'];
 const MAX_CHARS = 280;
@@ -15,10 +16,11 @@ interface TweetStepConfigProps {
   onGenerate: (params: any) => Promise<any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFetchTweet: (url: string) => Promise<any>;
+  onUploadMedia: (file: File) => Promise<string | null>;
   isGenerating?: boolean;
 }
 
-export default function TweetStepConfig({ config, onChange, onGenerate, onFetchTweet, isGenerating }: TweetStepConfigProps) {
+export default function TweetStepConfig({ config, onChange, onGenerate, onFetchTweet, onUploadMedia, isGenerating }: TweetStepConfigProps) {
   const [showGenerate, setShowGenerate] = useState(config.mode === 'generate');
   const [genre, setGenre] = useState(config.genre || '');
   const [topic, setTopic] = useState(config.topic || '');
@@ -357,32 +359,11 @@ export default function TweetStepConfig({ config, onChange, onGenerate, onFetchT
       )}
 
       {/* Media */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Media (optional)</label>
-        {config.mediaUrls?.length ? (
-          <div className="flex flex-wrap gap-2">
-            {config.mediaUrls.map((url, i) => (
-              <div key={i} className="group relative h-16 w-16 overflow-hidden rounded-lg border border-[var(--border)]">
-                <img src={url} alt="" className="h-full w-full object-cover" />
-                <button
-                  onClick={() => onChange({ mediaUrls: config.mediaUrls?.filter((_, j) => j !== i) })}
-                  className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
-                >
-                  <X className="h-4 w-4 text-white" />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <button
-            onClick={() => {/* TODO: open media picker */}}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--bg-secondary)] py-6 text-sm text-[var(--text-muted)] transition-colors hover:border-[#1DA1F2] hover:text-[#1DA1F2]"
-          >
-            <ImageIcon className="h-4 w-4" />
-            Add Media
-          </button>
-        )}
-      </div>
+      <MediaAttachField
+        mediaUrls={config.mediaUrls || []}
+        onChange={(urls) => onChange({ mediaUrls: urls })}
+        onUpload={onUploadMedia}
+      />
 
       {/* Reply settings */}
       <div>

@@ -24,22 +24,27 @@ const STEP_META: Record<string, { label: string; icon: typeof MessageSquare }> =
 type GenerateFn = (params: any) => Promise<any>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FetchTweetFn = (url: string) => Promise<any>;
+type UploadMediaFn = (file: File) => Promise<string | null>;
 
 interface TwitterStepConfigPanelProps {
   step: TwitterPipelineStep | null;
+  steps: TwitterPipelineStep[];
   onClose: () => void;
   onUpdate: (stepId: string, config: Partial<TwitterPipelineStep['config']>) => void;
   onGenerate: GenerateFn;
   onFetchTweet: FetchTweetFn;
+  onUploadMedia: UploadMediaFn;
   isGenerating?: boolean;
 }
 
 export default function TwitterStepConfigPanel({
   step,
+  steps,
   onClose,
   onUpdate,
   onGenerate,
   onFetchTweet,
+  onUploadMedia,
   isGenerating,
 }: TwitterStepConfigPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -94,6 +99,7 @@ export default function TwitterStepConfigPanel({
             onChange={handleChange}
             onGenerate={onGenerate}
             onFetchTweet={onFetchTweet}
+            onUploadMedia={onUploadMedia}
             isGenerating={isGenerating}
           />
         )}
@@ -102,6 +108,7 @@ export default function TwitterStepConfigPanel({
             config={step.config as TwitterThreadConfig}
             onChange={handleChange}
             onGenerate={onGenerate}
+            onUploadMedia={onUploadMedia}
             isGenerating={isGenerating}
           />
         )}
@@ -111,6 +118,7 @@ export default function TwitterStepConfigPanel({
             onChange={handleChange}
             onGenerate={onGenerate}
             onFetchTweet={onFetchTweet}
+            onUploadMedia={onUploadMedia}
             isGenerating={isGenerating}
           />
         )}
@@ -120,6 +128,7 @@ export default function TwitterStepConfigPanel({
             onChange={handleChange}
             onGenerate={onGenerate}
             onFetchTweet={onFetchTweet}
+            onUploadMedia={onUploadMedia}
             isGenerating={isGenerating}
           />
         )}
@@ -134,6 +143,9 @@ export default function TwitterStepConfigPanel({
           <MediaStepConfig
             config={step.config as TwitterMediaConfig}
             onChange={handleChange}
+            onUploadMedia={onUploadMedia}
+            steps={steps}
+            currentStepId={step.id}
           />
         )}
       </div>

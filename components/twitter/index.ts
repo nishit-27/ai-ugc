@@ -10,3 +10,5 @@ export { default as ReplyStepConfig } from './ReplyStepConfig';
 export { default as QuoteStepConfig } from './QuoteStepConfig';
 export { default as EngageStepConfig } from './EngageStepConfig';
 export { default as MediaStepConfig } from './MediaStepConfig';
+export { default as MediaAttachField } from './MediaAttachField';
+export { default as TwitterPipelineJobList } from './TwitterPipelineJobList';
