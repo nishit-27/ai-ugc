@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, Suspense } from 'react';
+import { useState, useMemo, useCallback, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { useTemplates } from '@/hooks/useTemplates';
@@ -8,10 +8,11 @@ import { usePipelineBatches } from '@/hooks/usePipelineBatches';
 import { useModelFilterOptions } from '@/hooks/useModelFilterOptions';
 import type { DateFilterValue } from '@/types/media-filters';
 import { getDateFilterCutoffMs, getDateFilterSortDirection, toMillis } from '@/lib/media-filters';
-import type { MiniAppStep, PipelineBatch, TemplateJob } from '@/types';
+import type { MiniAppStep, PipelineBatch, TemplateJob, TwitterPipeline } from '@/types';
 import TemplateJobList from '@/components/templates/TemplateJobList';
 import PipelineBatchList from '@/components/templates/PipelineBatchList';
 import MasterBatchList from '@/components/templates/MasterBatchList';
+import { TwitterPipelineJobList } from '@/components/twitter';
 import ModelDateToolbar from '@/components/media/ModelDateToolbar';
 import PageTransition from '@/components/ui/PageTransition';
 
@@ -130,26 +131,44 @@ function JobsPageInner() {
     return newJobSeed.name || 'Pipeline';
   }, [jobs, newJobSeed]);
 
-  const refreshing = refreshingJobs || refreshingBatches;
-  const handleRefresh = async () => {
-    await Promise.all([refreshJobs(), refreshBatches()]);
-  };
   // Twitter pipelines
-  const [twitterPipelines, setTwitterPipelines] = useState<{ id: string; name: string; status: string; steps: unknown[]; createdAt: string; completedAt?: string }[]>([]);
+  const [twitterPipelines, setTwitterPipelines] = useState<TwitterPipeline[]>([]);
   const [twitterLoading, setTwitterLoading] = useState(false);
   const [twitterFetched, setTwitterFetched] = useState(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useMemo(() => {
-    if (tab === 'twitter' && !twitterFetched && !twitterLoading) {
-      setTwitterLoading(true);
+
+  const fetchTwitter = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setTwitterLoading(true);
+    try {
+      const res = await fetch('/api/twitter/pipelines');
+      const data = await res.json();
+      setTwitterPipelines(data.pipelines || []);
+    } catch {
+      // ignore — keep previous list
+    } finally {
       setTwitterFetched(true);
-      fetch('/api/twitter/pipelines')
-        .then((r) => r.json())
-        .then((data) => setTwitterPipelines(data.pipelines || []))
-        .catch(() => {})
-        .finally(() => setTwitterLoading(false));
+      if (showSpinner) setTwitterLoading(false);
     }
-  }, [tab, twitterFetched, twitterLoading]);
+  }, []);
+
+  // First load when the Twitter tab is opened.
+  useEffect(() => {
+    if (tab === 'twitter' && !twitterFetched && !twitterLoading) {
+      fetchTwitter(true);
+    }
+  }, [tab, twitterFetched, twitterLoading, fetchTwitter]);
+
+  // Poll while a pipeline is running so results land without a manual refresh.
+  const hasRunningTwitter = twitterPipelines.some((p) => p.status === 'running');
+  useEffect(() => {
+    if (tab !== 'twitter' || !hasRunningTwitter) return;
+    const interval = setInterval(() => fetchTwitter(false), 4000);
+    return () => clearInterval(interval);
+  }, [tab, hasRunningTwitter, fetchTwitter]);
+
+  const refreshing = refreshingJobs || refreshingBatches;
+  const handleRefresh = async () => {
+    await Promise.all([refreshJobs(), refreshBatches(), fetchTwitter(true)]);
+  };
 
   const itemCount = tab === 'single'
     ? filteredSingleJobs.length
@@ -168,7 +187,9 @@ function JobsPageInner() {
           <p className="text-xs text-[var(--text-muted)]">
             {isTabLoading
               ? 'Loading...'
-              : `${itemCount} ${tab === 'single' ? 'job' : tab === 'batch' ? 'batch' : 'master batch'}${itemCount !== 1 ? (tab === 'single' ? 's' : 'es') : ''}`
+              : tab === 'twitter'
+                ? `${itemCount} pipeline${itemCount !== 1 ? 's' : ''}`
+                : `${itemCount} ${tab === 'single' ? 'job' : tab === 'batch' ? 'batch' : 'master batch'}${itemCount !== 1 ? (tab === 'single' ? 's' : 'es') : ''}`
             }
           </p>
         </div>
@@ -260,48 +281,7 @@ function JobsPageInner() {
           ) : tab === 'batch' ? (
             <PipelineBatchList batches={filteredRegularBatches} />
           ) : tab === 'twitter' ? (
-            <div className="space-y-2">
-              {twitterPipelines.length === 0 ? (
-                <div className="py-16 text-center">
-                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--bg-tertiary)]">
-                    <svg className="h-5 w-5 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm font-medium text-[var(--text-primary)]">No Twitter pipelines yet</p>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">Create one from the Twitter page</p>
-                </div>
-              ) : (
-                twitterPipelines.map((pipeline) => (
-                  <div
-                    key={pipeline.id}
-                    className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 transition-all hover:shadow-md"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-tertiary)]">
-                        <svg className="h-4 w-4 text-[var(--text-muted)]" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-[var(--text-primary)]">{pipeline.name}</p>
-                        <p className="text-[11px] text-[var(--text-muted)]">
-                          {(pipeline.steps as unknown[])?.length || 0} steps &middot; {new Date(pipeline.createdAt).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                      pipeline.status === 'running' ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400'
-                        : pipeline.status === 'completed' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400'
-                        : pipeline.status === 'failed' ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
-                        : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-                    }`}>
-                      {pipeline.status}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
+            <TwitterPipelineJobList pipelines={twitterPipelines} />
           ) : (
             <MasterBatchList batches={filteredMasterBatches} onRename={renameBatch} />
           )}

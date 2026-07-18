@@ -3,10 +3,25 @@ import { twitterPipelines } from './schema';
 import { eq, desc } from 'drizzle-orm';
 import type { TwitterPipelineStep } from '@/types';
 
+// One result row per (step, account) produced during execution. Stored on the
+// pipeline so /jobs can render an audit trail after the background run finishes.
+export type TwitterPipelineResult = {
+  stepId: string;
+  stepType: string;
+  accountId: string;
+  modelName?: string;
+  success: boolean;
+  error?: string;
+  postUrl?: string;
+  latePostId?: string;
+};
+
 export async function createTwitterPipeline(data: {
   name: string;
   steps?: TwitterPipelineStep[];
   accountIds?: string[];
+  modelIds?: string[];
+  publishMode?: string;
   scheduledFor?: Date;
   timezone?: string;
   createdBy?: string;
@@ -17,6 +32,8 @@ export async function createTwitterPipeline(data: {
       name: data.name,
       steps: data.steps || [],
       accountIds: data.accountIds || [],
+      modelIds: data.modelIds || [],
+      publishMode: data.publishMode || 'now',
       scheduledFor: data.scheduledFor,
       timezone: data.timezone,
       createdBy: data.createdBy,
@@ -47,6 +64,9 @@ export async function updateTwitterPipeline(
     status?: string;
     steps?: TwitterPipelineStep[];
     accountIds?: string[];
+    modelIds?: string[];
+    publishMode?: string;
+    results?: TwitterPipelineResult[];
     scheduledFor?: Date | null;
     timezone?: string;
     error?: string;

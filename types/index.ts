@@ -543,12 +543,26 @@ export type TwitterPipelineStep = {
   enabled: boolean;
 };
 
+export type TwitterPipelineResult = {
+  stepId: string;
+  stepType: string;
+  accountId: string;
+  modelName?: string;
+  success: boolean;
+  error?: string;
+  postUrl?: string;
+  latePostId?: string;
+};
+
 export type TwitterPipeline = {
   id: string;
   name: string;
-  status: 'draft' | 'running' | 'completed' | 'failed';
+  status: 'draft' | 'running' | 'completed' | 'failed' | 'partial';
   steps: TwitterPipelineStep[];
   accountIds: string[];
+  modelIds?: string[];
+  publishMode?: 'now' | 'schedule' | 'queue' | 'draft';
+  results?: TwitterPipelineResult[];
   scheduledFor?: string;
   timezone?: string;
   error?: string;

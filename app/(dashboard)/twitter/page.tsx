@@ -16,6 +16,8 @@ function TwitterPipelineContent() {
     selectedStepId,
     setSelectedStepId,
     isExecuting,
+    executeError,
+    setExecuteError,
     isGenerating,
     pipelineStatus,
     savedPipelines,
@@ -29,6 +31,7 @@ function TwitterPipelineContent() {
     clearPipeline,
     fetchTweetContext,
     generateTweet,
+    uploadMedia,
     allModels,
     isLoadingModels,
     twitterAccountCounts,
@@ -203,6 +206,19 @@ function TwitterPipelineContent() {
         </div>
       </div>
 
+      {/* Execute error banner */}
+      {executeError && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-red-500/30 bg-red-500/10 px-4 py-2 lg:px-6">
+          <p className="flex-1 text-xs font-medium text-red-500">{executeError}</p>
+          <button
+            onClick={() => setExecuteError(null)}
+            className="rounded-md px-2 py-0.5 text-xs text-red-500/80 transition-colors hover:bg-red-500/10 hover:text-red-500"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Main content */}
       <div ref={mainRef} className="flex flex-1 overflow-hidden">
         {/* Pipeline Canvas */}
@@ -252,10 +268,12 @@ function TwitterPipelineContent() {
               {selectedStep ? (
                 <TwitterStepConfigPanel
                   step={selectedStep}
+                  steps={steps}
                   onClose={() => setSelectedStepId(null)}
                   onUpdate={updateStepConfig}
                   onGenerate={generateTweet}
                   onFetchTweet={fetchTweetContext}
+                  onUploadMedia={uploadMedia}
                   isGenerating={isGenerating}
                 />
               ) : (
@@ -282,10 +300,12 @@ function TwitterPipelineContent() {
           <div className="fixed inset-0 z-40 bg-[var(--bg-primary)] lg:hidden">
             <TwitterStepConfigPanel
               step={selectedStep}
+              steps={steps}
               onClose={() => setSelectedStepId(null)}
               onUpdate={updateStepConfig}
               onGenerate={generateTweet}
               onFetchTweet={fetchTweetContext}
+              onUploadMedia={uploadMedia}
               isGenerating={isGenerating}
             />
           </div>

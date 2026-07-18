@@ -38,11 +38,20 @@ export async function PUT(
   await initDatabase();
 
   const body = await req.json();
-  const pipeline = await updateTwitterPipeline(id, {
-    ...body,
-    scheduledFor: body.scheduledFor ? new Date(body.scheduledFor) : body.scheduledFor,
-    completedAt: body.completedAt ? new Date(body.completedAt) : undefined,
-  });
+  // Whitelist updatable fields — passing unknown keys into the Drizzle .set()
+  // would throw, and we never let the client write status/results directly.
+  const update: Parameters<typeof updateTwitterPipeline>[1] = {};
+  if (body.name !== undefined) update.name = body.name;
+  if (body.steps !== undefined) update.steps = body.steps;
+  if (body.accountIds !== undefined) update.accountIds = body.accountIds;
+  if (body.modelIds !== undefined) update.modelIds = body.modelIds;
+  if (body.publishMode !== undefined) update.publishMode = body.publishMode;
+  if (body.timezone !== undefined) update.timezone = body.timezone;
+  if (body.scheduledFor !== undefined) {
+    update.scheduledFor = body.scheduledFor ? new Date(body.scheduledFor) : null;
+  }
+
+  const pipeline = await updateTwitterPipeline(id, update);
 
   if (!pipeline) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });

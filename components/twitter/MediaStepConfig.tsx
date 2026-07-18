@@ -1,19 +1,55 @@
 'use client';
 
-import { Upload, ImageIcon, Video, Sparkles } from 'lucide-react';
-import type { TwitterMediaConfig } from '@/types';
+import { useRef, useState } from 'react';
+import { Upload, ImageIcon, Video, Sparkles, X, Loader2 } from 'lucide-react';
+import type { TwitterMediaConfig, TwitterPipelineStep } from '@/types';
+
+const VIDEO_RE = /\.(mp4|mov|webm|m4v)(\?|$)/i;
+
+const STEP_LABELS: Record<string, string> = {
+  tweet: 'Tweet',
+  thread: 'Thread',
+  reply: 'Reply',
+  quote: 'Quote',
+};
 
 interface MediaStepConfigProps {
   config: TwitterMediaConfig;
   onChange: (config: Partial<TwitterMediaConfig>) => void;
+  onUploadMedia: (file: File) => Promise<string | null>;
+  steps: TwitterPipelineStep[];
+  currentStepId: string;
 }
 
-export default function MediaStepConfig({ config, onChange }: MediaStepConfigProps) {
+export default function MediaStepConfig({ config, onChange, onUploadMedia, steps, currentStepId }: MediaStepConfigProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const SOURCE_OPTIONS = [
     { value: 'upload' as const, label: 'Upload', icon: Upload, desc: 'Upload from device' },
     { value: 'library' as const, label: 'Library', icon: ImageIcon, desc: 'Pick from /images or /videos' },
     { value: 'generate' as const, label: 'Generate', icon: Sparkles, desc: 'AI-generate media' },
   ];
+
+  // Content steps this media can be attached to (exclude other media steps).
+  const attachableSteps = steps.filter((s) => s.id !== currentStepId && s.type !== 'media');
+
+  const handleFile = async (file: File | null | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    const url = await onUploadMedia(file);
+    if (url) {
+      onChange({ mediaUrl: url, mediaType: VIDEO_RE.test(url) ? 'video' : 'image' });
+    } else {
+      setError(`Failed to upload ${file.name}`);
+    }
+    setUploading(false);
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  const isVideo = config.mediaUrl ? VIDEO_RE.test(config.mediaUrl) || config.mediaType === 'video' : false;
 
   return (
     <div className="space-y-4">
@@ -44,10 +80,34 @@ export default function MediaStepConfig({ config, onChange }: MediaStepConfigPro
 
       {/* Upload area */}
       {config.source === 'upload' && (
-        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--bg-secondary)] py-12 transition-colors hover:border-[#F45D22]">
-          <Upload className="h-8 w-8 text-[var(--text-muted)]" />
-          <p className="text-sm text-[var(--text-muted)]">Drag & drop or click to upload</p>
-          <p className="text-xs text-[var(--text-muted)]">Images, videos, GIFs</p>
+        <div>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*,video/mp4,video/quicktime,video/webm"
+            className="hidden"
+            onChange={(e) => handleFile(e.target.files?.[0])}
+          />
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="flex w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--bg-secondary)] py-12 transition-colors hover:border-[#F45D22] disabled:opacity-60"
+          >
+            {uploading ? (
+              <>
+                <Loader2 className="h-8 w-8 animate-spin text-[#F45D22]" />
+                <p className="text-sm text-[var(--text-muted)]">Uploading...</p>
+              </>
+            ) : (
+              <>
+                <Upload className="h-8 w-8 text-[var(--text-muted)]" />
+                <p className="text-sm text-[var(--text-muted)]">Click to upload</p>
+                <p className="text-xs text-[var(--text-muted)]">Images & videos (max 200MB)</p>
+              </>
+            )}
+          </button>
+          {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
         </div>
       )}
 
@@ -77,7 +137,7 @@ export default function MediaStepConfig({ config, onChange }: MediaStepConfigPro
             <input
               type="text"
               value={config.mediaUrl || ''}
-              onChange={(e) => onChange({ mediaUrl: e.target.value })}
+              onChange={(e) => onChange({ mediaUrl: e.target.value, mediaType: VIDEO_RE.test(e.target.value) ? 'video' : 'image' })}
               placeholder="https://..."
               className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none"
             />
@@ -116,15 +176,50 @@ export default function MediaStepConfig({ config, onChange }: MediaStepConfigPro
               ))}
             </div>
           </div>
+          <p className="text-[11px] text-[var(--text-muted)]">
+            Generate happens when the pipeline runs. For now you can also upload or paste a URL above.
+          </p>
         </div>
       )}
 
       {/* Preview */}
       {config.mediaUrl && (
-        <div className="overflow-hidden rounded-xl border border-[var(--border)]">
-          <img src={config.mediaUrl} alt="" className="h-40 w-full object-cover" />
+        <div className="relative overflow-hidden rounded-xl border border-[var(--border)]">
+          {isVideo ? (
+            <video src={config.mediaUrl} className="h-40 w-full object-cover" controls muted />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={config.mediaUrl} alt="" className="h-40 w-full object-cover" />
+          )}
+          <button
+            type="button"
+            onClick={() => onChange({ mediaUrl: '' })}
+            className="absolute right-2 top-2 rounded-full bg-black/60 p-1 text-white transition-colors hover:bg-black/80"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
+
+      {/* Attach target */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">Attach to step</label>
+        <select
+          value={config.attachToStepId || ''}
+          onChange={(e) => onChange({ attachToStepId: e.target.value || undefined })}
+          className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[#F45D22] focus:outline-none"
+        >
+          <option value="">Previous content step (auto)</option>
+          {attachableSteps.map((s) => (
+            <option key={s.id} value={s.id}>
+              {STEP_LABELS[s.type] || s.type} #{steps.findIndex((x) => x.id === s.id) + 1}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+          This media is added to the chosen tweet/reply/quote when the pipeline runs.
+        </p>
+      </div>
     </div>
   );
 }

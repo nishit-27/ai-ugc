@@ -1,19 +1,21 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import { Plus, Trash2, GripVertical, Sparkles, ImageIcon } from 'lucide-react';
+import { Plus, Trash2, GripVertical, Sparkles } from 'lucide-react';
 import gsap from 'gsap';
 import type { TwitterThreadConfig, TwitterThreadItem } from '@/types';
+import MediaAttachField from './MediaAttachField';
 
 interface ThreadStepConfigProps {
   config: TwitterThreadConfig;
   onChange: (config: Partial<TwitterThreadConfig>) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onGenerate: (params: any) => Promise<any>;
+  onUploadMedia: (file: File) => Promise<string | null>;
   isGenerating?: boolean;
 }
 
-export default function ThreadStepConfig({ config, onChange, onGenerate, isGenerating }: ThreadStepConfigProps) {
+export default function ThreadStepConfig({ config, onChange, onGenerate, onUploadMedia, isGenerating }: ThreadStepConfigProps) {
   const itemsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,6 +39,12 @@ export default function ThreadStepConfig({ config, onChange, onGenerate, isGener
   const updateItem = (id: string, content: string) => {
     onChange({
       items: config.items.map((item) => (item.id === id ? { ...item, content } : item)),
+    });
+  };
+
+  const updateItemMedia = (id: string, mediaUrls: string[]) => {
+    onChange({
+      items: config.items.map((item) => (item.id === id ? { ...item, mediaUrls } : item)),
     });
   };
 
@@ -120,12 +128,6 @@ export default function ThreadStepConfig({ config, onChange, onGenerate, isGener
                 </span>
               </div>
               <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                <button
-                  onClick={() => {/* TODO: media picker */}}
-                  className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-                >
-                  <ImageIcon className="h-3.5 w-3.5" />
-                </button>
                 {config.items.length > 2 && (
                   <button
                     onClick={() => removeItem(item.id)}
@@ -151,6 +153,15 @@ export default function ThreadStepConfig({ config, onChange, onGenerate, isGener
                   width: `${Math.min((item.content.length / 280) * 100, 100)}%`,
                   backgroundColor: item.content.length > 280 ? '#EF4444' : '#1DA1F2',
                 }}
+              />
+            </div>
+            {/* Per-tweet media */}
+            <div className="mt-3">
+              <MediaAttachField
+                mediaUrls={item.mediaUrls || []}
+                onChange={(urls) => updateItemMedia(item.id, urls)}
+                onUpload={onUploadMedia}
+                label="Media"
               />
             </div>
           </div>

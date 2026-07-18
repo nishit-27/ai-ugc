@@ -54,6 +54,7 @@ export function useTwitterPipeline() {
   const [accountIds, setAccountIds] = useState<string[]>([]);
   const [twitterAccounts, setTwitterAccounts] = useState<Account[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [executeError, setExecuteError] = useState<string | null>(null);
   const [pipelineId, setPipelineId] = useState<string | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<string>('draft');
   const [savedPipelines, setSavedPipelines] = useState<TwitterPipeline[]>([]);
@@ -255,64 +256,114 @@ export function useTwitterPipeline() {
     []
   );
 
-  // Save pipeline
-  const savePipeline = useCallback(async () => {
+  // Upload a media file to R2 and return its public URL.
+  const uploadMedia = useCallback(async (file: File): Promise<string | null> => {
+    const isVideo = file.type.startsWith('video') || /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+    const endpoint = isVideo ? '/api/upload-video' : '/api/upload-image';
+    const field = isVideo ? 'video' : 'image';
+    const fd = new FormData();
+    fd.append(field, file);
+    try {
+      const res = await fetch(endpoint, { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      return data.url || data.gcsUrl || null;
+    } catch (err) {
+      console.error('Media upload error:', err);
+      return null;
+    }
+  }, []);
+
+  // Save pipeline — persists models, publish mode and schedule. Returns the id.
+  const savePipeline = useCallback(async (): Promise<string | null> => {
+    const payload = {
+      name: pipelineName,
+      steps,
+      accountIds,
+      modelIds: selectedModelIds,
+      publishMode,
+      scheduledFor: publishMode === 'schedule' ? scheduledFor : undefined,
+      timezone,
+    };
     try {
       if (pipelineId) {
         await fetch(`/api/twitter/pipelines/${pipelineId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: pipelineName, steps, accountIds }),
+          body: JSON.stringify(payload),
         });
-      } else {
-        const res = await fetch('/api/twitter/pipelines', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: pipelineName, steps, accountIds }),
-        });
-        const data = await res.json();
-        if (data.pipeline?.id) setPipelineId(data.pipeline.id);
+        fetchPipelines();
+        return pipelineId;
       }
+      const res = await fetch('/api/twitter/pipelines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      const newId = data.pipeline?.id || null;
+      if (newId) setPipelineId(newId);
       fetchPipelines();
+      return newId;
     } catch (err) {
       console.error('Save pipeline error:', err);
+      return pipelineId;
     }
-  }, [pipelineId, pipelineName, steps, accountIds, fetchPipelines]);
+  }, [pipelineId, pipelineName, steps, accountIds, selectedModelIds, publishMode, scheduledFor, timezone, fetchPipelines]);
 
-  // Execute pipeline
+  // Execute pipeline — always saves the latest config first so the server runs
+  // with the current models/steps/mode, then kicks off the background run.
   const executePipeline = useCallback(async () => {
-    if (!pipelineId) {
-      await savePipeline();
+    setExecuteError(null);
+    if (steps.filter((s) => s.enabled).length === 0) {
+      setExecuteError('Add at least one enabled step before running.');
+      return;
+    }
+    if (selectedModelIds.length === 0) {
+      setExecuteError('Select at least one model with a connected X account.');
+      return;
+    }
+    if (publishMode === 'schedule' && !scheduledFor) {
+      setExecuteError('Pick a date & time for scheduled mode.');
+      return;
     }
 
     setIsExecuting(true);
     setPipelineStatus('running');
     try {
-      const id = pipelineId;
-      if (!id) throw new Error('Pipeline not saved');
+      const id = await savePipeline();
+      if (!id) throw new Error('Could not save pipeline before running.');
 
       const res = await fetch('/api/twitter/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pipelineId: id }),
       });
-      if (!res.ok) throw new Error('Execution failed');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Execution failed');
+      }
       setPipelineStatus('running');
     } catch (err) {
       console.error('Execute pipeline error:', err);
       setPipelineStatus('failed');
+      setExecuteError(err instanceof Error ? err.message : 'Execution failed');
     } finally {
       setIsExecuting(false);
     }
-  }, [pipelineId, savePipeline]);
+  }, [steps, selectedModelIds, publishMode, scheduledFor, savePipeline]);
 
   // Load pipeline
   const loadPipeline = useCallback((pipeline: TwitterPipeline) => {
     setPipelineId(pipeline.id);
     setPipelineName(pipeline.name);
     setSteps(pipeline.steps);
-    setAccountIds(pipeline.accountIds);
+    setAccountIds(pipeline.accountIds || []);
+    setSelectedModelIds(pipeline.modelIds || []);
+    if (pipeline.publishMode) setPublishMode(pipeline.publishMode);
+    if (pipeline.timezone) setTimezone(pipeline.timezone);
     setPipelineStatus(pipeline.status);
+    setExecuteError(null);
     setSelectedStepId(null);
   }, []);
 
@@ -327,6 +378,7 @@ export function useTwitterPipeline() {
     setSelectedStepId(null);
     setPublishMode('now');
     setScheduledFor('');
+    setExecuteError(null);
     sessionStorage.removeItem(DRAFT_KEY);
   }, []);
 
@@ -372,6 +424,8 @@ export function useTwitterPipeline() {
     twitterAccounts,
     isLoadingAccounts,
     isExecuting,
+    executeError,
+    setExecuteError,
     isGenerating,
     pipelineId,
     pipelineStatus,
@@ -388,6 +442,8 @@ export function useTwitterPipeline() {
     setScheduledFor,
     timezone,
     setTimezone,
+    // Media
+    uploadMedia,
     // Step actions
     addStep,
     removeStep,
